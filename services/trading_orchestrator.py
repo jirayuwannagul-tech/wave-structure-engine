@@ -22,6 +22,16 @@ class OrchestratorRuntime:
     scenarios: list
 
 
+def _fmt_value(value) -> str:
+    if value is None:
+        return "None"
+    if isinstance(value, (int, float)):
+        rounded = round(float(value), 4)
+        text = f"{rounded:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+    return str(value)
+
+
 def _build_levels_from_analysis(analysis: dict) -> list[Level]:
     levels: list[Level] = []
     timeframe = analysis["timeframe"]
@@ -96,11 +106,11 @@ def _format_analysis_summary(analysis: dict) -> str:
     return (
         f"{timeframe} | {pattern_type} | {scenario_name}\n"
         f"Bias: {bias}\n"
-        f"Entry: {entry}\n"
-        f"SL: {stop_loss}\n"
-        f"TP1: {tp1}\n"
-        f"TP2: {tp2}\n"
-        f"TP3: {tp3}"
+        f"Entry: {_fmt_value(entry)}\n"
+        f"SL: {_fmt_value(stop_loss)}\n"
+        f"TP1: {_fmt_value(tp1)}\n"
+        f"TP2: {_fmt_value(tp2)}\n"
+        f"TP3: {_fmt_value(tp3)}"
     )
 
 
@@ -133,7 +143,7 @@ def _refresh_runtime(
 def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float | None = None) -> str:
     parts = [f"Symbol: {runtime.symbol}"]
     if current_price is not None:
-        parts.append(f"Current price: {current_price}")
+        parts.append(f"Current price: {_fmt_value(current_price)}")
     parts.append("")
     parts.extend(_format_analysis_summary(analysis) for analysis in runtime.analyses)
     return "\n\n".join(parts)
@@ -161,11 +171,11 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         f"{timeframe}\n\n"
         f"status: {status}\n"
         f"scenario: {scenario_name}\n"
-        f"Entry: {entry_price}\n"
-        f"SL: {stop_loss}{sl_mark}\n"
-        f"TP1: {tp1}{tp1_mark}\n"
-        f"TP2: {tp2}{tp2_mark}\n"
-        f"TP3: {tp3}{tp3_mark}"
+        f"Entry: {_fmt_value(entry_price)}\n"
+        f"SL: {_fmt_value(stop_loss)}{sl_mark}\n"
+        f"TP1: {_fmt_value(tp1)}{tp1_mark}\n"
+        f"TP2: {_fmt_value(tp2)}{tp2_mark}\n"
+        f"TP3: {_fmt_value(tp3)}{tp3_mark}"
     )
 
 
@@ -208,14 +218,14 @@ def process_market_update(
 
         if state == "NEAR":
             send_notification(
-                f"⚠️ {runtime.symbol} เข้าใกล้ {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}",
+                f"⚠️ {runtime.symbol} เข้าใกล้ {level.name} ({_fmt_value(level.price)})\n"
+                f"ราคาปัจจุบัน: {_fmt_value(current_price)}",
                 timeframe=level.name.split()[0],
             )
         elif state == "BREAK":
             send_notification(
-                f"🚨 {runtime.symbol} BREAK {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}",
+                f"🚨 {runtime.symbol} BREAK {level.name} ({_fmt_value(level.price)})\n"
+                f"ราคาปัจจุบัน: {_fmt_value(current_price)}",
                 timeframe=level.name.split()[0],
             )
             refresh_reasons.append(f"level break: {level.name}")

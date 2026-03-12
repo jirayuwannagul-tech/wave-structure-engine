@@ -55,7 +55,7 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
 
     assert "4H | ABC_CORRECTION | Main Bullish" in summary
     assert "Bias: BULLISH" in summary
-    assert "Entry: 71777.0" in summary
+    assert "Entry: 71777" in summary
     assert "SL: 69266.06" in summary
     assert "TP1: 75424.57" in summary
     assert "TP2: 77099.68" in summary
@@ -96,7 +96,7 @@ def test_process_market_update_refreshes_after_level_break(monkeypatch):
     assert result is refreshed_runtime
     assert notifications == [
         (
-            "🚨 BTCUSDT BREAK 4H Resistance (71777.0)\nราคาปัจจุบัน: 72000.0",
+            "🚨 BTCUSDT BREAK 4H Resistance (71777)\nราคาปัจจุบัน: 72000",
             {"timeframe": "4H"},
         )
     ]
@@ -215,12 +215,12 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
     assert len(notifications) == 2
     assert "Reason: level break: 4H Resistance" in notifications[0][0]
     assert "1D | EXPANDED_FLAT | Main Bearish" in notifications[0][0]
-    assert "Entry: 63030.0" in notifications[0][0]
-    assert "SL: 74050.0" in notifications[0][0]
+    assert "Entry: 63030" in notifications[0][0]
+    assert "SL: 74050" in notifications[0][0]
     assert "TP3: 62790.61" in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "1D"
     assert "4H | ABC_CORRECTION | Main Bullish" in notifications[1][0]
-    assert "Entry: 71777.0" in notifications[1][0]
+    assert "Entry: 71777" in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"
 
 
@@ -269,8 +269,8 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
     assert notifications[0][0].startswith("4H")
     assert "status: PARTIAL_TP1" in notifications[0][0]
     assert "scenario: Main Bullish" in notifications[0][0]
-    assert "TP1: 110.0 ✅" in notifications[0][0]
-    assert "TP2: 120.0" in notifications[0][0]
+    assert "TP1: 110 ✅" in notifications[0][0]
+    assert "TP2: 120" in notifications[0][0]
     assert "1D" not in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "4H"
     assert notifications[0][1]["include_layout"] is False
@@ -317,9 +317,9 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 2
-    assert "TP1: 110.0 ✅" in notifications[0][0]
+    assert "TP1: 110 ✅" in notifications[0][0]
     assert notifications[1][0].startswith("4H")
     assert "status: STOPPED" in notifications[1][0]
-    assert "SL: 95.0 ❌" in notifications[1][0]
-    assert "TP1: 110.0 ✅" in notifications[1][0]
+    assert "SL: 95 ❌" in notifications[1][0]
+    assert "TP1: 110 ✅" in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"
