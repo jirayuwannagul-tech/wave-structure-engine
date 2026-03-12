@@ -1,6 +1,7 @@
 annotated-types==0.7.0
 certifi==2026.2.25
 charset-normalizer==3.4.5
+deep-translator==1.11.4
 google-auth==2.37.0
 gspread==6.1.4
 idna==3.11

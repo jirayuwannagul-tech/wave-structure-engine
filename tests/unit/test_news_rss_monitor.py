@@ -3,6 +3,7 @@ from services.news_rss_monitor import (
     _extract_tags,
     _is_btc_relevant,
     build_news_digest,
+    translate_summary_to_thai,
 )
 
 
@@ -51,6 +52,7 @@ def test_build_news_digest_contains_expected_fields():
                 "title": "Bitcoin ETF inflows rise as macro sentiment improves",
                 "link": "https://example.com/btc-etf",
                 "summary": "Bitcoin gains traction as ETF demand and softer inflation data support risk appetite.",
+                "summary_th": "บิตคอยน์ได้แรงหนุนจากความต้องการ ETF และข้อมูลเงินเฟ้อที่ผ่อนคลายลง",
                 "published_display": "2026-03-12 15:00 ICT",
                 "tags": ["BTC", "ETF", "INFLATION"],
             }
@@ -60,4 +62,19 @@ def test_build_news_digest_contains_expected_fields():
     assert "📰 BTC News Context" in digest
     assert "[CoinDesk] Bitcoin ETF inflows rise as macro sentiment improves" in digest
     assert "Tags: BTC, ETF, INFLATION" in digest
+    assert "Summary: บิตคอยน์ได้แรงหนุนจากความต้องการ ETF และข้อมูลเงินเฟ้อที่ผ่อนคลายลง" in digest
     assert "Link: https://example.com/btc-etf" in digest
+
+
+def test_translate_summary_to_thai_uses_translator_and_falls_back():
+    class TranslatorStub:
+        def translate(self, text):
+            return "สรุปภาษาไทย"
+
+    assert translate_summary_to_thai("Bitcoin rises", translator=TranslatorStub()) == "สรุปภาษาไทย"
+
+    class BrokenTranslator:
+        def translate(self, text):
+            raise RuntimeError("boom")
+
+    assert translate_summary_to_thai("Bitcoin rises", translator=BrokenTranslator()) == "Bitcoin rises"

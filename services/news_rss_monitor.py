@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -34,6 +35,15 @@ CONTEXT_KEYWORDS = {
 }
 
 
+def _translate_enabled() -> bool:
+    return (os.getenv("NEWS_TRANSLATE_SUMMARY_TH", "true") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _localname(tag: str) -> str:
     return tag.split("}", 1)[-1] if "}" in tag else tag
 
@@ -51,9 +61,30 @@ def _first_sentence(text: str, max_len: int = 180) -> str:
         return ""
     parts = re.split(r"(?<=[.!?])\s+", text)
     sentence = parts[0].strip() if parts else text.strip()
+    if len(sentence) < 20 and len(parts) > 1:
+        sentence = text.strip()
     if len(sentence) <= max_len:
         return sentence
     return sentence[: max_len - 3].rstrip() + "..."
+
+
+def translate_summary_to_thai(summary: str, translator=None) -> str:
+    if not summary:
+        return ""
+
+    if not _translate_enabled():
+        return summary
+
+    try:
+        if translator is None:
+            from deep_translator import GoogleTranslator
+
+            translator = GoogleTranslator(source="auto", target="th")
+
+        translated = (translator.translate(summary) or "").strip()
+        return translated or summary
+    except Exception:
+        return summary
 
 
 def _parse_datetime(raw: str | None) -> tuple[str | None, str | None]:
@@ -163,6 +194,7 @@ def fetch_relevant_btc_news() -> list[dict]:
             if not _is_btc_relevant(item["title"], item["summary"]):
                 continue
             item["tags"] = _extract_tags(item["title"], item["summary"])
+            item["summary_th"] = translate_summary_to_thai(item["summary"])
             item["external_id"] = _external_id(item)
             news_items.append(item)
 
@@ -196,8 +228,8 @@ def build_news_digest(items: list[dict], now: datetime | None = None) -> str:
                 f"Time: {item.get('published_display') or '-'}",
             ]
         )
-        if item.get("summary"):
-            lines.append(f"Summary: {item['summary']}")
+        if item.get("summary_th") or item.get("summary"):
+            lines.append(f"Summary: {item.get('summary_th') or item.get('summary')}")
         lines.append(f"Link: {item['link']}")
         if idx != len(items):
             lines.append("")
@@ -226,7 +258,7 @@ def process_news_cycle(
             title=item["title"],
             link=item["link"],
             published_at=item.get("published_at"),
-            summary_text=item.get("summary"),
+            summary_text=item.get("summary_th") or item.get("summary"),
             tag_text=",".join(item.get("tags") or []),
             external_id=item["external_id"],
         )
