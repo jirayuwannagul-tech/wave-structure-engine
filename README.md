@@ -194,6 +194,56 @@ Run the full test suite:
 pytest -q
 ```
 
+## GitHub to VPS
+
+Basic update flow for running this repo on a VPS:
+
+1. Clone the repository on the VPS
+
+```bash
+git clone https://github.com/jirayuwannagul-tech/wave-structure-engine.git
+cd wave-structure-engine
+```
+
+2. Create the virtual environment and install dependencies
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+3. Pull the latest code when the repository is updated
+
+```bash
+git pull origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+4. Run a quick check before starting the monitor
+
+```bash
+python main.py dry-run
+pytest -q
+```
+
+5. Start the live monitor or orchestrator
+
+```bash
+python main.py orchestrator
+```
+
+Recommended VPS workflow:
+
+- develop and test locally
+- push clean commits to GitHub
+- pull updates on the VPS
+- run `dry-run` before restarting the live process
+
+This repo currently assumes manual deployment.
+It does not include Docker, systemd, CI/CD, or auto-deploy by default.
+
 ## Project Ceiling
 
 This project is considered complete when these pieces are in place:

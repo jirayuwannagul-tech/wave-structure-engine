@@ -10,6 +10,7 @@ from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
+from storage.wave_repository import WaveRepository
 
 
 @dataclass
@@ -100,11 +101,15 @@ def _refresh_runtime(
     runtime: OrchestratorRuntime,
     store: AlertStateStore,
     reason: str,
+    repository: WaveRepository | None = None,
+    current_price: float | None = None,
 ) -> OrchestratorRuntime:
     store.clear_prefix(f"{runtime.symbol}:LEVEL:")
     store.clear_prefix(f"{runtime.symbol}:SCENARIO:")
 
     refreshed = _load_runtime(runtime.symbol)
+    if repository is not None:
+        repository.sync_runtime(refreshed, current_price=current_price)
     summary = "\n\n".join(_format_analysis_summary(a) for a in refreshed.analyses)
     send_notification(
         f"🔄 {runtime.symbol} Re-analysis triggered\n"
@@ -128,8 +133,12 @@ def process_market_update(
     current_price: float,
     store: AlertStateStore,
     tolerance: float = 0.002,
+    repository: WaveRepository | None = None,
 ) -> OrchestratorRuntime:
     refresh_reasons: list[str] = []
+
+    if repository is not None:
+        repository.track_price_update(runtime.symbol, current_price)
 
     for level in runtime.levels:
         state = detect_level_state(
@@ -174,6 +183,8 @@ def process_market_update(
             runtime=runtime,
             store=store,
             reason=", ".join(refresh_reasons),
+            repository=repository,
+            current_price=current_price,
         )
 
     return runtime
@@ -183,9 +194,12 @@ def run_orchestrator(
     symbol: str = "BTCUSDT",
     poll_interval: float = 5.0,
     once: bool = False,
+    repository: WaveRepository | None = None,
 ) -> OrchestratorRuntime:
     runtime = _load_runtime(symbol)
     store = AlertStateStore()
+    repository = repository or WaveRepository()
+    repository.sync_runtime(runtime)
 
     print("Starting trading orchestrator...")
     print("Loaded levels:")
@@ -200,6 +214,7 @@ def run_orchestrator(
                 runtime=runtime,
                 current_price=price,
                 store=store,
+                repository=repository,
             )
             print(render_runtime_snapshot(runtime, current_price=price))
 

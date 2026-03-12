@@ -8,6 +8,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.bak
+*.db
 .coverage
 .mypy_cache/
 .ruff_cache/
