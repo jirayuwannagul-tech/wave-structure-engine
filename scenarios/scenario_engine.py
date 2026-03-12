@@ -59,7 +59,7 @@ def generate_scenarios(
         scenarios.append(
             Scenario(
                 name="Main Bullish",
-                condition=f"price holds above {key_levels.c_level}",
+                condition=f"price breaks above {projection.confirmation}",
                 interpretation="correction likely finished",
                 target=f"move toward {projection.target_1} then {projection.target_2}",
                 bias="BULLISH",
@@ -72,7 +72,7 @@ def generate_scenarios(
         scenarios.append(
             Scenario(
                 name="Alternate Bearish",
-                condition=f"price breaks below {key_levels.c_level}",
+                condition=f"price stays below {key_levels.c_level}",
                 interpretation="bullish count weakens, correction may continue",
                 target="look for lower low structure",
                 bias="BEARISH",
@@ -88,7 +88,7 @@ def generate_scenarios(
         scenarios.append(
             Scenario(
                 name="Main Bearish",
-                condition=f"price stays below {key_levels.c_level}",
+                condition=f"price breaks below {projection.confirmation}",
                 interpretation="correction likely finished",
                 target=f"move toward {projection.target_1} then {projection.target_2}",
                 bias="BEARISH",

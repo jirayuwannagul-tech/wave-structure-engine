@@ -33,6 +33,38 @@ def test_project_next_wave_from_bullish_abc():
     assert result.confirmation == 74050.0
 
 
+def test_project_next_wave_from_bearish_corrective_projects_below_confirmation():
+    position = WavePosition(
+        structure="EXPANDED_FLAT",
+        position="CORRECTION_COMPLETE",
+        bias="BEARISH",
+        confidence="medium",
+    )
+
+    key_levels = KeyLevels(
+        structure_type="expanded_flat",
+        support=63030.0,
+        resistance=74050.0,
+        invalidation=74050.0,
+        confirmation=63030.0,
+        wave_start=69988.83,
+        wave_end=74050.0,
+        b_level=63030.0,
+        c_level=74050.0,
+    )
+
+    result = project_next_wave(position, key_levels)
+
+    assert result.expected_structure == "NEW_BEARISH_IMPULSE"
+    assert result.expected_direction == "DOWN"
+    assert result.target_1 is not None
+    assert result.target_1 < key_levels.confirmation
+    assert result.target_2 is not None
+    assert result.target_2 < result.target_1
+    assert result.target_3 is not None
+    assert result.target_3 < result.target_2
+
+
 def test_project_next_wave_from_bearish_impulse():
     position = WavePosition(
         structure="IMPULSE",

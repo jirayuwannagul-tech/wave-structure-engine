@@ -37,9 +37,9 @@ TREND_STRUCTURES = {
 def project_next_wave(position: WavePosition, key_levels: KeyLevels) -> FutureProjection:
     if position.structure in CORRECTIVE_STRUCTURES and position.bias == "BULLISH":
         extension = measure_extension(
-            key_levels.wave_start or 0.0,
-            key_levels.confirmation or 0.0,
             key_levels.wave_end or 0.0,
+            key_levels.confirmation or 0.0,
+            key_levels.confirmation or 0.0,
         )
         t1 = extension.levels.get(1.0, key_levels.confirmation)
         t2 = extension.levels.get(1.272, key_levels.confirmation)
@@ -54,14 +54,14 @@ def project_next_wave(position: WavePosition, key_levels: KeyLevels) -> FuturePr
             invalidation=key_levels.invalidation,
             confirmation=key_levels.confirmation,
             stop_loss=key_levels.invalidation,
-            message="if price holds above C, upside continuation becomes more likely",
+            message="if price breaks above confirmation, bullish continuation becomes more likely",
         )
 
     if position.structure in CORRECTIVE_STRUCTURES and position.bias == "BEARISH":
         extension = measure_extension(
-            key_levels.wave_start or 0.0,
-            key_levels.confirmation or 0.0,
             key_levels.wave_end or 0.0,
+            key_levels.confirmation or 0.0,
+            key_levels.confirmation or 0.0,
         )
         t1 = extension.levels.get(1.0, key_levels.support)
         t2 = extension.levels.get(1.272, key_levels.support)
@@ -76,7 +76,7 @@ def project_next_wave(position: WavePosition, key_levels: KeyLevels) -> FuturePr
             invalidation=key_levels.invalidation,
             confirmation=key_levels.confirmation,
             stop_loss=key_levels.invalidation,
-            message="if price stays below C, downside continuation becomes more likely",
+            message="if price breaks below confirmation, bearish continuation becomes more likely",
         )
 
     if position.structure in TREND_STRUCTURES and position.bias == "BULLISH":

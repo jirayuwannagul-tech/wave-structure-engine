@@ -42,8 +42,48 @@ def test_generate_scenarios_for_bullish_abc():
     assert scenarios[0].bias == "BULLISH"
     assert scenarios[0].confirmation == 74050.0
     assert scenarios[0].stop_loss == 65618.49
+    assert scenarios[0].condition == "price breaks above 74050.0"
     assert len(scenarios[0].targets) == 2
     assert scenarios[0].targets == [74050.0, 76271.5]
+
+
+def test_generate_scenarios_for_bearish_corrective_uses_confirmation_break():
+    position = WavePosition(
+        structure="EXPANDED_FLAT",
+        position="CORRECTION_COMPLETE",
+        bias="BEARISH",
+        confidence="medium",
+    )
+
+    key_levels = KeyLevels(
+        structure_type="expanded_flat",
+        support=63030.0,
+        resistance=74050.0,
+        invalidation=74050.0,
+        confirmation=63030.0,
+        wave_start=69988.83,
+        wave_end=74050.0,
+        b_level=63030.0,
+        c_level=74050.0,
+    )
+
+    projection = FutureProjection(
+        expected_structure="NEW_BEARISH_IMPULSE",
+        expected_direction="DOWN",
+        target_1=52010.0,
+        target_2=49012.56,
+        target_3=45199.64,
+        invalidation=74050.0,
+        confirmation=63030.0,
+        stop_loss=74050.0,
+        message="if price breaks below confirmation, bearish continuation becomes more likely",
+    )
+
+    scenarios = generate_scenarios(position, key_levels, projection)
+
+    assert scenarios[0].bias == "BEARISH"
+    assert scenarios[0].condition == "price breaks below 63030.0"
+    assert scenarios[0].targets == [52010.0, 49012.56, 45199.64]
 
 
 def test_generate_scenarios_for_bearish_impulse():
