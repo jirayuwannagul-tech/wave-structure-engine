@@ -224,6 +224,13 @@ class WaveRepository:
                 (signal_id,),
             ).fetchall()
 
+    def fetch_signal(self, signal_id: int) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM signals WHERE id = ?",
+                (signal_id,),
+            ).fetchone()
+
     def record_analysis_snapshot(self, analysis: dict, current_price: float | None = None) -> int:
         snapshot = build_signal_snapshot(analysis)
         current = _round_price(current_price if current_price is not None else analysis.get("current_price"))

@@ -8,6 +8,7 @@ from services.trading_orchestrator import (
     _refresh_runtime,
     process_market_update,
 )
+from storage.wave_repository import WaveRepository
 
 
 def test_build_levels_from_analysis():
@@ -216,3 +217,98 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
     assert "TP3: 62790.61" in notifications[0]
     assert "4H | ABC_CORRECTION | Main Bullish" in notifications[0]
     assert "Entry: 71777.0" in notifications[0]
+
+
+def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, monkeypatch):
+    repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    analysis = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4H",
+        "primary_pattern_type": "ABC_CORRECTION",
+        "current_price": 99.0,
+        "position": None,
+        "scenarios": [
+            Scenario(
+                name="Main Bullish",
+                condition="test",
+                interpretation="test",
+                target="test",
+                bias="BULLISH",
+                invalidation=95.0,
+                confirmation=100.0,
+                stop_loss=95.0,
+                targets=[110.0, 120.0, 130.0],
+            )
+        ],
+        "wave_summary": {},
+    }
+    runtime = OrchestratorRuntime(
+        symbol="BTCUSDT",
+        analyses=[analysis],
+        levels=[],
+        scenarios=[],
+    )
+    repository.sync_runtime(runtime, current_price=99.0)
+    notifications = []
+    monkeypatch.setattr(
+        "services.trading_orchestrator.send_notification",
+        notifications.append,
+    )
+
+    process_market_update(runtime, current_price=100.5, store=AlertStateStore(), repository=repository)
+    assert notifications == []
+
+    process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
+
+    assert len(notifications) == 1
+    assert "🎯 TP1 Hit" in notifications[0]
+    assert "BTCUSDT 4H" in notifications[0]
+    assert "1D" not in notifications[0]
+    assert "Status: PARTIAL_TP1" in notifications[0]
+
+
+def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
+    repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    analysis = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4H",
+        "primary_pattern_type": "ABC_CORRECTION",
+        "current_price": 99.0,
+        "position": None,
+        "scenarios": [
+            Scenario(
+                name="Main Bullish",
+                condition="test",
+                interpretation="test",
+                target="test",
+                bias="BULLISH",
+                invalidation=95.0,
+                confirmation=100.0,
+                stop_loss=95.0,
+                targets=[110.0, 120.0, 130.0],
+            )
+        ],
+        "wave_summary": {},
+    }
+    runtime = OrchestratorRuntime(
+        symbol="BTCUSDT",
+        analyses=[analysis],
+        levels=[],
+        scenarios=[],
+    )
+    repository.sync_runtime(runtime, current_price=99.0)
+    notifications = []
+    monkeypatch.setattr(
+        "services.trading_orchestrator.send_notification",
+        notifications.append,
+    )
+
+    process_market_update(runtime, current_price=100.5, store=AlertStateStore(), repository=repository)
+    process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
+    process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
+
+    assert len(notifications) == 2
+    assert "🎯 TP1 Hit" in notifications[0]
+    assert "🛑 Stop Loss Hit" in notifications[1]
+    assert "BTCUSDT 4H" in notifications[1]
+    assert "Status: STOPPED" in notifications[1]

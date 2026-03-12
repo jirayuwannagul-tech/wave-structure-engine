@@ -128,6 +128,47 @@ def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float |
     return "\n\n".join(parts)
 
 
+def _build_signal_event_message(signal_row, event_type: str) -> str | None:
+    event_type = (event_type or "").upper()
+    if event_type not in {"TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT"}:
+        return None
+
+    symbol = signal_row["symbol"]
+    timeframe = signal_row["timeframe"]
+    scenario_name = signal_row["scenario_name"]
+    pattern_type = signal_row["pattern_type"]
+    side = signal_row["side"]
+    entry_price = signal_row["entry_price"]
+    stop_loss = signal_row["stop_loss"]
+    tp1 = signal_row["tp1"]
+    tp2 = signal_row["tp2"]
+    tp3 = signal_row["tp3"]
+    current_price = signal_row["current_price"]
+    status = signal_row["status"]
+
+    title_map = {
+        "TP1_HIT": "🎯 TP1 Hit",
+        "TP2_HIT": "🎯 TP2 Hit",
+        "TP3_HIT": "🎯 TP3 Hit",
+        "STOP_LOSS_HIT": "🛑 Stop Loss Hit",
+    }
+
+    return (
+        f"{title_map[event_type]}\n"
+        f"{symbol} {timeframe}\n"
+        f"Pattern: {pattern_type}\n"
+        f"Scenario: {scenario_name}\n"
+        f"Side: {side}\n"
+        f"Current price: {current_price}\n"
+        f"Entry: {entry_price}\n"
+        f"SL: {stop_loss}\n"
+        f"TP1: {tp1}\n"
+        f"TP2: {tp2}\n"
+        f"TP3: {tp3}\n"
+        f"Status: {status}"
+    )
+
+
 def process_market_update(
     runtime: OrchestratorRuntime,
     current_price: float,
@@ -138,7 +179,14 @@ def process_market_update(
     refresh_reasons: list[str] = []
 
     if repository is not None:
-        repository.track_price_update(runtime.symbol, current_price)
+        lifecycle_events = repository.track_price_update(runtime.symbol, current_price)
+        for signal_id, event_type in lifecycle_events:
+            signal_row = repository.fetch_signal(signal_id)
+            if signal_row is None:
+                continue
+            message = _build_signal_event_message(signal_row, event_type)
+            if message:
+                send_notification(message)
 
     for level in runtime.levels:
         state = detect_level_state(
