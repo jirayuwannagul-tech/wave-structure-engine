@@ -12,3 +12,5 @@ __pycache__/
 .coverage
 .mypy_cache/
 .ruff_cache/
+secrets/
+storage/credentials.json

@@ -8,6 +8,7 @@ from analysis.price_level_watcher import Level
 from core.engine import build_timeframe_analysis
 from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
+from services.google_sheets_sync import safe_sync_signal
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
 from storage.wave_repository import WaveRepository
@@ -103,13 +104,16 @@ def _refresh_runtime(
     reason: str,
     repository: WaveRepository | None = None,
     current_price: float | None = None,
+    sheets_logger=None,
 ) -> OrchestratorRuntime:
     store.clear_prefix(f"{runtime.symbol}:LEVEL:")
     store.clear_prefix(f"{runtime.symbol}:SCENARIO:")
 
     refreshed = _load_runtime(runtime.symbol)
     if repository is not None:
-        repository.sync_runtime(refreshed, current_price=current_price)
+        signal_ids = repository.sync_runtime(refreshed, current_price=current_price)
+        for signal_id in signal_ids:
+            safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
     summary = "\n\n".join(_format_analysis_summary(a) for a in refreshed.analyses)
     send_notification(
         f"🔄 {runtime.symbol} Re-analysis triggered\n"
@@ -164,6 +168,7 @@ def process_market_update(
     store: AlertStateStore,
     tolerance: float = 0.002,
     repository: WaveRepository | None = None,
+    sheets_logger=None,
 ) -> OrchestratorRuntime:
     refresh_reasons: list[str] = []
 
@@ -173,6 +178,7 @@ def process_market_update(
             signal_row = repository.fetch_signal(signal_id)
             if signal_row is None:
                 continue
+            safe_sync_signal(signal_row, sheets_logger)
             message = _build_signal_event_message(signal_row, event_type)
             if message:
                 send_notification(message)
@@ -222,6 +228,7 @@ def process_market_update(
             reason=", ".join(refresh_reasons),
             repository=repository,
             current_price=current_price,
+            sheets_logger=sheets_logger,
         )
 
     return runtime
@@ -232,11 +239,14 @@ def run_orchestrator(
     poll_interval: float = 5.0,
     once: bool = False,
     repository: WaveRepository | None = None,
+    sheets_logger=None,
 ) -> OrchestratorRuntime:
     runtime = _load_runtime(symbol)
     store = AlertStateStore()
     repository = repository or WaveRepository()
-    repository.sync_runtime(runtime)
+    signal_ids = repository.sync_runtime(runtime)
+    for signal_id in signal_ids:
+        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
 
     print("Starting trading orchestrator...")
     print("Loaded levels:")
@@ -252,6 +262,7 @@ def run_orchestrator(
                 current_price=price,
                 store=store,
                 repository=repository,
+                sheets_logger=sheets_logger,
             )
             print(render_runtime_snapshot(runtime, current_price=price))
 

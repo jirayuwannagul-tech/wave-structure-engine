@@ -6,6 +6,7 @@ import json
 from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.settings import load_env_file
 from services.binance_price_service import get_last_price
+from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
 from services.trading_orchestrator import _load_runtime, render_runtime_snapshot, run_orchestrator
 from storage.wave_repository import WaveRepository
 
@@ -31,12 +32,15 @@ def _resolve_timeframes(timeframes: list[str] | None) -> list[str]:
 def _run_dry_run(symbol: str) -> None:
     runtime = _load_runtime(symbol)
     repository = WaveRepository()
+    sheets_logger = GoogleSheetsSignalLogger.from_env()
     try:
         current_price = get_last_price(symbol)
     except Exception:
         current_price = None
 
-    repository.sync_runtime(runtime, current_price=current_price)
+    signal_ids = repository.sync_runtime(runtime, current_price=current_price)
+    for signal_id in signal_ids:
+        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
     print(render_runtime_snapshot(runtime, current_price=current_price))
 
 
@@ -99,6 +103,7 @@ def main() -> None:
             symbol=args.symbol,
             poll_interval=args.poll_interval,
             once=args.once,
+            sheets_logger=GoogleSheetsSignalLogger.from_env(),
         )
         return
 

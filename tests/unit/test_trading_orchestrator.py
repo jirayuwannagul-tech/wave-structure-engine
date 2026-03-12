@@ -84,7 +84,7 @@ def test_process_market_update_refreshes_after_level_break(monkeypatch):
     )
     monkeypatch.setattr(
         "services.trading_orchestrator._refresh_runtime",
-        lambda runtime, store, reason, repository=None, current_price=None: refreshed_runtime,
+        lambda runtime, store, reason, repository=None, current_price=None, sheets_logger=None: refreshed_runtime,
     )
 
     result = process_market_update(
@@ -132,7 +132,7 @@ def test_process_market_update_refreshes_after_scenario_confirmation(monkeypatch
     )
     monkeypatch.setattr(
         "services.trading_orchestrator._refresh_runtime",
-        lambda runtime, store, reason, repository=None, current_price=None: refreshed_runtime,
+        lambda runtime, store, reason, repository=None, current_price=None, sheets_logger=None: refreshed_runtime,
     )
 
     result = process_market_update(
