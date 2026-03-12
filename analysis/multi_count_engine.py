@@ -7,6 +7,12 @@ from analysis.expanded_flat_detector import detect_expanded_flat
 from analysis.flat_detector import detect_flat
 from analysis.indicator_engine import calculate_atr, calculate_ema, calculate_rsi
 from analysis.indicator_filter import (
+    check_atr_expansion,
+    check_bearish_momentum,
+    check_bearish_trend_context,
+    check_bullish_momentum,
+    check_bullish_trend_context,
+    detect_aligned_rsi_divergence,
     validate_bearish_wave_with_indicators,
     validate_bullish_wave_with_indicators,
 )
@@ -60,18 +66,53 @@ def _prepare_indicator_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
 
 
 def _indicator_adjustment(direction: str, df: pd.DataFrame | None) -> float:
+    adjustment, _ = _indicator_adjustment_with_context(direction, df, [])
+    return adjustment
+
+
+def _indicator_adjustment_with_context(
+    direction: str,
+    df: pd.DataFrame | None,
+    pivots,
+) -> tuple[float, dict | None]:
     if df is None:
-        return 0.0
+        return 0.0, None
 
     direction = (direction or "").lower()
+    aligned_divergence = detect_aligned_rsi_divergence(direction, df, pivots)
+
+    context = {
+        "trend_ok": None,
+        "momentum_ok": None,
+        "atr_ok": check_atr_expansion(df),
+        "indicator_validation": False,
+        "rsi_divergence": aligned_divergence.state if aligned_divergence else "NONE",
+        "rsi_divergence_message": (
+            aligned_divergence.message
+            if aligned_divergence
+            else "No aligned RSI divergence detected."
+        ),
+    }
 
     if direction == "bullish":
-        return 0.08 if validate_bullish_wave_with_indicators(df) else -0.08
+        context["trend_ok"] = check_bullish_trend_context(df)
+        context["momentum_ok"] = check_bullish_momentum(df)
+        context["indicator_validation"] = validate_bullish_wave_with_indicators(df)
+        adjustment = 0.08 if context["indicator_validation"] else -0.08
+        if aligned_divergence is not None and context["indicator_validation"]:
+            adjustment += 0.02
+        return adjustment, context
 
     if direction == "bearish":
-        return 0.08 if validate_bearish_wave_with_indicators(df) else -0.08
+        context["trend_ok"] = check_bearish_trend_context(df)
+        context["momentum_ok"] = check_bearish_momentum(df)
+        context["indicator_validation"] = validate_bearish_wave_with_indicators(df)
+        adjustment = 0.08 if context["indicator_validation"] else -0.08
+        if aligned_divergence is not None and context["indicator_validation"]:
+            adjustment += 0.02
+        return adjustment, context
 
-    return 0.0
+    return 0.0, context
 
 
 def generate_labeled_wave_counts(pivots, timeframe: str, df: pd.DataFrame | None = None):
@@ -79,14 +120,21 @@ def generate_labeled_wave_counts(pivots, timeframe: str, df: pd.DataFrame | None
     return label_patterns(counts, timeframe)
 
 
-def _append_count(counts: list[dict], pattern_type: str, pattern, confidence: float):
-    counts.append(
-        {
-            "type": pattern_type,
-            "pattern": pattern,
-            "confidence": round(_clamp(confidence), 3),
-        }
-    )
+def _append_count(
+    counts: list[dict],
+    pattern_type: str,
+    pattern,
+    confidence: float,
+    indicator_context: dict | None = None,
+):
+    payload = {
+        "type": pattern_type,
+        "pattern": pattern,
+        "confidence": round(_clamp(confidence), 3),
+    }
+    if indicator_context is not None:
+        payload["indicator_context"] = indicator_context
+    counts.append(payload)
 
 
 def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
@@ -119,8 +167,11 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=structure_score,
                 momentum_score=momentum_score,
             )
-            confidence += _indicator_adjustment(abc.direction, indicator_df)
-            _append_count(counts, "ABC_CORRECTION", abc, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                abc.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(counts, "ABC_CORRECTION", abc, confidence, indicator_context)
 
     if impulse is not None:
         rule_result = validate_pattern_rules("IMPULSE", impulse)
@@ -144,8 +195,11 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=structure_score,
                 momentum_score=momentum_score,
             )
-            confidence += _indicator_adjustment(impulse.direction, indicator_df)
-            _append_count(counts, "IMPULSE", impulse, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                impulse.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(counts, "IMPULSE", impulse, confidence, indicator_context)
 
     if flat is not None:
         rule_result = validate_pattern_rules("FLAT", flat)
@@ -156,8 +210,11 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=score_structure_quality("FLAT"),
                 momentum_score=score_momentum_from_lengths([flat.ab_length, flat.bc_length]),
             )
-            confidence += _indicator_adjustment(flat.direction, indicator_df)
-            _append_count(counts, "FLAT", flat, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                flat.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(counts, "FLAT", flat, confidence, indicator_context)
 
     if expanded_flat is not None:
         rule_result = validate_pattern_rules("EXPANDED_FLAT", expanded_flat)
@@ -170,8 +227,17 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                     [expanded_flat.ab_length, expanded_flat.bc_length]
                 ),
             )
-            confidence += _indicator_adjustment(expanded_flat.direction, indicator_df)
-            _append_count(counts, "EXPANDED_FLAT", expanded_flat, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                expanded_flat.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(
+                counts,
+                "EXPANDED_FLAT",
+                expanded_flat,
+                confidence,
+                indicator_context,
+            )
 
     if running_flat is not None:
         rule_result = validate_pattern_rules("RUNNING_FLAT", running_flat)
@@ -184,8 +250,17 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                     [running_flat.ab_length, running_flat.bc_length]
                 ),
             )
-            confidence += _indicator_adjustment(running_flat.direction, indicator_df)
-            _append_count(counts, "RUNNING_FLAT", running_flat, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                running_flat.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(
+                counts,
+                "RUNNING_FLAT",
+                running_flat,
+                confidence,
+                indicator_context,
+            )
 
     if triangle is not None:
         rule_result = validate_pattern_rules("TRIANGLE", triangle)
@@ -207,8 +282,11 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=score_structure_quality("WXY"),
                 momentum_score=score_momentum_from_lengths([wxy.wx_length, wxy.xy_length]),
             )
-            confidence += _indicator_adjustment(wxy.direction, indicator_df)
-            _append_count(counts, "WXY", wxy, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                wxy.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(counts, "WXY", wxy, confidence, indicator_context)
 
     if ending_diagonal is not None:
         rule_result = validate_pattern_rules("ENDING_DIAGONAL", ending_diagonal)
@@ -219,8 +297,17 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=score_diagonal_quality(ending_diagonal),
                 momentum_score=0.62,
             )
-            confidence += _indicator_adjustment(ending_diagonal.direction, indicator_df)
-            _append_count(counts, "ENDING_DIAGONAL", ending_diagonal, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                ending_diagonal.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(
+                counts,
+                "ENDING_DIAGONAL",
+                ending_diagonal,
+                confidence,
+                indicator_context,
+            )
 
     if leading_diagonal is not None:
         rule_result = validate_pattern_rules("LEADING_DIAGONAL", leading_diagonal)
@@ -231,8 +318,17 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=score_diagonal_quality(leading_diagonal),
                 momentum_score=0.60,
             )
-            confidence += _indicator_adjustment(leading_diagonal.direction, indicator_df)
-            _append_count(counts, "LEADING_DIAGONAL", leading_diagonal, confidence)
+            indicator_adjustment, indicator_context = _indicator_adjustment_with_context(
+                leading_diagonal.direction, indicator_df, pivots
+            )
+            confidence += indicator_adjustment
+            _append_count(
+                counts,
+                "LEADING_DIAGONAL",
+                leading_diagonal,
+                confidence,
+                indicator_context,
+            )
 
     counts = rank_wave_counts(counts)
     return counts

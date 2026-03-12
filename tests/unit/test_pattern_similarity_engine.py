@@ -1,4 +1,5 @@
 from analysis.pattern_similarity_engine import (
+    build_pattern_report,
     build_pattern_label,
     compute_similarity_score,
 )
@@ -22,3 +23,17 @@ def test_compute_similarity_score():
 
     assert score > 0
     assert score <= 1
+
+
+def test_build_pattern_report_preserves_indicator_context():
+    pattern = {
+        "type": "ABC_CORRECTION",
+        "pattern": type("Pattern", (), {"direction": "bullish"})(),
+        "confidence": 0.8,
+        "probability": 0.4,
+        "indicator_context": {"rsi_divergence": "BULLISH_RSI_DIVERGENCE"},
+    }
+
+    report = build_pattern_report(pattern, "4H")
+
+    assert report["indicator_context"]["rsi_divergence"] == "BULLISH_RSI_DIVERGENCE"

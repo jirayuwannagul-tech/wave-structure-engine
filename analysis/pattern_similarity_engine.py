@@ -44,5 +44,6 @@ def build_pattern_report(pattern: dict, timeframe: str) -> dict:
         "confidence": pattern.get("confidence"),
         "probability": pattern.get("probability"),
         "adjusted_confidence": pattern.get("adjusted_confidence"),
+        "indicator_context": pattern.get("indicator_context"),
         "similarity_score": similarity,
     }

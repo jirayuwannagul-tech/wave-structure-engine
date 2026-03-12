@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 
+from analysis.rsi_divergence import (
+    RSIDivergenceSignal,
+    detect_bearish_rsi_divergence,
+    detect_bullish_rsi_divergence,
+)
+
 
 def check_bullish_trend_context(df: pd.DataFrame) -> bool:
     if "close" not in df.columns or "ema50" not in df.columns:
@@ -42,6 +48,25 @@ def check_atr_expansion(df: pd.DataFrame, lookback: int = 20) -> bool:
         return False
 
     return bool(recent_atr >= avg_atr)
+
+
+def detect_aligned_rsi_divergence(
+    direction: str,
+    df: pd.DataFrame,
+    pivots,
+) -> RSIDivergenceSignal | None:
+    direction = (direction or "").lower()
+
+    if len(df) == 0 or not pivots:
+        return None
+
+    if direction == "bullish":
+        return detect_bullish_rsi_divergence(df, pivots)
+
+    if direction == "bearish":
+        return detect_bearish_rsi_divergence(df, pivots)
+
+    return None
 
 
 def validate_bullish_wave_with_indicators(df: pd.DataFrame) -> bool:

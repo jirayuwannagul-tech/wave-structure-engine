@@ -73,6 +73,7 @@ def build_dataframe_analysis(
 
     probability = primary_report.get("probability")
     confidence = primary_report.get("confidence")
+    indicator_context = primary_report.get("indicator_context")
 
     report = format_report(
         symbol=symbol,
@@ -87,6 +88,7 @@ def build_dataframe_analysis(
         wave_summary=wave_summary,
         pattern_type=primary_pattern_type,
         trend=trend,
+        indicator_context=indicator_context,
     )
 
     return {
@@ -106,6 +108,7 @@ def build_dataframe_analysis(
         "trend": trend,
         "confidence": confidence,
         "probability": probability,
+        "indicator_context": indicator_context,
         "report": report,
     }
 

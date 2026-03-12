@@ -96,6 +96,7 @@ def format_report(
     wave_summary: dict | None = None,
     pattern_type: str | None = None,
     trend: TrendClassification | None = None,
+    indicator_context: dict | None = None,
 ) -> str:
     lines = [
         f"Symbol: {symbol}",
@@ -137,6 +138,27 @@ def format_report(
         lines.append(f"Trend: {trend.state}")
         lines.append(f"Dow Theory: {trend.swing_structure} | source={trend.source} | confidence={trend.confidence}")
         lines.append(f"Trend Detail: {trend.message}")
+
+    if indicator_context is not None:
+        trend_ok = indicator_context.get("trend_ok")
+        momentum_ok = indicator_context.get("momentum_ok")
+        atr_ok = indicator_context.get("atr_ok")
+        validation_ok = indicator_context.get("indicator_validation")
+        divergence = indicator_context.get("rsi_divergence", "NONE")
+        divergence_message = indicator_context.get("rsi_divergence_message")
+
+        lines.append("Indicator Context:")
+        if trend_ok is not None:
+            lines.append(f"Trend Filter: {'PASS' if trend_ok else 'FAIL'}")
+        if momentum_ok is not None:
+            lines.append(f"Momentum Filter: {'PASS' if momentum_ok else 'FAIL'}")
+        if atr_ok is not None:
+            lines.append(f"ATR Expansion: {'PASS' if atr_ok else 'FAIL'}")
+        if validation_ok is not None:
+            lines.append(f"Indicator Validation: {'PASS' if validation_ok else 'FAIL'}")
+        lines.append(f"RSI Divergence: {divergence}")
+        if divergence_message:
+            lines.append(f"RSI Detail: {divergence_message}")
 
     if confidence is not None:
         lines.append(f"Wave Confidence: {confidence}")

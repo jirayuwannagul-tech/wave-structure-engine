@@ -66,6 +66,14 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
                 "pattern": PatternStub(),
                 "probability": 0.2,
                 "confidence": 0.8,
+                "indicator_context": {
+                    "trend_ok": True,
+                    "momentum_ok": True,
+                    "atr_ok": True,
+                    "indicator_validation": True,
+                    "rsi_divergence": "BULLISH_RSI_DIVERGENCE",
+                    "rsi_divergence_message": "price made a lower low while RSI made a higher low",
+                },
             }
         ],
     )
@@ -101,3 +109,4 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
     assert result["trend"].state == "UPTREND"
     assert "Trend: UPTREND" in result["report"]
     assert "Dow Theory: HH_HL" in result["report"]
+    assert "RSI Divergence: BULLISH_RSI_DIVERGENCE" in result["report"]
