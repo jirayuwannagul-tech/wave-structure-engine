@@ -201,6 +201,21 @@ class WaveRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_signal_events_signal_id
                 ON signal_events(signal_id);
+
+                CREATE TABLE IF NOT EXISTS news_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    link TEXT NOT NULL,
+                    published_at TEXT,
+                    summary_text TEXT,
+                    tag_text TEXT,
+                    external_id TEXT NOT NULL UNIQUE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_news_items_external_id
+                ON news_items(external_id);
                 """
             )
 
@@ -230,6 +245,49 @@ class WaveRepository:
                 "SELECT * FROM signals WHERE id = ?",
                 (signal_id,),
             ).fetchone()
+
+    def has_news_item(self, external_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM news_items WHERE external_id = ?",
+                (external_id,),
+            ).fetchone()
+        return row is not None
+
+    def record_news_item(
+        self,
+        *,
+        source: str,
+        title: str,
+        link: str,
+        published_at: str | None,
+        summary_text: str | None,
+        tag_text: str | None,
+        external_id: str,
+    ) -> int | None:
+        if self.has_news_item(external_id):
+            return None
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO news_items (
+                    created_at, source, title, link, published_at,
+                    summary_text, tag_text, external_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utc_now(),
+                    source,
+                    title,
+                    link,
+                    published_at,
+                    summary_text,
+                    tag_text,
+                    external_id,
+                ),
+            )
+            return int(cursor.lastrowid)
 
     def record_analysis_snapshot(self, analysis: dict, current_price: float | None = None) -> int:
         snapshot = build_signal_snapshot(analysis)

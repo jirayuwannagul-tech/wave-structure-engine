@@ -120,6 +120,12 @@ Run one monitoring cycle only:
 python main.py orchestrator --once
 ```
 
+Run BTC news context monitor:
+
+```bash
+python main.py news-monitor --once
+```
+
 Run trade backtest with fee and slippage:
 
 ```bash

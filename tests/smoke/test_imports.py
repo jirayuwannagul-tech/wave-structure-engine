@@ -28,5 +28,6 @@ def test_import_core_modules():
     import alerts.notifier
     import scheduler.daily_scheduler
     import core.engine
+    import services.news_rss_monitor
 
     assert True

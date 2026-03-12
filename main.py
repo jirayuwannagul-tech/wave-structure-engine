@@ -7,6 +7,7 @@ from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.settings import load_env_file
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
+from services.news_rss_monitor import run_news_monitor
 from services.trading_orchestrator import _load_runtime, render_runtime_snapshot, run_orchestrator
 from storage.wave_repository import WaveRepository
 
@@ -90,6 +91,10 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--fee-bps", type=float, default=4.0)
     backtest_parser.add_argument("--slippage-bps", type=float, default=2.0)
 
+    news_parser = subparsers.add_parser("news-monitor", help="Run BTC RSS news context monitor")
+    news_parser.add_argument("--poll-interval", type=float, default=900.0)
+    news_parser.add_argument("--once", action="store_true")
+
     return parser
 
 
@@ -118,6 +123,13 @@ def main() -> None:
             step=args.step,
             fee_bps=args.fee_bps,
             slippage_bps=args.slippage_bps,
+        )
+        return
+
+    if args.command == "news-monitor":
+        run_news_monitor(
+            poll_interval=args.poll_interval,
+            once=args.once,
         )
         return
 
