@@ -1,42 +1,27 @@
-# Elliott Wave Engine
+# Wave Structure Engine
 
-## Project Objective
+Deterministic Elliott Wave analysis engine for BTC market structure.
 
-โปรเจกต์นี้มีเป้าหมายเดียวคือ
+This project is built to do one job well:
 
-สร้างระบบที่สามารถ **นับ Elliott Wave ตามกฎให้ถูกต้องที่สุด**  
-และ **สร้าง Scenario จากโครงสร้างคลื่นนั้น**
+- detect Elliott Wave structures
+- validate Elliott Wave rules
+- extract Fibonacci-based key levels
+- generate main and alternate scenarios
 
-ระบบนี้ **ไม่ใช่ trading bot**
+It is not a trading bot.
 
-หน้าที่ของระบบมีแค่
+## What This Repo Does
 
-1. วิเคราะห์โครงสร้างคลื่น
-2. ตรวจสอบกฎ Elliott Wave
-3. หา Key Price จาก Fibonacci
-4. สร้าง Scenario
+The engine reads OHLCV data and produces:
 
----
+- wave structure interpretation
+- support and resistance
+- confirmation and invalidation levels
+- scenario-based entry, stop loss, and TP1/TP2/TP3
+- live monitoring flow that can re-analyze after a key level breaks
 
-# Core Philosophy
-
-Structure First
-
-ระบบนี้โฟกัส
-
-Elliott Wave Structure Engine
-
-ไม่เพิ่ม indicator หรือระบบอื่นจนกว่าส่วนนี้จะนิ่ง
-
----
-
-# System Responsibilities
-
-ระบบต้องทำได้ 4 อย่างเท่านั้น
-
-## 1 Wave Detection
-
-ตรวจจับคลื่น
+Supported structures:
 
 - Impulse
 - ABC Correction
@@ -48,211 +33,186 @@ Elliott Wave Structure Engine
 - Leading Diagonal
 - Ending Diagonal
 
----
+Supported timeframes:
 
-## 2 Rule Validation
+- `1W`
+- `1D`
+- `4H`
 
-ตรวจสอบกฎ Elliott Wave
+## What This Repo Does Not Do
 
-- Wave2 cannot retrace beyond Wave1 origin
-- Wave3 cannot be the shortest
-- Wave4 cannot overlap Wave1
-
----
-
-## 3 Key Price Detection
-
-หา
-
-- support
-- resistance
-- confirmation
-- invalidation
-
-โดยใช้
-
-Fibonacci retracement  
-Fibonacci extension
-
----
-
-## 4 Scenario Generation
-
-สร้าง
-
-- Main Scenario
-- Alternate Scenario
-
-พร้อม
-
-- targets
-- stop level
-- confirmation level
-- invalidation level
-
----
-
-# What This System Does NOT Do
-
-เพื่อกันโปรเจกต์บานปลาย
-
-ระบบนี้ **ไม่ทำ**
+To keep the scope strict, this project does not include:
 
 - auto trading
 - order execution
 - portfolio management
-- telegram bot
-- exchange integration
+- exchange account actions
+- strategy optimization outside the Elliott Wave analysis scope
 
----
+## Core Philosophy
 
-# Architecture
+Structure first.
 
----
+Given the same price data, the engine should produce the same interpretation every time.
 
-# System Flow
+This system is:
 
-Price Data
+- deterministic
+- rule-based
+- Fibonacci-driven
+- focused on market structure
 
-→ Pivot Detection
+This system is not:
 
-→ Wave Detection
+- machine learning based
+- random
+- a black box predictor
 
-→ Rule Validation
+## System Flow
 
-→ Multi Count Engine
+`OHLCV -> Pivot Detection -> Wave Detection -> Rule Validation -> Multi Count Ranking -> Key Level Extraction -> Scenario Generation`
 
-→ Probability Ranking
+## Repository Layout
 
-→ Key Level Extraction
+- `analysis/` core Elliott Wave logic
+- `core/` analysis pipeline entry logic
+- `scenarios/` scenario generation and state handling
+- `services/` monitoring, alerts, orchestrator flow
+- `data/` sample BTC datasets and market data fetchers
+- `tests/` unit, integration, regression, and live-flow tests
 
-→ Scenario Generation
+## Requirements
 
----
+- Python `3.11+`
+- OHLCV data with columns:
+  - `open_time`
+  - `open`
+  - `high`
+  - `low`
+  - `close`
+  - `volume`
 
-# Backtesting
+Install dependencies:
 
-ระบบทดสอบด้วย
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-- BTC 1W
-- BTC 1D
-- BTC 4H
+## Quick Start
 
-วัด
+Current snapshot:
 
-direction correctness
+```bash
+python main.py dry-run
+```
 
----
+Run live orchestrator:
 
-# Project Ceiling
+```bash
+python main.py orchestrator
+```
 
-โปรเจกต์นี้มีเพดาน
+Run one monitoring cycle only:
 
-เมื่อครบสิ่งนี้ถือว่าเสร็จ
+```bash
+python main.py orchestrator --once
+```
+
+Run trade backtest with fee and slippage:
+
+```bash
+python main.py trade-backtest --fee-bps 4 --slippage-bps 2
+```
+
+Run specific timeframes only:
+
+```bash
+python main.py trade-backtest --timeframes 1D 4H
+```
+
+## Example Output
+
+Typical dry-run output:
+
+```text
+1D | EXPANDED_FLAT | Main Bearish
+Bias: BEARISH
+Entry: 63030.0
+SL: 74050.0
+TP1: 67091.17
+TP2: 65198.37
+TP3: 62790.61
+
+4H | ABC_CORRECTION | Main Bullish
+Bias: BULLISH
+Entry: 71777.0
+SL: 69266.06
+TP1: 75424.57
+TP2: 77099.68
+TP3: 79230.53
+```
+
+## Alert and Recount Flow
+
+The orchestrator can:
+
+- watch key levels
+- alert when price is near or breaks a level
+- detect scenario confirmation or invalidation
+- re-run analysis after a break
+- publish a fresh set of key levels and scenario prices
+
+This keeps the engine focused on:
+
+- wave recounting
+- key level refresh
+- scenario refresh
+
+not trade execution.
+
+## Backtesting
+
+This repository includes:
+
+- direction correctness backtesting
+- scenario-to-trade backtesting
+- fee/slippage-aware trade backtesting
+
+Datasets included in the repo:
+
+- `BTCUSDT_1w.csv`
+- `BTCUSDT_1d.csv`
+- `BTCUSDT_4h.csv`
+
+## Testing
+
+Run the full test suite:
+
+```bash
+pytest -q
+```
+
+## Project Ceiling
+
+This project is considered complete when these pieces are in place:
 
 - wave detection
 - rule validation
-- fibonacci key levels
+- Fibonacci key levels
 - scenario generation
-- multi count ranking
+- multi-count ranking
 - backtesting framework
 
-หลังจากนี้ **หยุดพัฒนา**
+After that, scope should stop expanding.
 
----
+## Final Goal
 
-# Final Goal
+Build a deterministic Elliott Wave analysis engine that can:
 
-Deterministic Elliott Wave Analysis Engine
+- read market structure
+- generate scenarios
+- identify key prices
 
-ที่
-
-- วิเคราะห์โครงสร้างตลาด
-- สร้าง scenario
-- หา key price
-
-โดยไม่พยายามทำนายตลาด 100%
-
-# Data Requirements
-
-ระบบต้องใช้ข้อมูล OHLCV
-
-Required columns
-
-- open_time
-- open
-- high
-- low
-- close
-- volume
-
-Supported timeframes
-
-- 1W
-- 1D
-- 4H
-
-Pivot detection จะสร้าง swing structure จากข้อมูลนี้
-
-# Wave Detection Method
-
-ระบบใช้
-
-Fractal Pivot Detection
-
-เพื่อสร้าง
-
-market swing structure
-
-pivot types
-
-- H (swing high)
-- L (swing low)
-
-จากนั้นใช้ swing เหล่านี้สร้าง
-
-- impulse
-- correction patterns
-
-# Multi Count System
-
-ตลาดสามารถตีความคลื่นได้หลายแบบ
-
-ระบบจะสร้าง
-
-multiple wave counts
-
-จากนั้นใช้
-
-confidence scoring
-
-เพื่อจัดอันดับ
-
-- main count
-- alternate count
-
-# Deterministic Design
-
-ระบบนี้เป็น deterministic system
-
-หมายความว่า
-
-given the same price data
-
-the system must produce
-
-the same wave interpretation
-
-ทุกครั้ง
-
-ไม่มี
-
-- randomness
-- machine learning
-- probabilistic guessing
-
-ผลลัพธ์ต้องมาจาก
-
-- Elliott Wave rules
-- Fibonacci relationships
-- market structure
+without pretending to predict the market with certainty.
