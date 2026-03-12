@@ -16,6 +16,7 @@ def _signal_row(
         "created_at": "2026-03-12T00:15:00+00:00",
         "symbol": "BTCUSDT",
         "timeframe": "4H",
+        "side": "SHORT",
         "entry_price": 68977.91,
         "stop_loss": 71321.0,
         "tp1": 68521.91,
@@ -36,7 +37,7 @@ class FakeWorksheet:
         return self.rows[row_number - 1] if row_number <= len(self.rows) else []
 
     def update(self, target, values, value_input_option=None):
-        if target == "A1:J1":
+        if target == "A1:K1":
             self.rows[0] = list(values[0])
             return
 
@@ -78,6 +79,7 @@ def test_build_signal_sheet_row_formats_expected_columns():
         "2026-03-12",
         "BTCUSDT",
         "4H",
+        "SHORT",
         "68977.91",
         "71321",
         "68521.91",
@@ -101,11 +103,12 @@ def test_google_sheets_logger_upserts_existing_signal_row():
     logger.upsert_signal(pending)
 
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][8] == "PENDING_ENTRY"
+    assert worksheet.rows[1][3] == "SHORT"
+    assert worksheet.rows[1][9] == "PENDING_ENTRY"
 
     stopped = _signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00")
     logger.upsert_signal(stopped)
 
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][8] == "TP1_THEN_SL"
-    assert worksheet.rows[1][9] == "0.33"
+    assert worksheet.rows[1][9] == "TP1_THEN_SL"
+    assert worksheet.rows[1][10] == "0.33"

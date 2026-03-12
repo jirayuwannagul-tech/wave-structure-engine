@@ -10,6 +10,7 @@ SHEET_HEADERS = [
     "date",
     "symbol",
     "timeframe",
+    "side",
     "entry",
     "sl",
     "tp1",
@@ -79,6 +80,7 @@ def build_signal_sheet_row(signal_row) -> list[str]:
         _signal_date(signal_row),
         str(signal_row["symbol"] or ""),
         str(signal_row["timeframe"] or ""),
+        str(signal_row["side"] or ""),
         _normalize_price(signal_row["entry_price"]),
         _normalize_price(signal_row["stop_loss"]),
         _normalize_price(signal_row["tp1"]),
@@ -90,7 +92,7 @@ def build_signal_sheet_row(signal_row) -> list[str]:
 
 
 def _build_identity_key(row_values: list[str]) -> tuple[str, ...]:
-    return tuple(row_values[:8])
+    return tuple(row_values[:9])
 
 
 class GoogleSheetsSignalLogger:
@@ -144,7 +146,7 @@ class GoogleSheetsSignalLogger:
     def _ensure_headers(self) -> None:
         header_row = self.worksheet.row_values(1)
         if header_row[: len(SHEET_HEADERS)] != SHEET_HEADERS:
-            self.worksheet.update("A1:J1", [SHEET_HEADERS])
+            self.worksheet.update("A1:K1", [SHEET_HEADERS])
 
     def upsert_signal(self, signal_row) -> None:
         row_values = build_signal_sheet_row(signal_row)
@@ -156,7 +158,7 @@ class GoogleSheetsSignalLogger:
             return
 
         self.worksheet.update(
-            f"A{existing_row}:J{existing_row}",
+            f"A{existing_row}:K{existing_row}",
             [row_values],
             value_input_option="USER_ENTERED",
         )
