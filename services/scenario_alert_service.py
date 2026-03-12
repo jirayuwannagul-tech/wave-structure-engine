@@ -18,6 +18,7 @@ def check_scenario_and_alert(
     current_price: float,
     store: AlertStateStore,
     symbol: str = "BTCUSDT",
+    timeframe: str | None = None,
 ):
     state = update_scenario_state(scenario, current_price)
     key = _build_scenario_alert_key(symbol, scenario)
@@ -32,7 +33,8 @@ def check_scenario_and_alert(
             f"ราคา: {current_price}\n"
             f"Confirm: {scenario.confirmation}\n"
             f"SL: {scenario.stop_loss}\n"
-            f"Targets: {scenario.targets}"
+            f"Targets: {scenario.targets}",
+            timeframe=timeframe,
         )
 
     elif state == "INVALIDATED":
@@ -40,7 +42,8 @@ def check_scenario_and_alert(
             f"❌ {symbol} Scenario Invalidated\n"
             f"Scenario: {scenario.name}\n"
             f"ราคา: {current_price}\n"
-            f"Invalidation: {scenario.invalidation}"
+            f"Invalidation: {scenario.invalidation}",
+            timeframe=timeframe,
         )
 
     return state

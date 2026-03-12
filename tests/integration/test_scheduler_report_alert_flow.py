@@ -13,8 +13,9 @@ def test_run_daily_job_calls_notification(monkeypatch):
         lambda symbol: "TEST REPORT"
     )
 
-    def fake_send_notification(message: str):
+    def fake_send_notification(message: str, **kwargs):
         calls["message"] = message
+        calls["kwargs"] = kwargs
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.send_notification",
@@ -24,3 +25,4 @@ def test_run_daily_job_calls_notification(monkeypatch):
     run_daily_job(now=now)
 
     assert calls["message"] == "BTCUSDT Daily Close Summary\nDate: 2026-03-12\n\nTEST REPORT"
+    assert calls["kwargs"] == {"topic_key": "daily_summary"}

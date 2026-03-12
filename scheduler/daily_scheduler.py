@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from core.engine import run_multi_timeframe
-from alerts.notifier import send_notification
+from services.notifier import send_notification
 
 THAI_TZ = ZoneInfo("Asia/Bangkok")
 
@@ -38,7 +38,10 @@ def build_daily_summary_message(report: str, now: datetime | None = None) -> str
 
 def run_daily_job(now: datetime | None = None) -> None:
     report = run_multi_timeframe("BTCUSDT")
-    send_notification(build_daily_summary_message(report, now=now))
+    send_notification(
+        build_daily_summary_message(report, now=now),
+        topic_key="daily_summary",
+    )
 
 
 if __name__ == "__main__":

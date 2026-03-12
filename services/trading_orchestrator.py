@@ -45,7 +45,13 @@ def _build_runtime(symbol: str, analyses: list[dict]) -> OrchestratorRuntime:
 
     for analysis in analyses:
         levels.extend(_build_levels_from_analysis(analysis))
-        scenarios.extend(analysis.get("scenarios", []))
+        for scenario in analysis.get("scenarios", []):
+            scenarios.append(
+                {
+                    "timeframe": analysis.get("timeframe"),
+                    "scenario": scenario,
+                }
+            )
 
     return OrchestratorRuntime(
         symbol=symbol,
@@ -114,12 +120,13 @@ def _refresh_runtime(
         signal_ids = repository.sync_runtime(refreshed, current_price=current_price)
         for signal_id in signal_ids:
             safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
-    summary = "\n\n".join(_format_analysis_summary(a) for a in refreshed.analyses)
-    send_notification(
-        f"🔄 {runtime.symbol} Re-analysis triggered\n"
-        f"Reason: {reason}\n\n"
-        f"{summary}"
-    )
+    for analysis in refreshed.analyses:
+        send_notification(
+            f"🔄 {runtime.symbol} Re-analysis triggered\n"
+            f"Reason: {reason}\n\n"
+            f"{_format_analysis_summary(analysis)}",
+            timeframe=analysis.get("timeframe"),
+        )
     return refreshed
 
 
@@ -181,7 +188,7 @@ def process_market_update(
             safe_sync_signal(signal_row, sheets_logger)
             message = _build_signal_event_message(signal_row, event_type)
             if message:
-                send_notification(message)
+                send_notification(message, timeframe=signal_row["timeframe"], include_layout=False)
 
     for level in runtime.levels:
         state = detect_level_state(
@@ -202,21 +209,34 @@ def process_market_update(
         if state == "NEAR":
             send_notification(
                 f"⚠️ {runtime.symbol} เข้าใกล้ {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}"
+                f"ราคาปัจจุบัน: {current_price}",
+                timeframe=level.name.split()[0],
             )
         elif state == "BREAK":
             send_notification(
                 f"🚨 {runtime.symbol} BREAK {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}"
+                f"ราคาปัจจุบัน: {current_price}",
+                timeframe=level.name.split()[0],
             )
             refresh_reasons.append(f"level break: {level.name}")
 
-    for scenario in runtime.scenarios:
+    for scenario_item in runtime.scenarios:
+        if isinstance(scenario_item, dict):
+            scenario = scenario_item.get("scenario")
+            timeframe = scenario_item.get("timeframe")
+        else:
+            scenario = scenario_item
+            timeframe = None
+
+        if scenario is None:
+            continue
+
         state = check_scenario_and_alert(
             scenario=scenario,
             current_price=current_price,
             store=store,
             symbol=runtime.symbol,
+            timeframe=timeframe,
         )
         if state in {"CONFIRMED", "INVALIDATED"}:
             refresh_reasons.append(f"scenario {state.lower()}: {scenario.name}")
