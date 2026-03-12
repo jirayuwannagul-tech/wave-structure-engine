@@ -4,6 +4,7 @@ import argparse
 import json
 
 from analysis.trade_backtest_runner import run_trade_backtest_suite
+from config.settings import load_env_file
 from services.binance_price_service import get_last_price
 from services.trading_orchestrator import _load_runtime, render_runtime_snapshot, run_orchestrator
 
@@ -86,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    load_env_file()
     parser = build_parser()
     args = parser.parse_args()
 
