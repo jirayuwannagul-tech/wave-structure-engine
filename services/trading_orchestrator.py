@@ -32,6 +32,34 @@ def _fmt_value(value) -> str:
     return str(value)
 
 
+def _infer_setup_status(
+    bias: str | None,
+    entry: float | None,
+    stop_loss: float | None,
+    current_price: float | None,
+) -> tuple[str, str]:
+    bias = (bias or "").upper()
+
+    if current_price is None or entry is None:
+        return "UNKNOWN", "WAIT"
+
+    if bias == "BULLISH":
+        if stop_loss is not None and current_price <= stop_loss:
+            return "INVALIDATED", "ABOVE"
+        if current_price >= entry:
+            return "ACTIVE", "ABOVE"
+        return "WAITING_BREAKOUT", "ABOVE"
+
+    if bias == "BEARISH":
+        if stop_loss is not None and current_price >= stop_loss:
+            return "INVALIDATED", "BELOW"
+        if current_price <= entry:
+            return "ACTIVE", "BELOW"
+        return "WAITING_BREAKDOWN", "BELOW"
+
+    return "NEUTRAL", "WAIT"
+
+
 def _build_levels_from_analysis(analysis: dict) -> list[Level]:
     levels: list[Level] = []
     timeframe = analysis["timeframe"]
@@ -102,10 +130,25 @@ def _format_analysis_summary(analysis: dict) -> str:
     tp2 = targets[1] if len(targets) >= 2 else None
     tp3 = targets[2] if len(targets) >= 3 else None
     scenario_name = getattr(main_scenario, "name", None) or "No active scenario"
+    current_price = analysis.get("current_price")
+    setup_status, trigger_side = _infer_setup_status(
+        bias=bias,
+        entry=entry,
+        stop_loss=stop_loss,
+        current_price=current_price,
+    )
+    if trigger_side == "ABOVE":
+        trigger_text = f"Above {_fmt_value(entry)}"
+    elif trigger_side == "BELOW":
+        trigger_text = f"Below {_fmt_value(entry)}"
+    else:
+        trigger_text = _fmt_value(entry)
 
     return (
         f"{timeframe} | {pattern_type} | {scenario_name}\n"
         f"Bias: {bias}\n"
+        f"Setup: {setup_status}\n"
+        f"Trigger: {trigger_text}\n"
         f"Entry: {_fmt_value(entry)}\n"
         f"SL: {_fmt_value(stop_loss)}\n"
         f"TP1: {_fmt_value(tp1)}\n"

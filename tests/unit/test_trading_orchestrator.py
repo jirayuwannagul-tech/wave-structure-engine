@@ -30,6 +30,7 @@ def test_build_levels_from_analysis():
 def test_format_analysis_summary_includes_entry_sl_and_targets():
     analysis = {
         "timeframe": "4H",
+        "current_price": 70000.0,
         "primary_pattern_type": "ABC_CORRECTION",
         "wave_summary": {
             "confirm": 71777.0,
@@ -55,11 +56,41 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
 
     assert "4H | ABC_CORRECTION | Main Bullish" in summary
     assert "Bias: BULLISH" in summary
+    assert "Setup: WAITING_BREAKOUT" in summary
+    assert "Trigger: Above 71777" in summary
     assert "Entry: 71777" in summary
     assert "SL: 69266.06" in summary
     assert "TP1: 75424.57" in summary
     assert "TP2: 77099.68" in summary
     assert "TP3: 79230.53" in summary
+
+
+def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
+    analysis = {
+        "timeframe": "1D",
+        "current_price": 70165.1,
+        "primary_pattern_type": "EXPANDED_FLAT",
+        "wave_summary": {},
+        "scenarios": [
+            Scenario(
+                name="Main Bearish",
+                condition="price breaks below 63030.0",
+                interpretation="correction likely finished",
+                target="move lower",
+                bias="BEARISH",
+                invalidation=74050.0,
+                confirmation=63030.0,
+                stop_loss=74050.0,
+                targets=[52010.0, 49012.56, 45199.64],
+            )
+        ],
+    }
+
+    summary = _format_analysis_summary(analysis)
+
+    assert "Setup: WAITING_BREAKDOWN" in summary
+    assert "Trigger: Below 63030" in summary
+    assert "TP1: 52010" in summary
 
 
 def test_process_market_update_refreshes_after_level_break(monkeypatch):
@@ -161,24 +192,26 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
         analyses=[
             {
                 "timeframe": "1D",
+                "current_price": 70165.1,
                 "primary_pattern_type": "EXPANDED_FLAT",
                 "wave_summary": {},
                 "scenarios": [
                     Scenario(
                         name="Main Bearish",
-                        condition="price stays below 74050.0",
+                        condition="price breaks below 63030.0",
                         interpretation="correction likely finished",
                         target="move lower",
                         bias="BEARISH",
                         invalidation=74050.0,
                         confirmation=63030.0,
                         stop_loss=74050.0,
-                        targets=[67091.17, 65198.37, 62790.61],
+                        targets=[52010.0, 49012.56, 45199.64],
                     )
                 ],
             },
             {
                 "timeframe": "4H",
+                "current_price": 70000.0,
                 "primary_pattern_type": "ABC_CORRECTION",
                 "wave_summary": {},
                 "scenarios": [
@@ -215,11 +248,13 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
     assert len(notifications) == 2
     assert "Reason: level break: 4H Resistance" in notifications[0][0]
     assert "1D | EXPANDED_FLAT | Main Bearish" in notifications[0][0]
+    assert "Setup: WAITING_BREAKDOWN" in notifications[0][0]
     assert "Entry: 63030" in notifications[0][0]
     assert "SL: 74050" in notifications[0][0]
-    assert "TP3: 62790.61" in notifications[0][0]
+    assert "TP3: 45199.64" in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "1D"
     assert "4H | ABC_CORRECTION | Main Bullish" in notifications[1][0]
+    assert "Setup: WAITING_BREAKOUT" in notifications[1][0]
     assert "Entry: 71777" in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"
 
