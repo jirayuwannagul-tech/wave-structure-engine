@@ -34,7 +34,6 @@ from analysis.wave_detector import detect_latest_abc, detect_latest_impulse
 from analysis.wave_probability import rank_wave_counts
 from analysis.wxy_detector import detect_wxy
 
-
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 

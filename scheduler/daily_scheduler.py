@@ -20,9 +20,25 @@ def is_daily_run_time(now: datetime | None = None) -> bool:
     return now.hour == 7 and now.minute == 5
 
 
-def run_daily_job() -> None:
+def build_daily_summary_message(report: str, now: datetime | None = None) -> str:
+    if now is None:
+        now = datetime.now(THAI_TZ)
+
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=THAI_TZ)
+    else:
+        now = now.astimezone(THAI_TZ)
+
+    return (
+        "BTCUSDT Daily Close Summary\n"
+        f"Date: {now.strftime('%Y-%m-%d')}\n\n"
+        f"{report}"
+    )
+
+
+def run_daily_job(now: datetime | None = None) -> None:
     report = run_multi_timeframe("BTCUSDT")
-    send_notification(report)
+    send_notification(build_daily_summary_message(report, now=now))
 
 
 if __name__ == "__main__":

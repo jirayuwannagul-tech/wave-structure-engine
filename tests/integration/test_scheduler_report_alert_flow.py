@@ -1,8 +1,12 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from scheduler.daily_scheduler import run_daily_job
 
 
 def test_run_daily_job_calls_notification(monkeypatch):
     calls = {"message": None}
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=ZoneInfo("Asia/Bangkok"))
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.run_multi_timeframe",
@@ -17,6 +21,6 @@ def test_run_daily_job_calls_notification(monkeypatch):
         fake_send_notification,
     )
 
-    run_daily_job()
+    run_daily_job(now=now)
 
-    assert calls["message"] == "TEST REPORT"
+    assert calls["message"] == "BTCUSDT Daily Close Summary\nDate: 2026-03-12\n\nTEST REPORT"

@@ -133,39 +133,28 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     if event_type not in {"TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT"}:
         return None
 
-    symbol = signal_row["symbol"]
     timeframe = signal_row["timeframe"]
     scenario_name = signal_row["scenario_name"]
-    pattern_type = signal_row["pattern_type"]
-    side = signal_row["side"]
     entry_price = signal_row["entry_price"]
     stop_loss = signal_row["stop_loss"]
     tp1 = signal_row["tp1"]
     tp2 = signal_row["tp2"]
     tp3 = signal_row["tp3"]
-    current_price = signal_row["current_price"]
     status = signal_row["status"]
-
-    title_map = {
-        "TP1_HIT": "🎯 TP1 Hit",
-        "TP2_HIT": "🎯 TP2 Hit",
-        "TP3_HIT": "🎯 TP3 Hit",
-        "STOP_LOSS_HIT": "🛑 Stop Loss Hit",
-    }
+    tp1_mark = " ✅" if signal_row["tp1_hit_at"] else ""
+    tp2_mark = " ✅" if signal_row["tp2_hit_at"] else ""
+    tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
+    sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
 
     return (
-        f"{title_map[event_type]}\n"
-        f"{symbol} {timeframe}\n"
-        f"Pattern: {pattern_type}\n"
-        f"Scenario: {scenario_name}\n"
-        f"Side: {side}\n"
-        f"Current price: {current_price}\n"
+        f"{timeframe}\n\n"
+        f"status: {status}\n"
+        f"scenario: {scenario_name}\n"
         f"Entry: {entry_price}\n"
-        f"SL: {stop_loss}\n"
-        f"TP1: {tp1}\n"
-        f"TP2: {tp2}\n"
-        f"TP3: {tp3}\n"
-        f"Status: {status}"
+        f"SL: {stop_loss}{sl_mark}\n"
+        f"TP1: {tp1}{tp1_mark}\n"
+        f"TP2: {tp2}{tp2_mark}\n"
+        f"TP3: {tp3}{tp3_mark}"
     )
 
 

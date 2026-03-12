@@ -261,10 +261,12 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
     process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 1
-    assert "🎯 TP1 Hit" in notifications[0]
-    assert "BTCUSDT 4H" in notifications[0]
+    assert notifications[0].startswith("4H")
+    assert "status: PARTIAL_TP1" in notifications[0]
+    assert "scenario: Main Bullish" in notifications[0]
+    assert "TP1: 110.0 ✅" in notifications[0]
+    assert "TP2: 120.0" in notifications[0]
     assert "1D" not in notifications[0]
-    assert "Status: PARTIAL_TP1" in notifications[0]
 
 
 def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
@@ -308,7 +310,8 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 2
-    assert "🎯 TP1 Hit" in notifications[0]
-    assert "🛑 Stop Loss Hit" in notifications[1]
-    assert "BTCUSDT 4H" in notifications[1]
-    assert "Status: STOPPED" in notifications[1]
+    assert "TP1: 110.0 ✅" in notifications[0]
+    assert notifications[1].startswith("4H")
+    assert "status: STOPPED" in notifications[1]
+    assert "SL: 95.0 ❌" in notifications[1]
+    assert "TP1: 110.0 ✅" in notifications[1]

@@ -7,6 +7,7 @@ from analysis.multi_count_engine import (
     generate_wave_counts,
 )
 from analysis.pivot_detector import detect_pivots
+from analysis.trend_classifier import classify_market_trend
 from analysis.wave_decision_engine import build_wave_summary
 from analysis.wave_position import detect_wave_position
 from data.candle_utils import drop_unclosed_candle
@@ -22,6 +23,7 @@ def build_dataframe_analysis(
     current_price: float | None = None,
 ) -> dict:
     pivots = detect_pivots(df)
+    trend = classify_market_trend(pivots, df=df)
     wave_counts = generate_wave_counts(pivots, df=df)
     labeled_wave_counts = generate_labeled_wave_counts(pivots, timeframe.upper(), df=df)
 
@@ -84,6 +86,7 @@ def build_dataframe_analysis(
         probability=probability,
         wave_summary=wave_summary,
         pattern_type=primary_pattern_type,
+        trend=trend,
     )
 
     return {
@@ -100,6 +103,7 @@ def build_dataframe_analysis(
         "projection": projection,
         "scenarios": scenarios,
         "wave_summary": wave_summary,
+        "trend": trend,
         "confidence": confidence,
         "probability": probability,
         "report": report,

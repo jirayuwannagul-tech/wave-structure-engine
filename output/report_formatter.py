@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from analysis.trend_classifier import TrendClassification
 from analysis.wave_detector import ABCPattern, ImpulsePattern
 from analysis.wave_position import WavePosition
 from scenarios.scenario_engine import Scenario
@@ -94,6 +95,7 @@ def format_report(
     probability: float | None = None,
     wave_summary: dict | None = None,
     pattern_type: str | None = None,
+    trend: TrendClassification | None = None,
 ) -> str:
     lines = [
         f"Symbol: {symbol}",
@@ -130,6 +132,11 @@ def format_report(
             f"Current price: {current_price}",
         ]
     )
+
+    if trend is not None:
+        lines.append(f"Trend: {trend.state}")
+        lines.append(f"Dow Theory: {trend.swing_structure} | source={trend.source} | confidence={trend.confidence}")
+        lines.append(f"Trend Detail: {trend.message}")
 
     if confidence is not None:
         lines.append(f"Wave Confidence: {confidence}")
