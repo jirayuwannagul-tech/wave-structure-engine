@@ -6,6 +6,7 @@ import os
 
 from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.settings import load_env_file
+from data.market_data_fetcher import MarketDataFetcher
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
 from services.news_rss_monitor import run_news_monitor
@@ -51,6 +52,27 @@ def _resolve_symbols(symbol: str | None = None, symbols: list[str] | None = None
     return unique_symbols
 
 
+def _dataset_path(symbol: str, timeframe: str) -> str:
+    interval = timeframe.lower()
+    return f"data/{symbol.upper()}_{interval}.csv"
+
+
+def _fetch_backtest_dataset(symbol: str, timeframe: str, limit: int = 500) -> str:
+    interval = timeframe.lower()
+    fetcher = MarketDataFetcher(symbol=symbol, interval=interval, limit=limit)
+    df = fetcher.fetch_ohlcv()
+    path = _dataset_path(symbol, timeframe)
+    fetcher.save_to_csv(df, path)
+    return path
+
+
+def _resolve_backtest_dataset(symbol: str, timeframe: str, refresh_data: bool = False, limit: int = 500) -> str:
+    path = _dataset_path(symbol, timeframe)
+    if refresh_data or not os.path.exists(path):
+        return _fetch_backtest_dataset(symbol, timeframe, limit=limit)
+    return path
+
+
 def _run_dry_run(symbol: str) -> None:
     runtime = _load_runtime(symbol)
     repository = WaveRepository()
@@ -67,28 +89,39 @@ def _run_dry_run(symbol: str) -> None:
 
 
 def _run_trade_backtest(
-    symbol: str,
+    symbols: list[str],
     timeframes: list[str],
     step: int,
     fee_bps: float,
     slippage_bps: float,
+    refresh_data: bool = False,
+    fetch_limit: int = 500,
 ) -> None:
     fee_rate = fee_bps / 10_000.0
     slippage_rate = slippage_bps / 10_000.0
     output: dict[str, dict] = {}
 
-    for timeframe in _resolve_timeframes(timeframes):
-        csv_path, min_window = TIMEFRAME_CONFIG[timeframe]
-        suite = run_trade_backtest_suite(
-            csv_path=csv_path,
-            timeframe=timeframe,
-            min_window=min_window,
-            step=step,
-            symbol=symbol,
-            fee_rate=fee_rate,
-            slippage_rate=slippage_rate,
-        )
-        output[timeframe] = {target: result["summary"] for target, result in suite.items()}
+    for symbol in symbols:
+        symbol_output: dict[str, dict] = {}
+        for timeframe in _resolve_timeframes(timeframes):
+            _, min_window = TIMEFRAME_CONFIG[timeframe]
+            csv_path = _resolve_backtest_dataset(
+                symbol=symbol,
+                timeframe=timeframe,
+                refresh_data=refresh_data,
+                limit=fetch_limit,
+            )
+            suite = run_trade_backtest_suite(
+                csv_path=csv_path,
+                timeframe=timeframe,
+                min_window=min_window,
+                step=step,
+                symbol=symbol,
+                fee_rate=fee_rate,
+                slippage_rate=slippage_rate,
+            )
+            symbol_output[timeframe] = {target: result["summary"] for target, result in suite.items()}
+        output[symbol] = symbol_output
 
     print(json.dumps(output, indent=2))
 
@@ -108,10 +141,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     backtest_parser = subparsers.add_parser("trade-backtest", help="Run trade backtest on local BTC datasets")
     backtest_parser.add_argument("--symbol", default="BTCUSDT")
+    backtest_parser.add_argument("--symbols", nargs="*")
     backtest_parser.add_argument("--timeframes", nargs="*", default=["1D", "1W", "4H"])
     backtest_parser.add_argument("--step", type=int, default=1)
     backtest_parser.add_argument("--fee-bps", type=float, default=4.0)
     backtest_parser.add_argument("--slippage-bps", type=float, default=2.0)
+    backtest_parser.add_argument("--refresh-data", action="store_true")
+    backtest_parser.add_argument("--fetch-limit", type=int, default=500)
 
     news_parser = subparsers.add_parser("news-monitor", help="Run BTC RSS news context monitor")
     news_parser.add_argument("--once", action="store_true")
@@ -151,11 +187,13 @@ def main() -> None:
 
     if args.command == "trade-backtest":
         _run_trade_backtest(
-            symbol=args.symbol,
+            symbols=_resolve_symbols(args.symbol, args.symbols),
             timeframes=args.timeframes,
             step=args.step,
             fee_bps=args.fee_bps,
             slippage_bps=args.slippage_bps,
+            refresh_data=args.refresh_data,
+            fetch_limit=args.fetch_limit,
         )
         return
 

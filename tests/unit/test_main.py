@@ -13,12 +13,17 @@ def test_resolve_symbols_prefers_symbols_list():
     assert main._resolve_symbols("BTCUSDT", ["BTCUSDT", "ethusdt", "BTCUSDT"]) == ["BTCUSDT", "ETHUSDT"]
 
 
+def test_dataset_path_uses_symbol_and_timeframe():
+    assert main._dataset_path("ETHUSDT", "4H") == "data/ETHUSDT_4h.csv"
+
+
 def test_resolve_timeframes_rejects_unknown_timeframe():
     with pytest.raises(ValueError):
         main._resolve_timeframes(["2H"])
 
 
 def test_run_trade_backtest_prints_summary(monkeypatch, capsys):
+    monkeypatch.setattr("main._resolve_backtest_dataset", lambda **kwargs: "data/BTCUSDT_1d.csv")
     monkeypatch.setattr(
         "main.run_trade_backtest_suite",
         lambda **kwargs: {
@@ -29,7 +34,7 @@ def test_run_trade_backtest_prints_summary(monkeypatch, capsys):
     )
 
     main._run_trade_backtest(
-        symbol="BTCUSDT",
+        symbols=["BTCUSDT"],
         timeframes=["1D"],
         step=1,
         fee_bps=4.0,
@@ -37,7 +42,14 @@ def test_run_trade_backtest_prints_summary(monkeypatch, capsys):
     )
 
     output = json.loads(capsys.readouterr().out)
-    assert output["1D"]["TP1"]["fee_bps"] == 4.0
+    assert output["BTCUSDT"]["1D"]["TP1"]["fee_bps"] == 4.0
+
+
+def test_resolve_backtest_dataset_fetches_when_missing(monkeypatch):
+    monkeypatch.setattr("main.os.path.exists", lambda path: False)
+    monkeypatch.setattr("main._fetch_backtest_dataset", lambda symbol, timeframe, limit=500: f"data/{symbol}_{timeframe}.csv")
+
+    assert main._resolve_backtest_dataset("DOGEUSDT", "4H") == "data/DOGEUSDT_4H.csv"
 
 
 def test_terminal_dashboard_command_routes_to_dashboard(monkeypatch):
