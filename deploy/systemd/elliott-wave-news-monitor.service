@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/wave-structure-engine
-ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py news-monitor --poll-interval 900
+ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py news-monitor
 Restart=always
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1
