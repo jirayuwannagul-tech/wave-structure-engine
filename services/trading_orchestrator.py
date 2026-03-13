@@ -34,6 +34,12 @@ def _fmt_value(value) -> str:
     return str(value)
 
 
+def _optional_level_line(label: str, value, suffix: str = "") -> str | None:
+    if value is None:
+        return None
+    return f"{label}: {_fmt_value(value)}{suffix}"
+
+
 def _infer_setup_status(
     bias: str | None,
     entry: float | None,
@@ -174,17 +180,18 @@ def _format_analysis_summary(analysis: dict) -> str:
     else:
         trigger_text = _fmt_value(entry)
 
-    return (
-        f"{timeframe} | {pattern_type} | {scenario_name}\n"
-        f"Bias: {bias}\n"
-        f"Setup: {setup_status}\n"
-        f"Trigger: {trigger_text}\n"
-        f"Entry: {_fmt_value(entry)}\n"
-        f"SL: {_fmt_value(stop_loss)}\n"
-        f"TP1: {_fmt_value(tp1)}\n"
-        f"TP2: {_fmt_value(tp2)}\n"
-        f"TP3: {_fmt_value(tp3)}"
-    )
+    lines = [
+        f"{timeframe} | {pattern_type} | {scenario_name}",
+        f"Bias: {bias}",
+        f"Setup: {setup_status}",
+        f"Trigger: {trigger_text}",
+        f"Entry: {_fmt_value(entry)}",
+        f"SL: {_fmt_value(stop_loss)}",
+        _optional_level_line("TP1", tp1),
+        _optional_level_line("TP2", tp2),
+        _optional_level_line("TP3", tp3),
+    ]
+    return "\n".join(line for line in lines if line)
 
 
 def _refresh_runtime(
@@ -239,16 +246,18 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp2_mark = " ✅" if signal_row["tp2_hit_at"] else ""
     tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
     sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
-    return (
-        f"{timeframe}\n\n"
-        f"status: {status}\n"
-        f"scenario: {scenario_name}\n"
-        f"Entry: {_fmt_value(entry_price)}\n"
-        f"SL: {_fmt_value(stop_loss)}{sl_mark}\n"
-        f"TP1: {_fmt_value(tp1)}{tp1_mark}\n"
-        f"TP2: {_fmt_value(tp2)}{tp2_mark}\n"
-        f"TP3: {_fmt_value(tp3)}{tp3_mark}"
-    )
+    lines = [
+        timeframe,
+        "",
+        f"status: {status}",
+        f"scenario: {scenario_name}",
+        f"Entry: {_fmt_value(entry_price)}",
+        f"SL: {_fmt_value(stop_loss)}{sl_mark}",
+        _optional_level_line("TP1", tp1, tp1_mark),
+        _optional_level_line("TP2", tp2, tp2_mark),
+        _optional_level_line("TP3", tp3, tp3_mark),
+    ]
+    return "\n".join(line for line in lines if line is not None)
 
 
 def process_market_update(
