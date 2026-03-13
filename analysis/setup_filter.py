@@ -170,7 +170,9 @@ def filter_trade_scenarios(
         )
 
     wave_summary = analysis.get("wave_summary") or {}
-    if bool(wave_summary.get("is_ambiguous")):
+    inprogress = analysis.get("inprogress")
+    inprogress_valid = inprogress is not None and getattr(inprogress, "is_valid", False)
+    if bool(wave_summary.get("is_ambiguous")) and not inprogress_valid:
         return [], TradeFilterDecision(
             scenario_count_before=len(scenarios),
             scenario_count_after=0,

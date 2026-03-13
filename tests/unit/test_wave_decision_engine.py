@@ -57,7 +57,7 @@ def test_build_wave_summary_marks_near_tie_as_ambiguous():
 
 
 def test_build_wave_summary_requires_stronger_impulse_margin():
-    # IMPULSE threshold = 0.008; margin here = 0.150 - 0.144 = 0.006 < 0.008 → ambiguous
+    # IMPULSE threshold = 0.008; margin here = 0.150 - 0.144 = 0.006 < 0.008 → still ambiguous
     patterns = [
         {
             "pattern_type": "IMPULSE",
