@@ -47,6 +47,9 @@ def test_build_signal_snapshot_returns_tradeable_signal():
     assert snapshot["side"] == "LONG"
     assert snapshot["entry_price"] == 100.0
     assert snapshot["tp3"] == 130.0
+    assert snapshot["rr_tp1"] == 2.0
+    assert snapshot["rr_tp2"] == 4.0
+    assert snapshot["rr_tp3"] == 6.0
 
 
 def test_repository_tracks_tp1_then_stop_loss(tmp_path):
@@ -111,3 +114,12 @@ def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
 
     assert first["status"] == "REPLACED"
     assert second["status"] == "PENDING_ENTRY"
+
+
+def test_repository_tracks_system_events_once(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+
+    assert repo.has_system_event("DAILY_SUMMARY:2026-03-13") is False
+    assert repo.record_system_event("DAILY_SUMMARY:2026-03-13", details={"price": 70000.0}) is not None
+    assert repo.has_system_event("DAILY_SUMMARY:2026-03-13") is True
+    assert repo.record_system_event("DAILY_SUMMARY:2026-03-13", details={"price": 70010.0}) is None

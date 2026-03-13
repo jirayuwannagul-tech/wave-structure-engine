@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from analysis.risk_reward import calculate_rr_levels
 
 OPEN_SIGNAL_STATUSES = {
     "PENDING_ENTRY",
@@ -73,6 +74,15 @@ def build_signal_snapshot(analysis: dict) -> dict | None:
     while len(targets) < 3:
         targets.append(None)
 
+    rr_levels = calculate_rr_levels(
+        side=side,
+        entry_price=entry,
+        stop_loss=stop_loss,
+        tp1=targets[0],
+        tp2=targets[1],
+        tp3=targets[2],
+    )
+
     position = analysis.get("position")
     payload = {
         "symbol": analysis.get("symbol"),
@@ -86,6 +96,9 @@ def build_signal_snapshot(analysis: dict) -> dict | None:
         "tp1": targets[0],
         "tp2": targets[1],
         "tp3": targets[2],
+        "rr_tp1": rr_levels["rr_tp1"],
+        "rr_tp2": rr_levels["rr_tp2"],
+        "rr_tp3": rr_levels["rr_tp3"],
         "invalidation_price": _round_price(getattr(scenario, "invalidation", None)),
         "position_structure": getattr(position, "structure", None),
         "position_label": getattr(position, "position", None),
@@ -94,6 +107,7 @@ def build_signal_snapshot(analysis: dict) -> dict | None:
             "current_price": _round_price(analysis.get("current_price")),
             "pattern_type": analysis.get("primary_pattern_type"),
             "scenario": _simplify_scenario(scenario),
+            "rr_levels": rr_levels,
         },
     }
     return payload
@@ -147,6 +161,9 @@ class WaveRepository:
                     tp1 REAL,
                     tp2 REAL,
                     tp3 REAL,
+                    rr_tp1 REAL,
+                    rr_tp2 REAL,
+                    rr_tp3 REAL,
                     signal_hash TEXT,
                     summary_text TEXT,
                     payload_json TEXT NOT NULL
@@ -169,6 +186,9 @@ class WaveRepository:
                     tp1 REAL,
                     tp2 REAL,
                     tp3 REAL,
+                    rr_tp1 REAL,
+                    rr_tp2 REAL,
+                    rr_tp3 REAL,
                     invalidation_price REAL,
                     current_price REAL,
                     analysis_summary_json TEXT,
@@ -217,7 +237,36 @@ class WaveRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_news_items_external_id
                 ON news_items(external_id);
+
+                CREATE TABLE IF NOT EXISTS system_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    event_key TEXT NOT NULL UNIQUE,
+                    details_json TEXT
+                );
                 """
+            )
+            self._ensure_column(conn, "analysis_snapshots", "rr_tp1", "REAL")
+            self._ensure_column(conn, "analysis_snapshots", "rr_tp2", "REAL")
+            self._ensure_column(conn, "analysis_snapshots", "rr_tp3", "REAL")
+            self._ensure_column(conn, "signals", "rr_tp1", "REAL")
+            self._ensure_column(conn, "signals", "rr_tp2", "REAL")
+            self._ensure_column(conn, "signals", "rr_tp3", "REAL")
+
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name not in columns:
+            conn.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
             )
 
     def fetch_active_signals(self, symbol: str | None = None) -> list[sqlite3.Row]:
@@ -254,6 +303,28 @@ class WaveRepository:
                 (external_id,),
             ).fetchone()
         return row is not None
+
+    def has_system_event(self, event_key: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM system_events WHERE event_key = ?",
+                (event_key,),
+            ).fetchone()
+        return row is not None
+
+    def record_system_event(self, event_key: str, details: dict | None = None) -> int | None:
+        if self.has_system_event(event_key):
+            return None
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO system_events (created_at, event_key, details_json)
+                VALUES (?, ?, ?)
+                """,
+                (_utc_now(), event_key, _json_dump(details or {})),
+            )
+            return int(cursor.lastrowid)
 
     def record_news_item(
         self,
@@ -312,8 +383,8 @@ class WaveRepository:
                 INSERT INTO analysis_snapshots (
                     created_at, symbol, timeframe, current_price, pattern_type,
                     scenario_name, bias, entry_price, stop_loss, tp1, tp2, tp3,
-                    signal_hash, summary_text, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rr_tp1, rr_tp2, rr_tp3, signal_hash, summary_text, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utc_now(),
@@ -328,6 +399,9 @@ class WaveRepository:
                     snapshot.get("tp1") if snapshot else None,
                     snapshot.get("tp2") if snapshot else None,
                     snapshot.get("tp3") if snapshot else None,
+                    snapshot.get("rr_tp1") if snapshot else None,
+                    snapshot.get("rr_tp2") if snapshot else None,
+                    snapshot.get("rr_tp3") if snapshot else None,
                     build_signal_hash(snapshot) if snapshot else None,
                     self._build_summary_text(snapshot),
                     _json_dump(payload),
@@ -385,8 +459,8 @@ class WaveRepository:
                 INSERT INTO signals (
                     created_at, updated_at, symbol, timeframe, pattern_type, scenario_name,
                     bias, side, status, signal_hash, entry_price, stop_loss, tp1, tp2, tp3,
-                    invalidation_price, current_price, analysis_summary_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rr_tp1, rr_tp2, rr_tp3, invalidation_price, current_price, analysis_summary_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     now,
@@ -404,6 +478,9 @@ class WaveRepository:
                     snapshot["tp1"],
                     snapshot["tp2"],
                     snapshot["tp3"],
+                    snapshot["rr_tp1"],
+                    snapshot["rr_tp2"],
+                    snapshot["rr_tp3"],
                     snapshot["invalidation_price"],
                     snapshot.get("current_price"),
                     _json_dump(snapshot["analysis_summary"]),
@@ -687,7 +764,10 @@ class WaveRepository:
             f"SL: {snapshot['stop_loss']}\n"
             f"TP1: {snapshot['tp1']}\n"
             f"TP2: {snapshot['tp2']}\n"
-            f"TP3: {snapshot['tp3']}"
+            f"TP3: {snapshot['tp3']}\n"
+            f"RR1: {snapshot['rr_tp1']}\n"
+            f"RR2: {snapshot['rr_tp2']}\n"
+            f"RR3: {snapshot['rr_tp3']}"
         )
 
     def _entry_crossed(self, side: str, current_price: float, entry_price: float) -> bool:

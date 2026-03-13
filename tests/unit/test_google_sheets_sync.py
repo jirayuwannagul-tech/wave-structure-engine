@@ -22,6 +22,9 @@ def _signal_row(
         "tp1": 68521.91,
         "tp2": 67760.55752,
         "tp3": 66792.07238,
+        "rr_tp1": 0.195,
+        "rr_tp2": 0.521,
+        "rr_tp3": 0.934,
         "status": status,
         "tp1_hit_at": tp1_hit_at,
         "tp2_hit_at": tp2_hit_at,
@@ -37,7 +40,7 @@ class FakeWorksheet:
         return self.rows[row_number - 1] if row_number <= len(self.rows) else []
 
     def update(self, target, values, value_input_option=None):
-        if target == "A1:K1":
+        if target == "A1:N1":
             self.rows[0] = list(values[0])
             return
 
@@ -85,6 +88,9 @@ def test_build_signal_sheet_row_formats_expected_columns():
         "68521.91",
         "67760.55752",
         "66792.07238",
+        "0.195",
+        "0.521",
+        "0.934",
         "TP1_ACTIVE",
         "",
     ]
@@ -104,11 +110,12 @@ def test_google_sheets_logger_upserts_existing_signal_row():
 
     assert len(worksheet.rows) == 2
     assert worksheet.rows[1][3] == "SHORT"
-    assert worksheet.rows[1][9] == "PENDING_ENTRY"
+    assert worksheet.rows[1][9] == "0.195"
+    assert worksheet.rows[1][12] == "PENDING_ENTRY"
 
     stopped = _signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00")
     logger.upsert_signal(stopped)
 
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][9] == "TP1_THEN_SL"
-    assert worksheet.rows[1][10] == "0.33"
+    assert worksheet.rows[1][12] == "TP1_THEN_SL"
+    assert worksheet.rows[1][13] == "0.33"

@@ -1,16 +1,20 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from scheduler.daily_scheduler import run_daily_job
+from scheduler.daily_scheduler import maybe_run_daily_job, run_daily_job
+
+
+THAI_TZ = ZoneInfo("Asia/Bangkok")
 
 
 def test_run_daily_job_calls_notification(monkeypatch):
     calls = {"message": None}
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=ZoneInfo("Asia/Bangkok"))
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    runtime = object()
 
     monkeypatch.setattr(
-        "scheduler.daily_scheduler.run_multi_timeframe",
-        lambda symbol: "TEST REPORT"
+        "services.trading_orchestrator.render_runtime_snapshot",
+        lambda runtime, current_price=None: "TEST REPORT",
     )
 
     def fake_send_notification(message: str, **kwargs):
@@ -22,7 +26,27 @@ def test_run_daily_job_calls_notification(monkeypatch):
         fake_send_notification,
     )
 
-    run_daily_job(now=now)
+    run_daily_job(now=now, runtime=runtime, current_price=70123.4)
 
     assert calls["message"] == "BTCUSDT Daily Close Summary\nDate: 2026-03-12\n\nTEST REPORT"
     assert calls["kwargs"] == {"topic_key": "daily_summary"}
+
+
+def test_maybe_run_daily_job_runs_once_per_day(monkeypatch, tmp_path):
+    calls = []
+    repo_path = tmp_path / "wave.db"
+
+    from storage.wave_repository import WaveRepository
+
+    repository = WaveRepository(db_path=str(repo_path))
+    runtime = object()
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+
+    monkeypatch.setattr(
+        "scheduler.daily_scheduler.run_daily_job",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert maybe_run_daily_job(repository, runtime, current_price=70000.0, now=now) is True
+    assert maybe_run_daily_job(repository, runtime, current_price=70010.0, now=now) is False
+    assert len(calls) == 1

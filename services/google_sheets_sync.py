@@ -16,6 +16,9 @@ SHEET_HEADERS = [
     "tp1",
     "tp2",
     "tp3",
+    "rr_tp1",
+    "rr_tp2",
+    "rr_tp3",
     "result",
     "win_score",
 ]
@@ -86,6 +89,9 @@ def build_signal_sheet_row(signal_row) -> list[str]:
         _normalize_price(signal_row["tp1"]),
         _normalize_price(signal_row["tp2"]),
         _normalize_price(signal_row["tp3"]),
+        _normalize_price(signal_row["rr_tp1"]),
+        _normalize_price(signal_row["rr_tp2"]),
+        _normalize_price(signal_row["rr_tp3"]),
         result,
         win_score,
     ]
@@ -146,7 +152,7 @@ class GoogleSheetsSignalLogger:
     def _ensure_headers(self) -> None:
         header_row = self.worksheet.row_values(1)
         if header_row[: len(SHEET_HEADERS)] != SHEET_HEADERS:
-            self.worksheet.update("A1:K1", [SHEET_HEADERS])
+            self.worksheet.update("A1:N1", [SHEET_HEADERS])
 
     def upsert_signal(self, signal_row) -> None:
         row_values = build_signal_sheet_row(signal_row)
@@ -158,7 +164,7 @@ class GoogleSheetsSignalLogger:
             return
 
         self.worksheet.update(
-            f"A{existing_row}:K{existing_row}",
+            f"A{existing_row}:N{existing_row}",
             [row_values],
             value_input_option="USER_ENTERED",
         )
