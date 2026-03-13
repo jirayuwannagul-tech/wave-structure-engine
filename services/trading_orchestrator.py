@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from analysis.level_state_engine import detect_level_state
 from analysis.price_level_watcher import Level
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
@@ -11,7 +10,6 @@ from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import safe_sync_signal
 from services.notifier import send_notification
-from services.scenario_alert_service import check_scenario_and_alert
 from storage.wave_repository import WaveRepository
 from scenarios.scenario_state_machine import update_scenario_state
 
@@ -275,7 +273,7 @@ def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float |
 
 def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     event_type = (event_type or "").upper()
-    if event_type not in {"TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT"}:
+    if event_type not in {"ENTRY_TRIGGERED", "TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT"}:
         return None
 
     timeframe = signal_row["timeframe"]
@@ -292,13 +290,14 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
     sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
     event_titles = {
+        "ENTRY_TRIGGERED": "Entry Triggered",
         "TP1_HIT": "TP1 Hit",
         "TP2_HIT": "TP2 Hit",
         "TP3_HIT": "TP3 Hit",
         "STOP_LOSS_HIT": "Stop Loss Hit",
     }
     lines = [
-        f"{'❌' if event_type == 'STOP_LOSS_HIT' else '✅'} {symbol} | {timeframe} {event_titles[event_type]}",
+        f"{'❌' if event_type == 'STOP_LOSS_HIT' else ('🎯' if event_type == 'ENTRY_TRIGGERED' else '✅')} {symbol} | {timeframe} {event_titles[event_type]}",
         "",
         f"• Scenario: {scenario_name}",
         f"• Status: {_humanize_token(status)}",
@@ -319,8 +318,6 @@ def process_market_update(
     repository: WaveRepository | None = None,
     sheets_logger=None,
 ) -> OrchestratorRuntime:
-    refresh_reasons: list[str] = []
-
     if repository is not None:
         lifecycle_events = repository.track_price_update(runtime.symbol, current_price)
         for signal_id, event_type in lifecycle_events:
@@ -331,67 +328,6 @@ def process_market_update(
             message = _build_signal_event_message(signal_row, event_type)
             if message:
                 send_notification(message, timeframe=signal_row["timeframe"], include_layout=False)
-
-    for level in runtime.levels:
-        state = detect_level_state(
-            current_price=current_price,
-            level_price=level.price,
-            level_type=level.level_type,
-            tolerance=tolerance,
-        )
-
-        if state is None:
-            continue
-
-        key = f"{runtime.symbol}:LEVEL:{level.name}"
-
-        if not store.should_alert(key, state):
-            continue
-
-        if state == "NEAR":
-            send_notification(
-                f"⚠️ {runtime.symbol} เข้าใกล้ {level.name} ({_fmt_value(level.price)})\n"
-                f"ราคาปัจจุบัน: {_fmt_value(current_price)}",
-                timeframe=level.name.split()[0],
-            )
-        elif state == "BREAK":
-            send_notification(
-                f"🚨 {runtime.symbol} BREAK {level.name} ({_fmt_value(level.price)})\n"
-                f"ราคาปัจจุบัน: {_fmt_value(current_price)}",
-                timeframe=level.name.split()[0],
-            )
-            refresh_reasons.append(f"level break: {level.name}")
-
-    for scenario_item in runtime.scenarios:
-        if isinstance(scenario_item, dict):
-            scenario = scenario_item.get("scenario")
-            timeframe = scenario_item.get("timeframe")
-        else:
-            scenario = scenario_item
-            timeframe = None
-
-        if scenario is None:
-            continue
-
-        state = check_scenario_and_alert(
-            scenario=scenario,
-            current_price=current_price,
-            store=store,
-            symbol=runtime.symbol,
-            timeframe=timeframe,
-        )
-        if state in {"CONFIRMED", "INVALIDATED"}:
-            refresh_reasons.append(f"scenario {state.lower()}: {scenario.name}")
-
-    if refresh_reasons:
-        return _refresh_runtime(
-            runtime=runtime,
-            store=store,
-            reason=", ".join(refresh_reasons),
-            repository=repository,
-            current_price=current_price,
-            sheets_logger=sheets_logger,
-        )
 
     return runtime
 
@@ -419,11 +355,16 @@ def run_orchestrator(
         try:
             price = get_last_price(runtime.symbol)
             print(f"BTC price: {price}")
-            maybe_run_daily_job(
+            daily_sent = maybe_run_daily_job(
                 repository=repository,
                 runtime=runtime,
                 current_price=price,
             )
+            if daily_sent:
+                runtime = _load_runtime(runtime.symbol)
+                signal_ids = repository.sync_runtime(runtime, current_price=price)
+                for signal_id in signal_ids:
+                    safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
             runtime = process_market_update(
                 runtime=runtime,
                 current_price=price,

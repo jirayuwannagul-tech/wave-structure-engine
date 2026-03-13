@@ -72,7 +72,9 @@ def maybe_run_daily_job(
     if repository.has_system_event(event_key):
         return False
 
-    run_daily_job(now=now, runtime=runtime, current_price=current_price)
+    # Always render the daily summary from a fresh runtime snapshot so the
+    # morning report does not depend on a long-lived in-memory state.
+    run_daily_job(now=now, runtime=None, current_price=current_price)
     repository.record_system_event(
         event_key,
         details={"current_price": current_price},

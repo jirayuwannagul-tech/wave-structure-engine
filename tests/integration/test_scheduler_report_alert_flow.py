@@ -50,3 +50,4 @@ def test_maybe_run_daily_job_runs_once_per_day(monkeypatch, tmp_path):
     assert maybe_run_daily_job(repository, runtime, current_price=70000.0, now=now) is True
     assert maybe_run_daily_job(repository, runtime, current_price=70010.0, now=now) is False
     assert len(calls) == 1
+    assert calls[0]["runtime"] is None

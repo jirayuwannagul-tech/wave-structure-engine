@@ -153,20 +153,10 @@ def test_process_market_update_refreshes_after_level_break(monkeypatch):
     )
     store = AlertStateStore()
     notifications = []
-    refreshed_runtime = OrchestratorRuntime(
-        symbol="BTCUSDT",
-        analyses=[{"timeframe": "4H", "wave_summary": {}}],
-        levels=[],
-        scenarios=[],
-    )
 
     monkeypatch.setattr(
         "services.trading_orchestrator.send_notification",
         lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-    monkeypatch.setattr(
-        "services.trading_orchestrator._refresh_runtime",
-        lambda runtime, store, reason, repository=None, current_price=None, sheets_logger=None: refreshed_runtime,
     )
 
     result = process_market_update(
@@ -175,13 +165,8 @@ def test_process_market_update_refreshes_after_level_break(monkeypatch):
         store=store,
     )
 
-    assert result is refreshed_runtime
-    assert notifications == [
-        (
-            "🚨 BTCUSDT BREAK 4H Resistance (71777)\nราคาปัจจุบัน: 72000",
-            {"timeframe": "4H"},
-        )
-    ]
+    assert result is runtime
+    assert notifications == []
 
 
 def test_process_market_update_refreshes_after_scenario_confirmation(monkeypatch):
@@ -204,29 +189,13 @@ def test_process_market_update_refreshes_after_scenario_confirmation(monkeypatch
         ],
     )
     store = AlertStateStore()
-    refreshed_runtime = OrchestratorRuntime(
-        symbol="BTCUSDT",
-        analyses=[{"timeframe": "1D", "wave_summary": {}}],
-        levels=[],
-        scenarios=[],
-    )
-
-    monkeypatch.setattr(
-        "services.trading_orchestrator.check_scenario_and_alert",
-        lambda scenario, current_price, store, symbol, timeframe=None: "CONFIRMED",
-    )
-    monkeypatch.setattr(
-        "services.trading_orchestrator._refresh_runtime",
-        lambda runtime, store, reason, repository=None, current_price=None, sheets_logger=None: refreshed_runtime,
-    )
-
     result = process_market_update(
         runtime=runtime,
         current_price=71800.0,
         store=store,
     )
 
-    assert result is refreshed_runtime
+    assert result is runtime
 
 
 def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
@@ -381,19 +350,24 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
     )
 
     process_market_update(runtime, current_price=100.5, store=AlertStateStore(), repository=repository)
-    assert notifications == []
+    assert len(notifications) == 1
+    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry Triggered")
+    assert "• Status: Active" in notifications[0][0]
+    assert "• Entry: 100" in notifications[0][0]
+    assert notifications[0][1]["timeframe"] == "4H"
+    assert notifications[0][1]["include_layout"] is False
 
     process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
 
-    assert len(notifications) == 1
-    assert notifications[0][0].startswith("✅ BTCUSDT | 4H TP1 Hit")
-    assert "• Status: Partial TP1" in notifications[0][0]
-    assert "• Scenario: Main Bullish" in notifications[0][0]
-    assert "• TP1: 110 ✅" in notifications[0][0]
-    assert "• TP2: 120" in notifications[0][0]
-    assert "1D" not in notifications[0][0]
-    assert notifications[0][1]["timeframe"] == "4H"
-    assert notifications[0][1]["include_layout"] is False
+    assert len(notifications) == 2
+    assert notifications[1][0].startswith("✅ BTCUSDT | 4H TP1 Hit")
+    assert "• Status: Partial TP1" in notifications[1][0]
+    assert "• Scenario: Main Bullish" in notifications[1][0]
+    assert "• TP1: 110 ✅" in notifications[1][0]
+    assert "• TP2: 120" in notifications[1][0]
+    assert "1D" not in notifications[1][0]
+    assert notifications[1][1]["timeframe"] == "4H"
+    assert notifications[1][1]["include_layout"] is False
 
 
 def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
@@ -436,10 +410,11 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
     process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
 
-    assert len(notifications) == 2
-    assert "• TP1: 110 ✅" in notifications[0][0]
-    assert notifications[1][0].startswith("❌ BTCUSDT | 4H Stop Loss Hit")
-    assert "• Status: Stopped" in notifications[1][0]
-    assert "• SL: 95 ❌" in notifications[1][0]
+    assert len(notifications) == 3
+    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry Triggered")
     assert "• TP1: 110 ✅" in notifications[1][0]
-    assert notifications[1][1]["timeframe"] == "4H"
+    assert notifications[2][0].startswith("❌ BTCUSDT | 4H Stop Loss Hit")
+    assert "• Status: Stopped" in notifications[2][0]
+    assert "• SL: 95 ❌" in notifications[2][0]
+    assert "• TP1: 110 ✅" in notifications[2][0]
+    assert notifications[2][1]["timeframe"] == "4H"
