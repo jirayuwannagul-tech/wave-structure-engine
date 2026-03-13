@@ -12,6 +12,7 @@ from services.google_sheets_sync import safe_sync_signal
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
 from storage.wave_repository import WaveRepository
+from scenarios.scenario_state_machine import update_scenario_state
 
 
 @dataclass
@@ -58,6 +59,30 @@ def _infer_setup_status(
         return "WAITING_BREAKDOWN", "BELOW"
 
     return "NEUTRAL", "WAIT"
+
+
+def _select_display_scenario(scenarios, current_price: float | None):
+    if not scenarios:
+        return None, "UNKNOWN"
+
+    if current_price is None:
+        return scenarios[0], "UNKNOWN"
+
+    ranked = []
+    priority = {
+        "CONFIRMED": 0,
+        "WAITING_CONFIRMATION": 1,
+        "INVALIDATED": 2,
+        "UNKNOWN": 3,
+    }
+
+    for index, scenario in enumerate(scenarios):
+        state = update_scenario_state(scenario, current_price)
+        ranked.append((priority.get(state, 99), index, scenario, state))
+
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    _, _, scenario, state = ranked[0]
+    return scenario, state
 
 
 def _build_levels_from_analysis(analysis: dict) -> list[Level]:
@@ -111,8 +136,9 @@ def _format_analysis_summary(analysis: dict) -> str:
     timeframe = analysis["timeframe"]
     pattern_type = analysis.get("primary_pattern_type") or "UNKNOWN"
     scenarios = analysis.get("scenarios") or []
-    main_scenario = scenarios[0] if scenarios else None
     wave_summary = analysis.get("wave_summary") or {}
+    current_price = analysis.get("current_price")
+    main_scenario, scenario_state = _select_display_scenario(scenarios, current_price)
 
     bias = getattr(main_scenario, "bias", None) or wave_summary.get("bias") or "NONE"
     entry = getattr(main_scenario, "confirmation", None)
@@ -130,13 +156,16 @@ def _format_analysis_summary(analysis: dict) -> str:
     tp2 = targets[1] if len(targets) >= 2 else None
     tp3 = targets[2] if len(targets) >= 3 else None
     scenario_name = getattr(main_scenario, "name", None) or "No active scenario"
-    current_price = analysis.get("current_price")
     setup_status, trigger_side = _infer_setup_status(
         bias=bias,
         entry=entry,
         stop_loss=stop_loss,
         current_price=current_price,
     )
+    if scenario_state == "CONFIRMED":
+        setup_status = "ACTIVE"
+    elif scenario_state == "INVALIDATED":
+        setup_status = "INVALIDATED"
     if trigger_side == "ABOVE":
         trigger_text = f"Above {_fmt_value(entry)}"
     elif trigger_side == "BELOW":

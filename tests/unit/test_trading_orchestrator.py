@@ -93,6 +93,46 @@ def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
     assert "TP1: 52010" in summary
 
 
+def test_format_analysis_summary_prefers_confirmed_alternate_scenario():
+    analysis = {
+        "timeframe": "4H",
+        "current_price": 71914.27,
+        "primary_pattern_type": "ABC_CORRECTION",
+        "wave_summary": {},
+        "scenarios": [
+            Scenario(
+                name="Main Bearish",
+                condition="price breaks below 69205.91",
+                interpretation="correction likely finished",
+                target="move lower",
+                bias="BEARISH",
+                invalidation=70800.0,
+                confirmation=69205.91,
+                stop_loss=70800.0,
+                targets=[67611.82, 67178.23, 66626.67],
+            ),
+            Scenario(
+                name="Alternate Bullish",
+                condition="price breaks above 70800.0",
+                interpretation="bearish count weakens, upside continuation possible",
+                target="look for higher high structure",
+                bias="BULLISH",
+                invalidation=69205.91,
+                confirmation=70800.0,
+                stop_loss=69205.91,
+                targets=[],
+            ),
+        ],
+    }
+
+    summary = _format_analysis_summary(analysis)
+
+    assert "4H | ABC_CORRECTION | Alternate Bullish" in summary
+    assert "Bias: BULLISH" in summary
+    assert "Setup: ACTIVE" in summary
+    assert "Trigger: Above 70800" in summary
+
+
 def test_process_market_update_refreshes_after_level_break(monkeypatch):
     runtime = OrchestratorRuntime(
         symbol="BTCUSDT",
