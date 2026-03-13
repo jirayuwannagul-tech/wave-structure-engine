@@ -90,3 +90,24 @@ def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
     assert first["status"] == "REPLACED"
     assert first["close_reason"] == "REPLACED_BY_NEW_SIGNAL"
     assert second["status"] == "PENDING_ENTRY"
+
+
+def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+
+    class Runtime:
+        analyses = [_analysis(entry=100.0, stop_loss=95.0)]
+
+    first_ids = repo.sync_runtime(Runtime(), current_price=99.0)
+    Runtime.analyses = [_analysis(entry=101.0, stop_loss=96.0)]
+    second_ids = repo.sync_runtime(Runtime(), current_price=99.0)
+
+    assert len(first_ids) == 1
+    assert len(second_ids) == 2
+
+    with repo._connect() as conn:
+        first = conn.execute("SELECT * FROM signals WHERE id = ?", (first_ids[0],)).fetchone()
+        second = conn.execute("SELECT * FROM signals WHERE id = ?", (second_ids[-1],)).fetchone()
+
+    assert first["status"] == "REPLACED"
+    assert second["status"] == "PENDING_ENTRY"

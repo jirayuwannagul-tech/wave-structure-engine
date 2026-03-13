@@ -119,6 +119,7 @@ def build_signal_hash(snapshot: dict) -> str:
 class WaveRepository:
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+        self._last_affected_signal_ids: list[int] = []
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -338,6 +339,7 @@ class WaveRepository:
         self.record_analysis_snapshot(analysis, current_price=current_price)
         snapshot = build_signal_snapshot(analysis)
         if snapshot is None:
+            self._last_affected_signal_ids = []
             return None
 
         snapshot["current_price"] = _round_price(
@@ -345,6 +347,7 @@ class WaveRepository:
         )
         signal_hash = build_signal_hash(snapshot)
         now = _utc_now()
+        self._last_affected_signal_ids = []
 
         with self._connect() as conn:
             existing = conn.execute(
@@ -366,9 +369,10 @@ class WaveRepository:
                         existing["id"],
                     ),
                 )
+                self._last_affected_signal_ids = [int(existing["id"])]
                 return int(existing["id"])
 
-            self._replace_pending_signals(
+            replaced_ids = self._replace_pending_signals(
                 conn,
                 symbol=snapshot["symbol"],
                 timeframe=snapshot["timeframe"],
@@ -414,6 +418,7 @@ class WaveRepository:
                 details=snapshot,
                 event_time=now,
             )
+            self._last_affected_signal_ids = [*replaced_ids, signal_id]
             return signal_id
 
     def sync_runtime(self, runtime, current_price: float | None = None) -> list[int]:
@@ -421,7 +426,7 @@ class WaveRepository:
         for analysis in runtime.analyses:
             signal_id = self.sync_analysis(analysis, current_price=current_price)
             if signal_id is not None:
-                signal_ids.append(signal_id)
+                signal_ids.extend(self._last_affected_signal_ids or [signal_id])
         return signal_ids
 
     def track_price_update(
@@ -546,7 +551,7 @@ class WaveRepository:
         timeframe: str,
         replacement_hash: str,
         event_time: str,
-    ) -> None:
+    ) -> list[int]:
         rows = conn.execute(
             """
             SELECT id FROM signals
@@ -557,9 +562,11 @@ class WaveRepository:
             """,
             (symbol, timeframe, replacement_hash),
         ).fetchall()
+        replaced_ids: list[int] = []
 
         for row in rows:
             signal_id = int(row["id"])
+            replaced_ids.append(signal_id)
             conn.execute(
                 """
                 UPDATE signals
@@ -579,6 +586,8 @@ class WaveRepository:
                 details={"reason": "REPLACED_BY_NEW_SIGNAL"},
                 event_time=event_time,
             )
+
+        return replaced_ids
 
     def _mark_target_hit(
         self,
