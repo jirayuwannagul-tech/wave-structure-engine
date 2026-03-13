@@ -123,3 +123,25 @@ def test_repository_tracks_system_events_once(tmp_path):
     assert repo.record_system_event("DAILY_SUMMARY:2026-03-13", details={"price": 70000.0}) is not None
     assert repo.has_system_event("DAILY_SUMMARY:2026-03-13") is True
     assert repo.record_system_event("DAILY_SUMMARY:2026-03-13", details={"price": 70010.0}) is None
+
+
+def test_sync_analysis_backfills_rr_for_existing_signal(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    signal_id = repo.sync_analysis(_analysis())
+
+    with repo._connect() as conn:
+        conn.execute(
+            "UPDATE signals SET rr_tp1 = NULL, rr_tp2 = NULL, rr_tp3 = NULL WHERE id = ?",
+            (signal_id,),
+        )
+
+    same_signal_id = repo.sync_analysis(_analysis())
+
+    assert same_signal_id == signal_id
+
+    with repo._connect() as conn:
+        row = conn.execute("SELECT rr_tp1, rr_tp2, rr_tp3 FROM signals WHERE id = ?", (signal_id,)).fetchone()
+
+    assert row["rr_tp1"] == 2.0
+    assert row["rr_tp2"] == 4.0
+    assert row["rr_tp3"] == 6.0

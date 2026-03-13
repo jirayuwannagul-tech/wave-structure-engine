@@ -433,12 +433,26 @@ class WaveRepository:
                 conn.execute(
                     """
                     UPDATE signals
-                    SET updated_at = ?, current_price = ?, analysis_summary_json = ?
+                    SET updated_at = ?,
+                        current_price = ?,
+                        tp1 = ?,
+                        tp2 = ?,
+                        tp3 = ?,
+                        rr_tp1 = ?,
+                        rr_tp2 = ?,
+                        rr_tp3 = ?,
+                        analysis_summary_json = ?
                     WHERE id = ?
                     """,
                     (
                         now,
                         snapshot.get("current_price"),
+                        snapshot["tp1"],
+                        snapshot["tp2"],
+                        snapshot["tp3"],
+                        snapshot["rr_tp1"],
+                        snapshot["rr_tp2"],
+                        snapshot["rr_tp3"],
                         _json_dump(snapshot["analysis_summary"]),
                         existing["id"],
                     ),
