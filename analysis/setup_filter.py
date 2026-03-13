@@ -146,7 +146,7 @@ def _passes_quality_gate(
         return False, "main confidence too low"
     if not atr_ok and divergence == "NONE":
         return False, "main missing atr expansion"
-    if not _trend_aligned(bias, trend_state) and not indicator_validation:
+    if not _trend_aligned(bias, trend_state) and not indicator_validation and not atr_ok:
         return False, "main not aligned with trend"
 
     return True, None
