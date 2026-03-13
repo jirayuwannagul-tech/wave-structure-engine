@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 
 from analysis.price_level_watcher import Level
+from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
 from services.alert_state_store import AlertStateStore
@@ -183,6 +184,8 @@ def _load_runtime(symbol: str = "BTCUSDT") -> OrchestratorRuntime:
 def _format_analysis_summary(analysis: dict) -> str:
     timeframe = analysis["timeframe"]
     pattern_type = analysis.get("primary_pattern_type") or "UNKNOWN"
+    position = analysis.get("position")
+    current_leg = describe_current_leg(position)
     scenarios = analysis.get("scenarios") or []
     wave_summary = analysis.get("wave_summary") or {}
     current_price = analysis.get("current_price")
@@ -226,6 +229,7 @@ def _format_analysis_summary(analysis: dict) -> str:
     lines = [
         timeframe,
         f"• Structure: {pattern_type}",
+        _optional_level_line("Current Leg", current_leg),
         f"• Scenario: {scenario_name}",
         f"• Bias: {bias}",
         f"• Setup: {_humanize_token(setup_status)}",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from analysis.trend_classifier import TrendClassification
 from analysis.wave_detector import ABCPattern, ImpulsePattern
-from analysis.wave_position import WavePosition
+from analysis.wave_position import WavePosition, describe_current_leg
 from scenarios.scenario_engine import Scenario
 
 
@@ -127,6 +127,7 @@ def format_report(
         [
             "Current wave position:",
             f"Structure: {position.structure}",
+            f"Current Leg: {describe_current_leg(position) or '-'}",
             f"Position: {position.position}",
             f"Bias: {position.bias}",
             "",

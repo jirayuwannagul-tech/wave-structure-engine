@@ -1,4 +1,5 @@
 from analysis.price_level_watcher import Level
+from analysis.wave_position import WavePosition
 from scenarios.scenario_engine import Scenario
 from services.alert_state_store import AlertStateStore
 from services.trading_orchestrator import (
@@ -32,6 +33,12 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
         "timeframe": "4H",
         "current_price": 70000.0,
         "primary_pattern_type": "ABC_CORRECTION",
+        "position": WavePosition(
+            structure="ABC_CORRECTION",
+            position="WAVE_C_END",
+            bias="BULLISH",
+            confidence="medium",
+        ),
         "wave_summary": {
             "confirm": 71777.0,
             "stop_loss": 69266.06,
@@ -56,6 +63,7 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
 
     assert summary.startswith("4H")
     assert "• Structure: ABC_CORRECTION" in summary
+    assert "• Current Leg: C" in summary
     assert "• Scenario: Main Bullish" in summary
     assert "• Bias: BULLISH" in summary
     assert "• Setup: Waiting Breakout" in summary
@@ -75,6 +83,12 @@ def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
         "timeframe": "1D",
         "current_price": 70165.1,
         "primary_pattern_type": "EXPANDED_FLAT",
+        "position": WavePosition(
+            structure="EXPANDED_FLAT",
+            position="CORRECTION_COMPLETE",
+            bias="BEARISH",
+            confidence="medium",
+        ),
         "wave_summary": {},
         "scenarios": [
             Scenario(
@@ -94,6 +108,7 @@ def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
     summary = _format_analysis_summary(analysis)
 
     assert "• Setup: Waiting Breakdown" in summary
+    assert "• Current Leg: C" in summary
     assert "• Trigger: Below 63030" in summary
     assert "• TP1: 52010" in summary
     assert "RR1:" not in summary
@@ -104,6 +119,12 @@ def test_format_analysis_summary_prefers_confirmed_alternate_scenario():
         "timeframe": "4H",
         "current_price": 71914.27,
         "primary_pattern_type": "ABC_CORRECTION",
+        "position": WavePosition(
+            structure="ABC_CORRECTION",
+            position="WAVE_C_END",
+            bias="BULLISH",
+            confidence="medium",
+        ),
         "wave_summary": {},
         "scenarios": [
             Scenario(
@@ -135,6 +156,7 @@ def test_format_analysis_summary_prefers_confirmed_alternate_scenario():
 
     assert summary.startswith("4H")
     assert "• Structure: ABC_CORRECTION" in summary
+    assert "• Current Leg: C" in summary
     assert "• Scenario: Alternate Bullish" in summary
     assert "• Bias: BULLISH" in summary
     assert "• Setup: Active" in summary

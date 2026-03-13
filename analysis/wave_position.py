@@ -14,6 +14,24 @@ class WavePosition:
     confidence: str
 
 
+def describe_current_leg(position: WavePosition | None) -> str | None:
+    if position is None:
+        return None
+
+    structure = (position.structure or "").upper()
+
+    if structure in {"ABC_CORRECTION", "FLAT", "EXPANDED_FLAT", "RUNNING_FLAT"}:
+        return "C"
+    if structure == "WXY":
+        return "Y"
+    if structure == "TRIANGLE":
+        return "E"
+    if structure in {"IMPULSE", "ENDING_DIAGONAL", "LEADING_DIAGONAL"}:
+        return "5"
+
+    return None
+
+
 def _build_abc_position(abc_pattern: ABCPattern) -> WavePosition:
     if abc_pattern.direction == "bullish":
         return WavePosition(

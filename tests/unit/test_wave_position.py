@@ -1,7 +1,7 @@
 from analysis.pivot_detector import Pivot
 from analysis.swing_builder import SwingPoint
 from analysis.wave_detector import ABCPattern, ImpulsePattern
-from analysis.wave_position import detect_wave_position
+from analysis.wave_position import describe_current_leg, detect_wave_position
 from analysis.wxy_detector import WXYPattern
 from analysis.triangle_detector import TrianglePattern
 
@@ -27,6 +27,7 @@ def test_detect_wave_position_from_bullish_abc():
     assert pos.position == "WAVE_C_END"
     assert pos.bias == "BULLISH"
     assert pos.confidence == "medium"
+    assert describe_current_leg(pos) == "C"
 
 
 def test_detect_wave_position_from_bearish_impulse():
@@ -59,6 +60,7 @@ def test_detect_wave_position_from_bearish_impulse():
     assert pos.position == "WAVE_5_COMPLETE"
     assert pos.bias == "BEARISH"
     assert pos.confidence == "medium"
+    assert describe_current_leg(pos) == "5"
 
 
 def test_detect_wave_position_from_bullish_wxy():
@@ -78,6 +80,7 @@ def test_detect_wave_position_from_bullish_wxy():
     assert pos.structure == "WXY"
     assert pos.position == "CORRECTION_COMPLETE"
     assert pos.bias == "BULLISH"
+    assert describe_current_leg(pos) == "Y"
 
 
 def test_detect_wave_position_from_triangle():
@@ -100,3 +103,4 @@ def test_detect_wave_position_from_triangle():
     assert pos.structure == "TRIANGLE"
     assert pos.position == "CONSOLIDATION_END"
     assert pos.bias == "NEUTRAL"
+    assert describe_current_leg(pos) == "E"
