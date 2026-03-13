@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
+import time
 
 import requests
+
+_MAX_RETRIES = 3
+_RETRY_DELAY = 1.0  # seconds, doubles on each attempt
 
 
 _TIMEFRAME_TOPIC_ENVS = {
@@ -94,6 +98,17 @@ def send_notification(
     if resolved_topic_id is not None:
         payload["message_thread_id"] = resolved_topic_id
 
-    r = requests.post(url, json=payload, timeout=15)
-    r.raise_for_status()
-    return True
+    delay = _RETRY_DELAY
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            r = requests.post(url, json=payload, timeout=15)
+            r.raise_for_status()
+            return True
+        except requests.RequestException as exc:
+            if attempt == _MAX_RETRIES:
+                print(f"[notifier] Telegram send failed after {_MAX_RETRIES} attempts: {exc}")
+                return False
+            print(f"[notifier] attempt {attempt} failed ({exc}), retrying in {delay}s…")
+            time.sleep(delay)
+            delay *= 2
+    return False  # pragma: no cover

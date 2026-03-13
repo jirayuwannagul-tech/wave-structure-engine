@@ -92,7 +92,6 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--slippage-bps", type=float, default=2.0)
 
     news_parser = subparsers.add_parser("news-monitor", help="Run BTC RSS news context monitor")
-    news_parser.add_argument("--poll-interval", type=float, default=900.0)
     news_parser.add_argument("--once", action="store_true")
 
     return parser
@@ -128,7 +127,6 @@ def main() -> None:
 
     if args.command == "news-monitor":
         run_news_monitor(
-            poll_interval=args.poll_interval,
             once=args.once,
         )
         return

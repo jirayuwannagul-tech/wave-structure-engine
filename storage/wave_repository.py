@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -131,6 +132,12 @@ def build_signal_hash(snapshot: dict) -> str:
 
 
 class WaveRepository:
+    """SQLite-backed store for Elliott Wave signals and analysis snapshots.
+
+    Tracks the full lifecycle of each trading signal:
+    PENDING_ENTRY → ACTIVE → PARTIAL_TP1 / PARTIAL_TP2 → TP3_HIT / STOPPED / INVALIDATED / REPLACED.
+    """
+
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
         self._last_affected_signal_ids: list[int] = []
@@ -377,37 +384,42 @@ class WaveRepository:
             "scenario": snapshot,
         }
 
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO analysis_snapshots (
-                    created_at, symbol, timeframe, current_price, pattern_type,
-                    scenario_name, bias, entry_price, stop_loss, tp1, tp2, tp3,
-                    rr_tp1, rr_tp2, rr_tp3, signal_hash, summary_text, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    _utc_now(),
-                    analysis.get("symbol"),
-                    analysis.get("timeframe"),
-                    current,
-                    analysis.get("primary_pattern_type"),
-                    snapshot.get("scenario_name") if snapshot else None,
-                    snapshot.get("bias") if snapshot else None,
-                    snapshot.get("entry_price") if snapshot else None,
-                    snapshot.get("stop_loss") if snapshot else None,
-                    snapshot.get("tp1") if snapshot else None,
-                    snapshot.get("tp2") if snapshot else None,
-                    snapshot.get("tp3") if snapshot else None,
-                    snapshot.get("rr_tp1") if snapshot else None,
-                    snapshot.get("rr_tp2") if snapshot else None,
-                    snapshot.get("rr_tp3") if snapshot else None,
-                    build_signal_hash(snapshot) if snapshot else None,
-                    self._build_summary_text(snapshot),
-                    _json_dump(payload),
-                ),
-            )
-            return int(cursor.lastrowid)
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO analysis_snapshots (
+                        created_at, symbol, timeframe, current_price, pattern_type,
+                        scenario_name, bias, entry_price, stop_loss, tp1, tp2, tp3,
+                        rr_tp1, rr_tp2, rr_tp3, signal_hash, summary_text, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _utc_now(),
+                        analysis.get("symbol"),
+                        analysis.get("timeframe"),
+                        current,
+                        analysis.get("primary_pattern_type"),
+                        snapshot.get("scenario_name") if snapshot else None,
+                        snapshot.get("bias") if snapshot else None,
+                        snapshot.get("entry_price") if snapshot else None,
+                        snapshot.get("stop_loss") if snapshot else None,
+                        snapshot.get("tp1") if snapshot else None,
+                        snapshot.get("tp2") if snapshot else None,
+                        snapshot.get("tp3") if snapshot else None,
+                        snapshot.get("rr_tp1") if snapshot else None,
+                        snapshot.get("rr_tp2") if snapshot else None,
+                        snapshot.get("rr_tp3") if snapshot else None,
+                        build_signal_hash(snapshot) if snapshot else None,
+                        self._build_summary_text(snapshot),
+                        _json_dump(payload),
+                    ),
+                )
+                return int(cursor.lastrowid)
+        except sqlite3.Error as exc:
+            print(f"[wave_repository] record_analysis_snapshot failed: {exc}")
+            traceback.print_exc()
+            return -1
 
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
         self.record_analysis_snapshot(analysis, current_price=current_price)
@@ -423,96 +435,106 @@ class WaveRepository:
         now = _utc_now()
         self._last_affected_signal_ids = []
 
-        with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT id, status FROM signals WHERE signal_hash = ?",
-                (signal_hash,),
-            ).fetchone()
+        try:
+            with self._connect() as conn:
+                existing = conn.execute(
+                    "SELECT id, status FROM signals WHERE signal_hash = ?",
+                    (signal_hash,),
+                ).fetchone()
 
-            if existing is not None:
-                conn.execute(
+                if existing is not None:
+                    conn.execute(
+                        """
+                        UPDATE signals
+                        SET updated_at = ?,
+                            current_price = ?,
+                            tp1 = ?,
+                            tp2 = ?,
+                            tp3 = ?,
+                            rr_tp1 = ?,
+                            rr_tp2 = ?,
+                            rr_tp3 = ?,
+                            analysis_summary_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            now,
+                            snapshot.get("current_price"),
+                            snapshot["tp1"],
+                            snapshot["tp2"],
+                            snapshot["tp3"],
+                            snapshot["rr_tp1"],
+                            snapshot["rr_tp2"],
+                            snapshot["rr_tp3"],
+                            _json_dump(snapshot["analysis_summary"]),
+                            existing["id"],
+                        ),
+                    )
+                    self._last_affected_signal_ids = [int(existing["id"])]
+                    return int(existing["id"])
+
+                replaced_ids = self._replace_pending_signals(
+                    conn,
+                    symbol=snapshot["symbol"],
+                    timeframe=snapshot["timeframe"],
+                    replacement_hash=signal_hash,
+                    event_time=now,
+                )
+
+                cursor = conn.execute(
                     """
-                    UPDATE signals
-                    SET updated_at = ?,
-                        current_price = ?,
-                        tp1 = ?,
-                        tp2 = ?,
-                        tp3 = ?,
-                        rr_tp1 = ?,
-                        rr_tp2 = ?,
-                        rr_tp3 = ?,
-                        analysis_summary_json = ?
-                    WHERE id = ?
+                    INSERT INTO signals (
+                        created_at, updated_at, symbol, timeframe, pattern_type, scenario_name,
+                        bias, side, status, signal_hash, entry_price, stop_loss, tp1, tp2, tp3,
+                        rr_tp1, rr_tp2, rr_tp3, invalidation_price, current_price, analysis_summary_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
-                        snapshot.get("current_price"),
+                        now,
+                        snapshot["symbol"],
+                        snapshot["timeframe"],
+                        snapshot["pattern_type"],
+                        snapshot["scenario_name"],
+                        snapshot["bias"],
+                        snapshot["side"],
+                        "PENDING_ENTRY",
+                        signal_hash,
+                        snapshot["entry_price"],
+                        snapshot["stop_loss"],
                         snapshot["tp1"],
                         snapshot["tp2"],
                         snapshot["tp3"],
                         snapshot["rr_tp1"],
                         snapshot["rr_tp2"],
                         snapshot["rr_tp3"],
+                        snapshot["invalidation_price"],
+                        snapshot.get("current_price"),
                         _json_dump(snapshot["analysis_summary"]),
-                        existing["id"],
                     ),
                 )
-                self._last_affected_signal_ids = [int(existing["id"])]
-                return int(existing["id"])
-
-            replaced_ids = self._replace_pending_signals(
-                conn,
-                symbol=snapshot["symbol"],
-                timeframe=snapshot["timeframe"],
-                replacement_hash=signal_hash,
-                event_time=now,
-            )
-
-            cursor = conn.execute(
-                """
-                INSERT INTO signals (
-                    created_at, updated_at, symbol, timeframe, pattern_type, scenario_name,
-                    bias, side, status, signal_hash, entry_price, stop_loss, tp1, tp2, tp3,
-                    rr_tp1, rr_tp2, rr_tp3, invalidation_price, current_price, analysis_summary_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    now,
-                    now,
-                    snapshot["symbol"],
-                    snapshot["timeframe"],
-                    snapshot["pattern_type"],
-                    snapshot["scenario_name"],
-                    snapshot["bias"],
-                    snapshot["side"],
-                    "PENDING_ENTRY",
-                    signal_hash,
-                    snapshot["entry_price"],
-                    snapshot["stop_loss"],
-                    snapshot["tp1"],
-                    snapshot["tp2"],
-                    snapshot["tp3"],
-                    snapshot["rr_tp1"],
-                    snapshot["rr_tp2"],
-                    snapshot["rr_tp3"],
-                    snapshot["invalidation_price"],
-                    snapshot.get("current_price"),
-                    _json_dump(snapshot["analysis_summary"]),
-                ),
-            )
-            signal_id = int(cursor.lastrowid)
-            self._insert_event(
-                conn,
-                signal_id=signal_id,
-                event_type="SIGNAL_CREATED",
-                price=snapshot.get("current_price"),
-                details=snapshot,
-                event_time=now,
-            )
-            self._last_affected_signal_ids = [*replaced_ids, signal_id]
-            return signal_id
+                signal_id = int(cursor.lastrowid)
+                self._insert_event(
+                    conn,
+                    signal_id=signal_id,
+                    event_type="SIGNAL_CREATED",
+                    price=snapshot.get("current_price"),
+                    details=snapshot,
+                    event_time=now,
+                )
+                self._last_affected_signal_ids = [*replaced_ids, signal_id]
+                return signal_id
+        except sqlite3.Error as exc:
+            print(f"[wave_repository] sync_analysis failed: {exc}")
+            traceback.print_exc()
+            self._last_affected_signal_ids = []
+            return None
 
     def sync_runtime(self, runtime, current_price: float | None = None) -> list[int]:
+        """Sync all analyses in a runtime to the database.
+
+        Returns a flat list of affected signal IDs (new + updated + replaced).
+        """
         signal_ids: list[int] = []
         for analysis in runtime.analyses:
             signal_id = self.sync_analysis(analysis, current_price=current_price)
@@ -526,112 +548,123 @@ class WaveRepository:
         current_price: float,
         event_time: str | None = None,
     ) -> list[tuple[int, str]]:
+        """Check current price against all open signals and update their lifecycle state.
+
+        Returns a list of (signal_id, event_type) tuples for events that fired,
+        e.g. [( 3, "ENTRY_TRIGGERED"), (3, "TP1_HIT")].
+        Returns empty list on DB error (does not raise).
+        """
         current = _round_price(current_price)
         now = event_time or _utc_now()
         events_created: list[tuple[int, str]] = []
 
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM signals
-                WHERE symbol = ?
-                  AND status IN ('PENDING_ENTRY', 'ACTIVE', 'PARTIAL_TP1', 'PARTIAL_TP2')
-                ORDER BY id ASC
-                """,
-                (symbol,),
-            ).fetchall()
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM signals
+                    WHERE symbol = ?
+                      AND status IN ('PENDING_ENTRY', 'ACTIVE', 'PARTIAL_TP1', 'PARTIAL_TP2')
+                    ORDER BY id ASC
+                    """,
+                    (symbol,),
+                ).fetchall()
 
-            for row in rows:
-                signal_id = int(row["id"])
-                side = row["side"]
-                status = row["status"]
-                entry = float(row["entry_price"])
-                stop_loss = float(row["stop_loss"])
-                tp1 = row["tp1"]
-                tp2 = row["tp2"]
-                tp3 = row["tp3"]
+                for row in rows:
+                    signal_id = int(row["id"])
+                    side = row["side"]
+                    status = row["status"]
+                    entry = float(row["entry_price"])
+                    stop_loss = float(row["stop_loss"])
+                    tp1 = row["tp1"]
+                    tp2 = row["tp2"]
+                    tp3 = row["tp3"]
 
-                conn.execute(
-                    "UPDATE signals SET updated_at = ?, current_price = ? WHERE id = ?",
-                    (now, current, signal_id),
-                )
+                    conn.execute(
+                        "UPDATE signals SET updated_at = ?, current_price = ? WHERE id = ?",
+                        (now, current, signal_id),
+                    )
 
-                if status == "PENDING_ENTRY":
-                    if self._stop_crossed(side, current, stop_loss):
-                        self._close_signal(
-                            conn,
-                            signal_id=signal_id,
-                            status="INVALIDATED",
-                            close_reason="STOP_LOSS_BEFORE_ENTRY",
-                            current_price=current,
-                            event_time=now,
-                            event_type="STOP_LOSS_BEFORE_ENTRY",
-                        )
-                        events_created.append((signal_id, "STOP_LOSS_BEFORE_ENTRY"))
-                        continue
+                    if status == "PENDING_ENTRY":
+                        if self._stop_crossed(side, current, stop_loss):
+                            self._close_signal(
+                                conn,
+                                signal_id=signal_id,
+                                status="INVALIDATED",
+                                close_reason="STOP_LOSS_BEFORE_ENTRY",
+                                current_price=current,
+                                event_time=now,
+                                event_type="STOP_LOSS_BEFORE_ENTRY",
+                            )
+                            events_created.append((signal_id, "STOP_LOSS_BEFORE_ENTRY"))
+                            continue
 
-                    if self._entry_crossed(side, current, entry):
-                        conn.execute(
-                            """
-                            UPDATE signals
-                            SET status = 'ACTIVE',
-                                updated_at = ?,
-                                current_price = ?,
-                                entry_triggered_at = ?,
-                                entry_triggered_price = ?
-                            WHERE id = ?
-                            """,
-                            (now, current, now, current, signal_id),
-                        )
-                        self._insert_event(
-                            conn,
-                            signal_id=signal_id,
-                            event_type="ENTRY_TRIGGERED",
-                            price=current,
-                            details={"status": "ACTIVE"},
-                            event_time=now,
-                        )
-                        events_created.append((signal_id, "ENTRY_TRIGGERED"))
-                        status = "ACTIVE"
+                        if self._entry_crossed(side, current, entry):
+                            conn.execute(
+                                """
+                                UPDATE signals
+                                SET status = 'ACTIVE',
+                                    updated_at = ?,
+                                    current_price = ?,
+                                    entry_triggered_at = ?,
+                                    entry_triggered_price = ?
+                                WHERE id = ?
+                                """,
+                                (now, current, now, current, signal_id),
+                            )
+                            self._insert_event(
+                                conn,
+                                signal_id=signal_id,
+                                event_type="ENTRY_TRIGGERED",
+                                price=current,
+                                details={"status": "ACTIVE"},
+                                event_time=now,
+                            )
+                            events_created.append((signal_id, "ENTRY_TRIGGERED"))
+                            status = "ACTIVE"
 
-                if status in {"ACTIVE", "PARTIAL_TP1", "PARTIAL_TP2"}:
-                    if tp1 is not None and row["tp1_hit_at"] is None and self._target_crossed(side, current, float(tp1)):
-                        self._mark_target_hit(conn, signal_id, "TP1", current, now, "PARTIAL_TP1")
-                        events_created.append((signal_id, "TP1_HIT"))
-                        row = self._refresh_row(conn, signal_id)
-                        status = row["status"]
+                    if status in {"ACTIVE", "PARTIAL_TP1", "PARTIAL_TP2"}:
+                        if tp1 is not None and row["tp1_hit_at"] is None and self._target_crossed(side, current, float(tp1)):
+                            self._mark_target_hit(conn, signal_id, "TP1", current, now, "PARTIAL_TP1")
+                            events_created.append((signal_id, "TP1_HIT"))
+                            row = self._refresh_row(conn, signal_id)
+                            status = row["status"]
 
-                    if tp2 is not None and row["tp2_hit_at"] is None and self._target_crossed(side, current, float(tp2)):
-                        self._mark_target_hit(conn, signal_id, "TP2", current, now, "PARTIAL_TP2")
-                        events_created.append((signal_id, "TP2_HIT"))
-                        row = self._refresh_row(conn, signal_id)
-                        status = row["status"]
+                        if tp2 is not None and row["tp2_hit_at"] is None and self._target_crossed(side, current, float(tp2)):
+                            self._mark_target_hit(conn, signal_id, "TP2", current, now, "PARTIAL_TP2")
+                            events_created.append((signal_id, "TP2_HIT"))
+                            row = self._refresh_row(conn, signal_id)
+                            status = row["status"]
 
-                    if tp3 is not None and row["tp3_hit_at"] is None and self._target_crossed(side, current, float(tp3)):
-                        self._mark_target_hit(conn, signal_id, "TP3", current, now, "TP3_HIT")
-                        self._close_signal(
-                            conn,
-                            signal_id=signal_id,
-                            status="TP3_HIT",
-                            close_reason="TAKE_PROFIT_3",
-                            current_price=current,
-                            event_time=now,
-                            event_type="SIGNAL_CLOSED",
-                        )
-                        events_created.append((signal_id, "TP3_HIT"))
-                        continue
+                        if tp3 is not None and row["tp3_hit_at"] is None and self._target_crossed(side, current, float(tp3)):
+                            self._mark_target_hit(conn, signal_id, "TP3", current, now, "TP3_HIT")
+                            self._close_signal(
+                                conn,
+                                signal_id=signal_id,
+                                status="TP3_HIT",
+                                close_reason="TAKE_PROFIT_3",
+                                current_price=current,
+                                event_time=now,
+                                event_type="SIGNAL_CLOSED",
+                            )
+                            events_created.append((signal_id, "TP3_HIT"))
+                            continue
 
-                    if self._stop_crossed(side, current, stop_loss):
-                        self._close_signal(
-                            conn,
-                            signal_id=signal_id,
-                            status="STOPPED",
-                            close_reason="STOP_LOSS",
-                            current_price=current,
-                            event_time=now,
-                            event_type="STOP_LOSS_HIT",
-                        )
-                        events_created.append((signal_id, "STOP_LOSS_HIT"))
+                        if self._stop_crossed(side, current, stop_loss):
+                            self._close_signal(
+                                conn,
+                                signal_id=signal_id,
+                                status="STOPPED",
+                                close_reason="STOP_LOSS",
+                                current_price=current,
+                                event_time=now,
+                                event_type="STOP_LOSS_HIT",
+                            )
+                            events_created.append((signal_id, "STOP_LOSS_HIT"))
+
+        except sqlite3.Error as exc:
+            print(f"[wave_repository] track_price_update failed: {exc}")
+            traceback.print_exc()
 
         return events_created
 

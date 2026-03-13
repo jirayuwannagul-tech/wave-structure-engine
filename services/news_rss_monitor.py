@@ -266,24 +266,41 @@ def process_news_cycle(
     return selected
 
 
+def _seconds_until_next_8am() -> float:
+    """Return seconds to sleep until the next 08:00 ICT."""
+    now = datetime.now(THAI_TZ)
+    target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    if now >= target:
+        # Already past 8 AM today — aim for 8 AM tomorrow
+        from datetime import timedelta
+        target += timedelta(days=1)
+    return max((target - now).total_seconds(), 1.0)
+
+
 def run_news_monitor(
-    poll_interval: float = 900.0,
     once: bool = False,
     repository: WaveRepository | None = None,
 ) -> None:
+    """Run the news monitor, sending a digest once daily at 08:00 ICT.
+
+    Args:
+        once: If True, run one cycle immediately and return (for testing/dry-run).
+        repository: WaveRepository instance. A new one is created if None.
+    """
     repository = repository or WaveRepository()
 
     while True:
+        if not once:
+            wait = _seconds_until_next_8am()
+            now_str = datetime.now(THAI_TZ).strftime("%H:%M ICT")
+            print(f"[news_monitor] now={now_str} | sleeping {wait/3600:.1f}h until 08:00 ICT…")
+            time.sleep(wait)
+
         try:
             selected = process_news_cycle(repository=repository)
-            print(f"news items sent: {len(selected)}")
-
-            if once:
-                return
-
-            time.sleep(poll_interval)
+            print(f"[news_monitor] morning digest sent: {len(selected)} items")
         except Exception as exc:
-            print(f"news monitor error: {exc}")
-            if once:
-                raise
-            time.sleep(max(poll_interval, 60.0))
+            print(f"[news_monitor] error during digest: {exc}")
+
+        if once:
+            return

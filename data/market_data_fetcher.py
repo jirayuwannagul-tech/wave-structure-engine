@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,26 @@ import requests
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+
+_MAX_RETRIES = 3
+_RETRY_DELAY = 2.0  # seconds, doubles on each attempt
+
+
+def _request_with_retry(url: str, params: dict, timeout: int) -> requests.Response:
+    """GET request with exponential backoff retry on network/HTTP errors."""
+    delay = _RETRY_DELAY
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            if attempt == _MAX_RETRIES:
+                raise
+            print(f"[market_data_fetcher] attempt {attempt} failed ({exc}), retrying in {delay}s…")
+            time.sleep(delay)
+            delay *= 2
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 @dataclass
@@ -26,12 +47,7 @@ class MarketDataFetcher:
             "limit": self.limit,
         }
 
-        response = requests.get(
-            BINANCE_KLINES_URL,
-            params=params,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
+        response = _request_with_retry(BINANCE_KLINES_URL, params, self.timeout)
 
         raw = response.json()
 
@@ -85,13 +101,11 @@ class MarketDataFetcher:
         ].copy()
 
     def fetch_latest_price(self) -> float:
-        response = requests.get(
+        response = _request_with_retry(
             BINANCE_TICKER_URL,
             params={"symbol": self.symbol.upper()},
             timeout=self.timeout,
         )
-        response.raise_for_status()
-
         payload = response.json()
         return float(payload["price"])
 

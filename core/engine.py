@@ -22,6 +22,20 @@ def build_dataframe_analysis(
     df,
     current_price: float | None = None,
 ) -> dict:
+    """Run the full Elliott Wave analysis pipeline on a pre-loaded DataFrame.
+
+    Args:
+        symbol: Trading pair symbol, e.g. "BTCUSDT".
+        timeframe: Candle interval string, e.g. "1d" or "4h".
+        df: pandas DataFrame with OHLCV columns (open, high, low, close, volume).
+        current_price: Override the current price. If None, uses df's last close.
+
+    Returns:
+        dict with keys: symbol, timeframe, has_pattern, current_price,
+        primary_pattern_type, primary_pattern, position, key_levels, projection,
+        scenarios, wave_summary, trend, confidence, probability, report.
+        If no pattern is detected, returns a minimal dict with has_pattern=False.
+    """
     pivots = detect_pivots(df)
     trend = classify_market_trend(pivots, df=df)
     wave_counts = generate_wave_counts(pivots, df=df)
@@ -114,6 +128,19 @@ def build_dataframe_analysis(
 
 
 def build_timeframe_analysis(symbol: str, interval: str, limit: int = 200) -> dict:
+    """Fetch live OHLCV data from Binance and run the full analysis pipeline.
+
+    Args:
+        symbol: Trading pair symbol, e.g. "BTCUSDT".
+        interval: Candle interval, e.g. "1d" or "4h".
+        limit: Number of candles to fetch (default 200).
+
+    Returns:
+        Analysis dict as produced by build_dataframe_analysis().
+
+    Raises:
+        requests.RequestException: if Binance OHLCV fetch fails after all retries.
+    """
     fetcher = MarketDataFetcher(symbol=symbol, interval=interval, limit=limit)
     df = drop_unclosed_candle(fetcher.fetch_ohlcv())
 
@@ -131,11 +158,13 @@ def build_timeframe_analysis(symbol: str, interval: str, limit: int = 200) -> di
 
 
 def run_single_timeframe(symbol: str, interval: str, limit: int = 200) -> str:
+    """Fetch data, run analysis, and return the formatted text report."""
     analysis = build_timeframe_analysis(symbol, interval, limit)
     return analysis["report"]
 
 
 def run_multi_timeframe(symbol: str = "BTCUSDT") -> str:
+    """Run analysis on 1D and 4H timeframes and return a combined text report."""
     reports = [
         run_single_timeframe(symbol, "1d", 200),
         run_single_timeframe(symbol, "4h", 200),

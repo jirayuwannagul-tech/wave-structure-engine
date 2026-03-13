@@ -3,8 +3,8 @@ from services.alert_state_store import AlertStateStore
 from services.scenario_alert_service import check_scenario_and_alert
 
 
-def test_check_scenario_and_alert_uses_unique_key_per_level(monkeypatch):
-    store = AlertStateStore()
+def test_check_scenario_and_alert_uses_unique_key_per_level(monkeypatch, tmp_path):
+    store = AlertStateStore(state_path=str(tmp_path / "alert_state.json"))
     sent = []
 
     scenario_1d = Scenario(

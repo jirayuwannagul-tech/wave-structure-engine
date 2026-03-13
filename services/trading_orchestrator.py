@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from dataclasses import dataclass
 
 from analysis.price_level_watcher import Level
@@ -173,12 +174,23 @@ def _build_runtime(symbol: str, analyses: list[dict]) -> OrchestratorRuntime:
     )
 
 
-def _load_runtime(symbol: str = "BTCUSDT") -> OrchestratorRuntime:
-    analyses = [
-        build_timeframe_analysis(symbol, "1d", 200),
-        build_timeframe_analysis(symbol, "4h", 200),
-    ]
-    return _build_runtime(symbol, analyses)
+def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRuntime:
+    """Load analysis for all timeframes, retrying on transient failures."""
+    delay = 5.0
+    for attempt in range(1, retries + 1):
+        try:
+            analyses = [
+                build_timeframe_analysis(symbol, "1d", 200),
+                build_timeframe_analysis(symbol, "4h", 200),
+            ]
+            return _build_runtime(symbol, analyses)
+        except Exception as exc:
+            if attempt == retries:
+                raise
+            print(f"[orchestrator] _load_runtime attempt {attempt} failed ({exc}), retrying in {delay}s…")
+            time.sleep(delay)
+            delay *= 2
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def _format_analysis_summary(analysis: dict) -> str:
@@ -267,6 +279,7 @@ def _refresh_runtime(
 
 
 def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float | None = None) -> str:
+    """Format a human-readable snapshot of the current runtime state."""
     parts = []
     if current_price is not None:
         parts.append(f"💵 Current / Close: {_fmt_value(current_price)}")
@@ -343,6 +356,21 @@ def run_orchestrator(
     repository: WaveRepository | None = None,
     sheets_logger=None,
 ) -> OrchestratorRuntime:
+    """Start the live Elliott Wave monitoring loop.
+
+    Polls Binance every poll_interval seconds, checks price vs key levels,
+    updates signal lifecycle states in SQLite, and sends Telegram alerts.
+
+    Args:
+        symbol: Trading pair to monitor (default "BTCUSDT").
+        poll_interval: Seconds between each price-check cycle (default 5.0).
+        once: If True, run exactly one cycle and return (dry-run mode).
+        repository: WaveRepository instance. A new one is created if None.
+        sheets_logger: Optional Google Sheets sync logger instance.
+
+    Returns:
+        The OrchestratorRuntime from the last completed cycle.
+    """
     runtime = _load_runtime(symbol)
     store = AlertStateStore()
     repository = repository or WaveRepository()
@@ -383,11 +411,17 @@ def run_orchestrator(
 
             time.sleep(poll_interval)
 
+        except KeyboardInterrupt:
+            print("[orchestrator] Stopped by user.")
+            break
         except Exception as e:
-            print("Error:", e)
+            print(f"[orchestrator] Unhandled error: {e}")
+            traceback.print_exc()
             if once:
                 raise
-            time.sleep(max(poll_interval, 10))
+            backoff = max(poll_interval * 2, 30)
+            print(f"[orchestrator] Backing off for {backoff}s before next cycle…")
+            time.sleep(backoff)
 
 
 if __name__ == "__main__":
