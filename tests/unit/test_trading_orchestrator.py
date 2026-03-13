@@ -313,6 +313,37 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
     assert notifications[1][1]["timeframe"] == "4H"
 
 
+def test_refresh_runtime_keeps_existing_alert_state(monkeypatch):
+    runtime = OrchestratorRuntime(
+        symbol="BTCUSDT",
+        analyses=[],
+        levels=[],
+        scenarios=[],
+    )
+    store = AlertStateStore()
+    store.set("BTCUSDT:SCENARIO:Main Bearish:BEARISH:63030.0:74050.0", "CONFIRMED")
+
+    refreshed_runtime = OrchestratorRuntime(
+        symbol="BTCUSDT",
+        analyses=[],
+        levels=[],
+        scenarios=[],
+    )
+
+    monkeypatch.setattr(
+        "services.trading_orchestrator._load_runtime",
+        lambda symbol: refreshed_runtime,
+    )
+    monkeypatch.setattr(
+        "services.trading_orchestrator.send_notification",
+        lambda message, **kwargs: None,
+    )
+
+    _refresh_runtime(runtime=runtime, store=store, reason="scenario confirmed: Main Bearish")
+
+    assert store.get("BTCUSDT:SCENARIO:Main Bearish:BEARISH:63030.0:74050.0") == "CONFIRMED"
+
+
 def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, monkeypatch):
     repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
     analysis = {

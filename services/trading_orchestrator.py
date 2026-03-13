@@ -249,9 +249,6 @@ def _refresh_runtime(
     current_price: float | None = None,
     sheets_logger=None,
 ) -> OrchestratorRuntime:
-    store.clear_prefix(f"{runtime.symbol}:LEVEL:")
-    store.clear_prefix(f"{runtime.symbol}:SCENARIO:")
-
     refreshed = _load_runtime(runtime.symbol)
     if repository is not None:
         signal_ids = repository.sync_runtime(refreshed, current_price=current_price)
@@ -434,9 +431,9 @@ def run_orchestrator(
                 repository=repository,
                 sheets_logger=sheets_logger,
             )
-            print(render_runtime_snapshot(runtime, current_price=price))
 
             if once:
+                print(render_runtime_snapshot(runtime, current_price=price))
                 return runtime
 
             time.sleep(poll_interval)
