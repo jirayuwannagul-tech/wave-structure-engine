@@ -34,6 +34,38 @@ def _build_targets(projection: FutureProjection) -> list[float]:
     return targets
 
 
+def _build_alternate_targets(
+    bias: str,
+    confirmation: float | None,
+    stop_loss: float | None,
+) -> list[float]:
+    if confirmation is None or stop_loss is None:
+        return []
+
+    entry = float(confirmation)
+    stop = float(stop_loss)
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return []
+
+    if bias == "BULLISH":
+        raw_targets = [
+            entry + (risk * 1.0),
+            entry + (risk * 1.272),
+            entry + (risk * 1.618),
+        ]
+    elif bias == "BEARISH":
+        raw_targets = [
+            entry - (risk * 1.0),
+            entry - (risk * 1.272),
+            entry - (risk * 1.618),
+        ]
+    else:
+        return []
+
+    return [round(target, 4) for target in raw_targets]
+
+
 CORRECTIVE_STRUCTURES = {
     "ABC_CORRECTION",
     "FLAT",
@@ -79,7 +111,11 @@ def generate_scenarios(
                 invalidation=projection.confirmation,
                 confirmation=key_levels.c_level,
                 stop_loss=projection.confirmation,
-                targets=[],
+                targets=_build_alternate_targets(
+                    "BEARISH",
+                    key_levels.c_level,
+                    projection.confirmation,
+                ),
             )
         )
         return scenarios
@@ -108,7 +144,11 @@ def generate_scenarios(
                 invalidation=projection.confirmation,
                 confirmation=key_levels.c_level,
                 stop_loss=projection.confirmation,
-                targets=[],
+                targets=_build_alternate_targets(
+                    "BULLISH",
+                    key_levels.c_level,
+                    projection.confirmation,
+                ),
             )
         )
         return scenarios

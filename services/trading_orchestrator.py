@@ -40,6 +40,37 @@ def _optional_level_line(label: str, value, suffix: str = "") -> str | None:
     return f"{label}: {_fmt_value(value)}{suffix}"
 
 
+def _fallback_targets(
+    bias: str | None,
+    entry: float | None,
+    stop_loss: float | None,
+) -> list[float]:
+    if bias is None or entry is None or stop_loss is None:
+        return []
+
+    side = bias.upper()
+    risk = abs(float(entry) - float(stop_loss))
+    if risk <= 0:
+        return []
+
+    if side == "BULLISH":
+        raw_targets = [
+            float(entry) + (risk * 1.0),
+            float(entry) + (risk * 1.272),
+            float(entry) + (risk * 1.618),
+        ]
+    elif side == "BEARISH":
+        raw_targets = [
+            float(entry) - (risk * 1.0),
+            float(entry) - (risk * 1.272),
+            float(entry) - (risk * 1.618),
+        ]
+    else:
+        return []
+
+    return [round(target, 4) for target in raw_targets]
+
+
 def _infer_setup_status(
     bias: str | None,
     entry: float | None,
@@ -158,6 +189,8 @@ def _format_analysis_summary(analysis: dict) -> str:
         stop_loss = wave_summary.get("stop_loss")
     if not targets:
         targets = list(wave_summary.get("targets", []) or [])
+    if not targets:
+        targets = _fallback_targets(bias, entry, stop_loss)
 
     tp1 = targets[0] if len(targets) >= 1 else None
     tp2 = targets[1] if len(targets) >= 2 else None

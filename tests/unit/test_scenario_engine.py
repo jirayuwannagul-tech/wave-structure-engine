@@ -84,6 +84,8 @@ def test_generate_scenarios_for_bearish_corrective_uses_confirmation_break():
     assert scenarios[0].bias == "BEARISH"
     assert scenarios[0].condition == "price breaks below 63030.0"
     assert scenarios[0].targets == [52010.0, 49012.56, 45199.64]
+    assert scenarios[1].bias == "BULLISH"
+    assert scenarios[1].targets == [85070.0, 88067.44, 91880.36]
 
 
 def test_generate_scenarios_for_bearish_impulse():

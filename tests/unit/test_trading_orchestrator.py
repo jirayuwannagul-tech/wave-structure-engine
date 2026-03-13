@@ -135,9 +135,9 @@ def test_format_analysis_summary_prefers_confirmed_alternate_scenario():
     assert "Bias: BULLISH" in summary
     assert "Setup: ACTIVE" in summary
     assert "Trigger: Above 70800" in summary
-    assert "TP1:" not in summary
-    assert "TP2:" not in summary
-    assert "TP3:" not in summary
+    assert "TP1: 72394.09" in summary
+    assert "TP2: 72827.6825" in summary
+    assert "TP3: 73379.2376" in summary
 
 
 def test_process_market_update_refreshes_after_level_break(monkeypatch):
