@@ -11,6 +11,7 @@ import requests
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_KLINES_MAX_LIMIT = 1000
 
 _MAX_RETRIES = 3
 _RETRY_DELAY = 2.0  # seconds, doubles on each attempt
@@ -33,6 +34,26 @@ def _request_with_retry(url: str, params: dict, timeout: int) -> requests.Respon
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
+def _interval_to_milliseconds(interval: str) -> int:
+    interval = interval.strip().lower()
+    if not interval:
+        raise ValueError("interval is required")
+
+    unit = interval[-1]
+    amount = int(interval[:-1])
+    factor = {
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+        "w": 604_800_000,
+    }.get(unit)
+
+    if factor is None:
+        raise ValueError(f"Unsupported Binance interval: {interval}")
+
+    return amount * factor
+
+
 @dataclass
 class MarketDataFetcher:
     symbol: str = "BTCUSDT"
@@ -40,15 +61,23 @@ class MarketDataFetcher:
     limit: int = 500
     timeout: int = 10
 
-    def fetch_ohlcv(self) -> pd.DataFrame:
+    def _fetch_ohlcv_chunk(
+        self,
+        limit: int | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> pd.DataFrame:
         params = {
             "symbol": self.symbol.upper(),
             "interval": self.interval,
-            "limit": self.limit,
+            "limit": min(limit or self.limit, BINANCE_KLINES_MAX_LIMIT),
         }
+        if start_time_ms is not None:
+            params["startTime"] = int(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = int(end_time_ms)
 
         response = _request_with_retry(BINANCE_KLINES_URL, params, self.timeout)
-
         raw = response.json()
 
         columns = [
@@ -99,6 +128,60 @@ class MarketDataFetcher:
                 "number_of_trades",
             ]
         ].copy()
+
+    def fetch_ohlcv(self) -> pd.DataFrame:
+        return self._fetch_ohlcv_chunk()
+
+    def fetch_ohlcv_range(
+        self,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        start_time = pd.Timestamp(start_time)
+        if start_time.tzinfo is None:
+            start_time = start_time.tz_localize("UTC")
+        else:
+            start_time = start_time.tz_convert("UTC")
+
+        if end_time is None:
+            end_time = pd.Timestamp.now(tz="UTC")
+        else:
+            end_time = pd.Timestamp(end_time)
+            if end_time.tzinfo is None:
+                end_time = end_time.tz_localize("UTC")
+            else:
+                end_time = end_time.tz_convert("UTC")
+        interval_ms = _interval_to_milliseconds(self.interval)
+
+        rows: list[pd.DataFrame] = []
+        cursor_ms = int(start_time.timestamp() * 1000)
+        end_ms = int(end_time.timestamp() * 1000)
+
+        while cursor_ms < end_ms:
+            chunk = self._fetch_ohlcv_chunk(
+                limit=BINANCE_KLINES_MAX_LIMIT,
+                start_time_ms=cursor_ms,
+                end_time_ms=end_ms,
+            )
+            if chunk.empty:
+                break
+
+            rows.append(chunk)
+            last_open_ms = int(chunk.iloc[-1]["open_time"].timestamp() * 1000)
+            next_cursor_ms = last_open_ms + interval_ms
+            if next_cursor_ms <= cursor_ms:
+                break
+            cursor_ms = next_cursor_ms
+
+            if len(chunk) < BINANCE_KLINES_MAX_LIMIT:
+                break
+
+        if not rows:
+            return self._fetch_ohlcv_chunk(limit=0).iloc[0:0].copy()
+
+        df = pd.concat(rows, ignore_index=True)
+        df = df.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
+        return df[df["open_time"] >= start_time].copy()
 
     def fetch_latest_price(self) -> float:
         response = _request_with_retry(

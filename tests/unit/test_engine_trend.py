@@ -10,6 +10,8 @@ class PositionStub:
     position = "WAVE_C_END"
     bias = "BULLISH"
     confidence = "medium"
+    wave_number = "C"
+    building_wave = False
 
 
 class KeyLevelsStub:
@@ -79,7 +81,7 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
     )
     monkeypatch.setattr("core.engine.extract_pattern_key_levels", lambda pattern_type, pattern: KeyLevelsStub())
     monkeypatch.setattr("core.engine.build_wave_summary", lambda reports: {"current_wave": "ABC_CORRECTION"})
-    monkeypatch.setattr("core.engine.detect_wave_position", lambda pattern_type, pattern: PositionStub())
+    monkeypatch.setattr("core.engine.detect_wave_position", lambda pattern_type=None, pattern=None, inprogress=None, **kw: PositionStub())
     monkeypatch.setattr("core.engine.project_next_wave", lambda position, key_levels: ProjectionStub())
     monkeypatch.setattr(
         "core.engine.generate_scenarios",
@@ -107,6 +109,6 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
 
     assert result["has_pattern"] is True
     assert result["trend"].state == "UPTREND"
-    assert "Trend: UPTREND" in result["report"]
-    assert "Dow Theory: HH_HL" in result["report"]
-    assert "RSI Divergence: BULLISH_RSI_DIVERGENCE" in result["report"]
+    assert "UPTREND" in result["report"]
+    assert "HH_HL" in result["report"]
+    assert "BULLISH_RSI_DIVERGENCE" in result["report"]

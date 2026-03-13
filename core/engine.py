@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from analysis.future_projection import project_next_wave
+from analysis.inprogress_detector import detect_inprogress_wave
 from analysis.key_levels import extract_pattern_key_levels
 from analysis.multi_count_engine import (
     generate_labeled_wave_counts,
     generate_wave_counts,
 )
 from analysis.pivot_detector import detect_pivots
+from analysis.setup_filter import apply_trade_filters
 from analysis.trend_classifier import classify_market_trend
 from analysis.wave_decision_engine import build_wave_summary
 from analysis.wave_position import detect_wave_position
@@ -38,6 +40,7 @@ def build_dataframe_analysis(
     """
     pivots = detect_pivots(df)
     trend = classify_market_trend(pivots, df=df)
+    inprogress = detect_inprogress_wave(pivots)
     wave_counts = generate_wave_counts(pivots, df=df)
     labeled_wave_counts = generate_labeled_wave_counts(pivots, timeframe.upper(), df=df)
 
@@ -73,6 +76,7 @@ def build_dataframe_analysis(
     position = detect_wave_position(
         pattern_type=primary_pattern_type,
         pattern=primary_pattern,
+        inprogress=inprogress,
     )
 
     scenarios = []
@@ -103,9 +107,11 @@ def build_dataframe_analysis(
         pattern_type=primary_pattern_type,
         trend=trend,
         indicator_context=indicator_context,
+        inprogress=inprogress,
+        key_levels=key_levels,
     )
 
-    return {
+    analysis = {
         "symbol": symbol,
         "timeframe": timeframe.upper(),
         "has_pattern": True,
@@ -115,6 +121,7 @@ def build_dataframe_analysis(
         "primary_pattern_type": primary_pattern_type,
         "primary_pattern": primary_pattern,
         "position": position,
+        "inprogress": inprogress,
         "key_levels": key_levels,
         "projection": projection,
         "scenarios": scenarios,
@@ -125,6 +132,8 @@ def build_dataframe_analysis(
         "indicator_context": indicator_context,
         "report": report,
     }
+
+    return apply_trade_filters(analysis)
 
 
 def build_timeframe_analysis(symbol: str, interval: str, limit: int = 200) -> dict:

@@ -1,0 +1,407 @@
+"""Detects which Elliott Wave is currently in progress (being formed).
+
+Scans recent pivots to determine if price is building an impulse or
+corrective wave, and estimates Fibonacci targets for the wave's completion.
+
+Algorithm:
+    1. Scan last N pivots (N=5 down to 2) for partial impulse sequences
+    2. Validate applicable Elliott rules for completed sub-waves
+    3. Score confidence based on rule compliance and pivot count
+    4. Return InProgressWave with Fibonacci targets and invalidation level
+
+Partial bullish impulse sequences (pivot types):
+    [L, H]             → Wave 1 done,    building Wave 2 ↓
+    [L, H, L]          → Waves 1+2 done, building Wave 3 ↑
+    [L, H, L, H]       → Waves 1-3 done, building Wave 4 ↓
+    [L, H, L, H, L]    → Waves 1-4 done, building Wave 5 ↑
+
+Reversed for bearish impulse.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+from analysis.pivot_detector import Pivot
+
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InProgressWave:
+    """Represents an Elliott Wave structure that is currently forming."""
+
+    structure: str       # "IMPULSE" or "CORRECTION"
+    direction: str       # "bullish" or "bearish"
+    wave_number: str     # "2","3","4","5" for impulse; "A","B","C" for correction
+    completed_waves: int  # how many waves are confirmed complete
+
+    pivots: list[Pivot]         # confirmed pivots in this structure
+    last_pivot: Pivot            # most recent confirmed turning point
+
+    current_wave_start: float   # price where current wave began
+    invalidation: float         # price that would invalidate this count
+
+    fib_targets: dict[str, float] = field(default_factory=dict)
+    rule_checks: dict[str, bool] = field(default_factory=dict)
+    is_valid: bool = True
+    confidence: float = 0.5
+
+    @property
+    def current_wave_direction(self) -> str:
+        """Direction of the wave being built (not the overall structure)."""
+        n = self.wave_number
+        if self.direction == "bullish":
+            # Odd waves move up, even waves correct down
+            return "bullish" if n in ("1", "3", "5") else "bearish"
+        else:
+            # Odd waves move down, even waves correct up
+            return "bearish" if n in ("1", "3", "5") else "bullish"
+
+    @property
+    def label(self) -> str:
+        arrow = "↑" if self.current_wave_direction == "bullish" else "↓"
+        return f"Building Wave {self.wave_number} {arrow}"
+
+    @property
+    def summary(self) -> str:
+        rules_ok = all(self.rule_checks.values()) if self.rule_checks else True
+        return (
+            f"{self.structure} | Wave {self.wave_number} forming | "
+            f"{self.direction} | rules_ok={rules_ok} | conf={self.confidence:.2f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pivot type sequences for partial patterns
+# ---------------------------------------------------------------------------
+
+_BULLISH_SEQUENCES: dict[int, list[str]] = {
+    2: ["L", "H"],
+    3: ["L", "H", "L"],
+    4: ["L", "H", "L", "H"],
+    5: ["L", "H", "L", "H", "L"],
+}
+
+_BEARISH_SEQUENCES: dict[int, list[str]] = {
+    2: ["H", "L"],
+    3: ["H", "L", "H"],
+    4: ["H", "L", "H", "L"],
+    5: ["H", "L", "H", "L", "H"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _wave_number_from_pivot_count(n: int) -> str:
+    """Map confirmed pivot count → wave number currently being built."""
+    # n confirmed pivots means n waves completed (each pivot ends a wave)
+    # except we start counting from wave 1:
+    # 2 pivots: wave 1 start + wave 1 end → wave 1 done → building wave 2
+    # 3 pivots: waves 1+2 done → building wave 3
+    return str(min(n, 5))
+
+
+def _validate_bullish_partial(
+    pivots: list[Pivot],
+) -> tuple[bool, dict[str, bool]]:
+    """Validate applicable Elliott rules for a partial bullish impulse."""
+    n = len(pivots)
+    checks: dict[str, bool] = {}
+
+    if n >= 3:
+        # Rule 1: Wave 2 never retraces beyond Wave 1 origin
+        # p0=L(W1_start), p1=H(W1_end), p2=L(W2_end) → p2.price > p0.price
+        checks["rule1_w2_not_beyond_w1"] = pivots[2].price > pivots[0].price
+
+    if n >= 4:
+        # Rule 2 (partial): Wave 3 should not be shorter than Wave 1
+        # Can't fully check without Wave 5, but w3 >= w1 is a necessary condition
+        w1 = pivots[1].price - pivots[0].price
+        w3 = pivots[3].price - pivots[2].price
+        checks["rule2_w3_not_shorter_than_w1"] = w3 > 0 and w3 >= w1
+
+    if n >= 5:
+        # Rule 3: Wave 4 never enters Wave 1 price territory
+        # p4=L(W4_end) must be above p1=H(W1_end)
+        checks["rule3_w4_no_overlap"] = pivots[4].price > pivots[1].price
+
+    is_valid = all(checks.values()) if checks else True
+    return is_valid, checks
+
+
+def _validate_bearish_partial(
+    pivots: list[Pivot],
+) -> tuple[bool, dict[str, bool]]:
+    """Validate applicable Elliott rules for a partial bearish impulse."""
+    n = len(pivots)
+    checks: dict[str, bool] = {}
+
+    if n >= 3:
+        # Rule 1: Wave 2 never retraces beyond Wave 1 origin
+        # p0=H(W1_start), p1=L(W1_end), p2=H(W2_end) → p2.price < p0.price
+        checks["rule1_w2_not_beyond_w1"] = pivots[2].price < pivots[0].price
+
+    if n >= 4:
+        # Rule 2 (partial): Wave 3 not shorter than Wave 1
+        w1 = pivots[0].price - pivots[1].price
+        w3 = pivots[2].price - pivots[3].price
+        checks["rule2_w3_not_shorter_than_w1"] = w3 > 0 and w3 >= w1
+
+    if n >= 5:
+        # Rule 3: Wave 4 never enters Wave 1 price territory
+        # p4=H(W4_end) must be below p1=L(W1_end)
+        checks["rule3_w4_no_overlap"] = pivots[4].price < pivots[1].price
+
+    is_valid = all(checks.values()) if checks else True
+    return is_valid, checks
+
+
+def _bullish_fib_targets(pivots: list[Pivot]) -> dict[str, float]:
+    """Fibonacci targets for the wave currently being built (bullish impulse)."""
+    n = len(pivots)
+    targets: dict[str, float] = {}
+
+    if n == 2:
+        # Building Wave 2: retracement targets of Wave 1
+        w1_start = pivots[0].price
+        w1_end = pivots[1].price
+        w1_size = w1_end - w1_start
+        targets["0.382"] = round(w1_end - w1_size * 0.382, 2)
+        targets["0.500"] = round(w1_end - w1_size * 0.500, 2)
+        targets["0.618"] = round(w1_end - w1_size * 0.618, 2)
+        targets["0.786"] = round(w1_end - w1_size * 0.786, 2)
+
+    elif n == 3:
+        # Building Wave 3: extension from Wave 2 end
+        w1_size = pivots[1].price - pivots[0].price
+        w2_end = pivots[2].price
+        targets["1.000"] = round(w2_end + w1_size * 1.000, 2)
+        targets["1.618"] = round(w2_end + w1_size * 1.618, 2)
+        targets["2.618"] = round(w2_end + w1_size * 2.618, 2)
+
+    elif n == 4:
+        # Building Wave 4: retracement of Wave 3
+        w3_start = pivots[2].price
+        w3_end = pivots[3].price
+        w3_size = w3_end - w3_start
+        targets["0.236"] = round(w3_end - w3_size * 0.236, 2)
+        targets["0.382"] = round(w3_end - w3_size * 0.382, 2)
+        targets["0.500"] = round(w3_end - w3_size * 0.500, 2)
+        targets["0.618"] = round(w3_end - w3_size * 0.618, 2)
+
+    elif n == 5:
+        # Building Wave 5: from Wave 4 end
+        w1_size = pivots[1].price - pivots[0].price
+        w3_size = pivots[3].price - pivots[2].price
+        w4_end = pivots[4].price
+        targets["w1_equal"] = round(w4_end + w1_size, 2)
+        targets["0.618xW1W3"] = round(w4_end + 0.618 * (w1_size + w3_size), 2)
+        targets["1.272xW1"] = round(w4_end + w1_size * 1.272, 2)
+
+    return targets
+
+
+def _bearish_fib_targets(pivots: list[Pivot]) -> dict[str, float]:
+    """Fibonacci targets for the wave currently being built (bearish impulse)."""
+    n = len(pivots)
+    targets: dict[str, float] = {}
+
+    if n == 2:
+        # Building Wave 2: retracement targets (upward) of Wave 1 (downward)
+        w1_start = pivots[0].price
+        w1_end = pivots[1].price
+        w1_size = w1_start - w1_end
+        targets["0.382"] = round(w1_end + w1_size * 0.382, 2)
+        targets["0.500"] = round(w1_end + w1_size * 0.500, 2)
+        targets["0.618"] = round(w1_end + w1_size * 0.618, 2)
+        targets["0.786"] = round(w1_end + w1_size * 0.786, 2)
+
+    elif n == 3:
+        # Building Wave 3: extension downward from Wave 2 end
+        w1_size = pivots[0].price - pivots[1].price
+        w2_end = pivots[2].price
+        targets["1.000"] = round(w2_end - w1_size * 1.000, 2)
+        targets["1.618"] = round(w2_end - w1_size * 1.618, 2)
+        targets["2.618"] = round(w2_end - w1_size * 2.618, 2)
+
+    elif n == 4:
+        # Building Wave 4: retracement (upward) of Wave 3 (downward)
+        w3_start = pivots[2].price
+        w3_end = pivots[3].price
+        w3_size = w3_start - w3_end
+        targets["0.236"] = round(w3_end + w3_size * 0.236, 2)
+        targets["0.382"] = round(w3_end + w3_size * 0.382, 2)
+        targets["0.500"] = round(w3_end + w3_size * 0.500, 2)
+        targets["0.618"] = round(w3_end + w3_size * 0.618, 2)
+
+    elif n == 5:
+        # Building Wave 5: final leg downward
+        w1_size = pivots[0].price - pivots[1].price
+        w3_size = pivots[2].price - pivots[3].price
+        w4_end = pivots[4].price
+        targets["w1_equal"] = round(w4_end - w1_size, 2)
+        targets["0.618xW1W3"] = round(w4_end - 0.618 * (w1_size + w3_size), 2)
+        targets["1.272xW1"] = round(w4_end - w1_size * 1.272, 2)
+
+    return targets
+
+
+def _bullish_invalidation(pivots: list[Pivot]) -> float:
+    """Price that invalidates the bullish impulse count."""
+    n = len(pivots)
+    if n <= 3:
+        return pivots[0].price   # Wave 1 start — wave 2 cannot breach this
+    return pivots[1].price       # Wave 1 end — wave 4 cannot overlap (rule 3)
+
+
+def _bearish_invalidation(pivots: list[Pivot]) -> float:
+    """Price that invalidates the bearish impulse count."""
+    n = len(pivots)
+    if n <= 3:
+        return pivots[0].price   # Wave 1 start
+    return pivots[1].price       # Wave 1 end
+
+
+def _confidence(checks: dict[str, bool], n_pivots: int) -> float:
+    """Derive confidence score from rule checks and pivot count."""
+    base = {2: 0.35, 3: 0.45, 4: 0.55, 5: 0.65}.get(n_pivots, 0.40)
+    if not checks:
+        return base
+    rule_ratio = sum(1 for v in checks.values() if v) / len(checks)
+    return round(base * (0.5 + 0.5 * rule_ratio), 3)
+
+
+# ---------------------------------------------------------------------------
+# Core builders
+# ---------------------------------------------------------------------------
+
+
+def _try_partial_bullish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave]:
+    n = len(pivots)
+    if n < 2 or n > 5:
+        return None
+
+    if [p.type for p in pivots] != _BULLISH_SEQUENCES[n]:
+        return None
+
+    # Monotonic direction check:
+    # i=1 (H): first H above first L
+    # i>=2: each pivot above the previous pivot of the SAME type (higher highs, higher lows)
+    for i in range(1, n):
+        curr = pivots[i]
+        if i == 1:
+            if curr.price <= pivots[0].price:
+                return None
+        else:
+            if curr.price <= pivots[i - 2].price:
+                return None
+
+    is_valid, rule_checks = _validate_bullish_partial(pivots)
+    if not is_valid:
+        return None
+
+    wave_number = _wave_number_from_pivot_count(n)
+
+    return InProgressWave(
+        structure="IMPULSE",
+        direction="bullish",
+        wave_number=wave_number,
+        completed_waves=n - 1,
+        pivots=list(pivots),
+        last_pivot=pivots[-1],
+        current_wave_start=pivots[-1].price,
+        invalidation=_bullish_invalidation(pivots),
+        fib_targets=_bullish_fib_targets(pivots),
+        rule_checks=rule_checks,
+        is_valid=is_valid,
+        confidence=_confidence(rule_checks, n),
+    )
+
+
+def _try_partial_bearish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave]:
+    n = len(pivots)
+    if n < 2 or n > 5:
+        return None
+
+    if [p.type for p in pivots] != _BEARISH_SEQUENCES[n]:
+        return None
+
+    # Monotonic direction check:
+    # i=1 (L): first L below first H
+    # i>=2: each pivot below the previous pivot of the SAME type (lower highs, lower lows)
+    for i in range(1, n):
+        curr = pivots[i]
+        if i == 1:
+            if curr.price >= pivots[0].price:
+                return None
+        else:
+            if curr.price >= pivots[i - 2].price:
+                return None
+
+    is_valid, rule_checks = _validate_bearish_partial(pivots)
+    if not is_valid:
+        return None
+
+    wave_number = _wave_number_from_pivot_count(n)
+
+    return InProgressWave(
+        structure="IMPULSE",
+        direction="bearish",
+        wave_number=wave_number,
+        completed_waves=n - 1,
+        pivots=list(pivots),
+        last_pivot=pivots[-1],
+        current_wave_start=pivots[-1].price,
+        invalidation=_bearish_invalidation(pivots),
+        fib_targets=_bearish_fib_targets(pivots),
+        rule_checks=rule_checks,
+        is_valid=is_valid,
+        confidence=_confidence(rule_checks, n),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def detect_inprogress_wave(pivots: list[Pivot]) -> Optional[InProgressWave]:
+    """Detect which Elliott Wave is currently in progress.
+
+    Scans recent pivots from the most recent, trying window sizes 5→2.
+    Returns the first (longest) valid partial impulse found, or None.
+
+    Args:
+        pivots: List of Pivot objects ordered chronologically.
+
+    Returns:
+        InProgressWave describing the wave being built, or None if no
+        valid partial pattern is found.
+    """
+    if len(pivots) < 2:
+        return None
+
+    for window_size in range(5, 1, -1):
+        if len(pivots) < window_size:
+            continue
+
+        recent = pivots[-window_size:]
+
+        bullish = _try_partial_bullish_impulse(recent)
+        bearish = _try_partial_bearish_impulse(recent)
+
+        candidates = [c for c in (bullish, bearish) if c is not None]
+        if candidates:
+            # Prefer the one with higher confidence; tie-break: more waves done
+            best = max(candidates, key=lambda c: (c.confidence, c.completed_waves))
+            return best
+
+    return None

@@ -109,6 +109,12 @@ def _effective_exit_price(raw_exit_price: float, setup: TradeSetup, slippage_rat
     return float(raw_exit_price) * (1 + slippage_rate)
 
 
+def _effective_entry_from_open(open_price: float, setup: TradeSetup, slippage_rate: float) -> float:
+    if _is_long(setup):
+        return float(open_price) * (1 + slippage_rate)
+    return float(open_price) * (1 - slippage_rate)
+
+
 def _net_pnl_per_unit(
     entry_price: float,
     exit_price: float,
@@ -156,14 +162,15 @@ def simulate_trade_from_setup(
             reward_r=0.0,
         )
 
-    entry_index = None
+    trigger_index = None
 
     for i in range(len(df) - 1):
         candle = df.iloc[i]
         if _triggered_by_candle(candle, setup):
-            entry_index = i + 1
+            trigger_index = i
             break
 
+    entry_index = None if trigger_index is None else trigger_index + 1
     if entry_index is None or entry_index >= len(df):
         return TradeBacktestResult(
             triggered=False,
@@ -176,7 +183,8 @@ def simulate_trade_from_setup(
             reward_r=0.0,
         )
 
-    effective_entry = _effective_entry_price(setup, slippage_rate)
+    entry_candle = df.iloc[entry_index]
+    effective_entry = _effective_entry_from_open(float(entry_candle["open"]), setup, slippage_rate)
     effective_stop = _effective_exit_price(float(setup.stop_loss), setup, slippage_rate)
     stop_gross_pnl, stop_net_pnl, stop_fee_paid = _net_pnl_per_unit(
         effective_entry,
@@ -196,6 +204,61 @@ def simulate_trade_from_setup(
             entry_price=round(effective_entry, 6),
             exit_price=None,
             reward_r=0.0,
+        )
+
+    # Entry is taken strictly on the next candle's open.
+    # If the market gaps through the stop or target at the open, resolve that immediately.
+    stop_gap_hit = (_is_long(setup) and float(entry_candle["open"]) <= float(setup.stop_loss)) or (
+        (not _is_long(setup)) and float(entry_candle["open"]) >= float(setup.stop_loss)
+    )
+    target_gap_hit = (_is_long(setup) and float(entry_candle["open"]) >= float(target_price)) or (
+        (not _is_long(setup)) and float(entry_candle["open"]) <= float(target_price)
+    )
+
+    if stop_gap_hit:
+        immediate_stop = _effective_exit_price(float(entry_candle["open"]), setup, slippage_rate)
+        gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(
+            effective_entry,
+            immediate_stop,
+            setup,
+            fee_rate,
+        )
+        reward_r = net_pnl / risk_amount if risk_amount else -1.0
+        return TradeBacktestResult(
+            triggered=True,
+            outcome="STOP_LOSS",
+            target_label=target_label,
+            entry_index=entry_index,
+            exit_index=entry_index,
+            entry_price=round(effective_entry, 6),
+            exit_price=round(immediate_stop, 6),
+            reward_r=round(reward_r, 3),
+            gross_pnl_per_unit=round(gross_pnl, 6),
+            net_pnl_per_unit=round(net_pnl, 6),
+            fee_paid_per_unit=round(fee_paid, 6),
+        )
+
+    if target_gap_hit:
+        immediate_target = _effective_exit_price(float(entry_candle["open"]), setup, slippage_rate)
+        gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(
+            effective_entry,
+            immediate_target,
+            setup,
+            fee_rate,
+        )
+        reward_r = net_pnl / risk_amount if risk_amount else 0.0
+        return TradeBacktestResult(
+            triggered=True,
+            outcome=target_label,
+            target_label=target_label,
+            entry_index=entry_index,
+            exit_index=entry_index,
+            entry_price=round(effective_entry, 6),
+            exit_price=round(immediate_target, 6),
+            reward_r=round(reward_r, 3),
+            gross_pnl_per_unit=round(gross_pnl, 6),
+            net_pnl_per_unit=round(net_pnl, 6),
+            fee_paid_per_unit=round(fee_paid, 6),
         )
 
     for i in range(entry_index, len(df)):

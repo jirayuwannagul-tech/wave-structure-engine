@@ -5,6 +5,7 @@ import traceback
 from dataclasses import dataclass
 
 from analysis.price_level_watcher import Level
+from analysis.setup_filter import apply_trade_filters, extract_trade_bias
 from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
@@ -179,10 +180,13 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
     delay = 5.0
     for attempt in range(1, retries + 1):
         try:
-            analyses = [
-                build_timeframe_analysis(symbol, "1d", 200),
+            analysis_1d = build_timeframe_analysis(symbol, "1d", 200)
+            higher_timeframe_bias = extract_trade_bias(analysis_1d)
+            analysis_4h = apply_trade_filters(
                 build_timeframe_analysis(symbol, "4h", 200),
-            ]
+                higher_timeframe_bias=higher_timeframe_bias,
+            )
+            analyses = [analysis_1d, analysis_4h]
             return _build_runtime(symbol, analyses)
         except Exception as exc:
             if attempt == retries:

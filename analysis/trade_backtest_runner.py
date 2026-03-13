@@ -8,6 +8,7 @@ from analysis.trade_backtest import (
     build_trade_setup_from_scenario,
     simulate_trade_from_setup,
 )
+from analysis.setup_filter import apply_trade_filters, extract_trade_bias
 from core.engine import build_dataframe_analysis
 
 
@@ -95,11 +96,23 @@ def run_trade_backtest(
     symbol: str = "BTCUSDT",
     fee_rate: float = 0.0,
     slippage_rate: float = 0.0,
+    higher_timeframe_csv_path: str | None = None,
+    higher_timeframe_min_window: int | None = None,
 ) -> dict:
     df = pd.read_csv(csv_path).copy()
 
     if "open_time" in df.columns:
         df["open_time"] = pd.to_datetime(df["open_time"], utc=True, errors="coerce")
+
+    higher_timeframe_df = None
+    if higher_timeframe_csv_path:
+        higher_timeframe_df = pd.read_csv(higher_timeframe_csv_path).copy()
+        if "open_time" in higher_timeframe_df.columns:
+            higher_timeframe_df["open_time"] = pd.to_datetime(
+                higher_timeframe_df["open_time"],
+                utc=True,
+                errors="coerce",
+            )
 
     results: list[dict] = []
     total_windows = 0
@@ -117,6 +130,27 @@ def run_trade_backtest(
             df=sample_df,
             current_price=float(sample_df.iloc[-1]["close"]),
         )
+        higher_timeframe_bias = None
+        if (
+            timeframe.upper() == "4H"
+            and higher_timeframe_df is not None
+            and higher_timeframe_min_window is not None
+            and "open_time" in sample_df.columns
+        ):
+            cutoff_time = sample_df.iloc[-1]["open_time"]
+            higher_sample_df = higher_timeframe_df[
+                higher_timeframe_df["open_time"] <= cutoff_time
+            ].copy()
+            if len(higher_sample_df) >= higher_timeframe_min_window:
+                higher_analysis = build_dataframe_analysis(
+                    symbol=symbol,
+                    timeframe="1D",
+                    df=higher_sample_df,
+                    current_price=float(higher_sample_df.iloc[-1]["close"]),
+                )
+                higher_timeframe_bias = extract_trade_bias(higher_analysis)
+
+        analysis = apply_trade_filters(analysis, higher_timeframe_bias=higher_timeframe_bias)
 
         if not analysis.get("has_pattern"):
             continue
@@ -191,6 +225,8 @@ def run_trade_backtest_suite(
     symbol: str = "BTCUSDT",
     fee_rate: float = 0.0,
     slippage_rate: float = 0.0,
+    higher_timeframe_csv_path: str | None = None,
+    higher_timeframe_min_window: int | None = None,
 ) -> dict[str, dict]:
     output: dict[str, dict] = {}
     for target_label in ("TP1", "TP2", "TP3"):
@@ -203,5 +239,7 @@ def run_trade_backtest_suite(
             symbol=symbol,
             fee_rate=fee_rate,
             slippage_rate=slippage_rate,
+            higher_timeframe_csv_path=higher_timeframe_csv_path,
+            higher_timeframe_min_window=higher_timeframe_min_window,
         )
     return output
