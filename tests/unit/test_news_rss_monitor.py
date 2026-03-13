@@ -61,8 +61,8 @@ def test_build_news_digest_contains_expected_fields():
 
     assert "📰 BTC News Context" in digest
     assert "[CoinDesk] Bitcoin ETF inflows rise as macro sentiment improves" in digest
-    assert "Tags: BTC, ETF, INFLATION" in digest
-    assert "Summary: บิตคอยน์ได้แรงหนุนจากความต้องการ ETF และข้อมูลเงินเฟ้อที่ผ่อนคลายลง" in digest
+    assert "Tags: BTC | ETF | INFLATION" in digest
+    assert "Thai Summary: บิตคอยน์ได้แรงหนุนจากความต้องการ ETF และข้อมูลเงินเฟ้อที่ผ่อนคลายลง" in digest
     assert "Link: https://example.com/btc-etf" in digest
 
 

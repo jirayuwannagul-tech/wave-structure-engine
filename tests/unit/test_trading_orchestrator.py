@@ -54,15 +54,17 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
 
     summary = _format_analysis_summary(analysis)
 
-    assert "4H | ABC_CORRECTION | Main Bullish" in summary
-    assert "Bias: BULLISH" in summary
-    assert "Setup: WAITING_BREAKOUT" in summary
-    assert "Trigger: Above 71777" in summary
-    assert "Entry: 71777" in summary
-    assert "SL: 69266.06" in summary
-    assert "TP1: 75424.57" in summary
-    assert "TP2: 77099.68" in summary
-    assert "TP3: 79230.53" in summary
+    assert summary.startswith("4H")
+    assert "• Structure: ABC_CORRECTION" in summary
+    assert "• Scenario: Main Bullish" in summary
+    assert "• Bias: BULLISH" in summary
+    assert "• Setup: Waiting Breakout" in summary
+    assert "• Trigger: Above 71777" in summary
+    assert "• Entry: 71777" in summary
+    assert "• SL: 69266.06" in summary
+    assert "• TP1: 75424.57" in summary
+    assert "• TP2: 77099.68" in summary
+    assert "• TP3: 79230.53" in summary
     assert "RR1:" not in summary
     assert "RR2:" not in summary
     assert "RR3:" not in summary
@@ -91,9 +93,9 @@ def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
 
     summary = _format_analysis_summary(analysis)
 
-    assert "Setup: WAITING_BREAKDOWN" in summary
-    assert "Trigger: Below 63030" in summary
-    assert "TP1: 52010" in summary
+    assert "• Setup: Waiting Breakdown" in summary
+    assert "• Trigger: Below 63030" in summary
+    assert "• TP1: 52010" in summary
     assert "RR1:" not in summary
 
 
@@ -131,13 +133,15 @@ def test_format_analysis_summary_prefers_confirmed_alternate_scenario():
 
     summary = _format_analysis_summary(analysis)
 
-    assert "4H | ABC_CORRECTION | Alternate Bullish" in summary
-    assert "Bias: BULLISH" in summary
-    assert "Setup: ACTIVE" in summary
-    assert "Trigger: Above 70800" in summary
-    assert "TP1: 72394.09" in summary
-    assert "TP2: 72827.6825" in summary
-    assert "TP3: 73379.2376" in summary
+    assert summary.startswith("4H")
+    assert "• Structure: ABC_CORRECTION" in summary
+    assert "• Scenario: Alternate Bullish" in summary
+    assert "• Bias: BULLISH" in summary
+    assert "• Setup: Active" in summary
+    assert "• Trigger: Above 70800" in summary
+    assert "• TP1: 72394.09" in summary
+    assert "• TP2: 72827.6825" in summary
+    assert "• TP3: 73379.2376" in summary
 
 
 def test_process_market_update_refreshes_after_level_break(monkeypatch):
@@ -293,16 +297,19 @@ def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
 
     assert result is refreshed_runtime
     assert len(notifications) == 2
-    assert "Reason: level break: 4H Resistance" in notifications[0][0]
-    assert "1D | EXPANDED_FLAT | Main Bearish" in notifications[0][0]
-    assert "Setup: WAITING_BREAKDOWN" in notifications[0][0]
-    assert "Entry: 63030" in notifications[0][0]
-    assert "SL: 74050" in notifications[0][0]
-    assert "TP3: 45199.64" in notifications[0][0]
+    assert "🔄 BTCUSDT | Re-analysis Update" in notifications[0][0]
+    assert "Reason:" in notifications[0][0]
+    assert "• level break: 4H Resistance" in notifications[0][0]
+    assert "\n1D\n" in notifications[0][0]
+    assert "• Setup: Waiting Breakdown" in notifications[0][0]
+    assert "• Entry: 63030" in notifications[0][0]
+    assert "• SL: 74050" in notifications[0][0]
+    assert "• TP3: 45199.64" in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "1D"
-    assert "4H | ABC_CORRECTION | Main Bullish" in notifications[1][0]
-    assert "Setup: WAITING_BREAKOUT" in notifications[1][0]
-    assert "Entry: 71777" in notifications[1][0]
+    assert "\n4H\n" in f"\n{notifications[1][0]}\n"
+    assert "• Structure: ABC_CORRECTION" in notifications[1][0]
+    assert "• Setup: Waiting Breakout" in notifications[1][0]
+    assert "• Entry: 71777" in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"
 
 
@@ -348,11 +355,11 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
     process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 1
-    assert notifications[0][0].startswith("4H")
-    assert "status: PARTIAL_TP1" in notifications[0][0]
-    assert "scenario: Main Bullish" in notifications[0][0]
-    assert "TP1: 110 ✅" in notifications[0][0]
-    assert "TP2: 120" in notifications[0][0]
+    assert notifications[0][0].startswith("✅ BTCUSDT | 4H TP1 Hit")
+    assert "• Status: Partial TP1" in notifications[0][0]
+    assert "• Scenario: Main Bullish" in notifications[0][0]
+    assert "• TP1: 110 ✅" in notifications[0][0]
+    assert "• TP2: 120" in notifications[0][0]
     assert "1D" not in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "4H"
     assert notifications[0][1]["include_layout"] is False
@@ -399,9 +406,9 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 2
-    assert "TP1: 110 ✅" in notifications[0][0]
-    assert notifications[1][0].startswith("4H")
-    assert "status: STOPPED" in notifications[1][0]
-    assert "SL: 95 ❌" in notifications[1][0]
-    assert "TP1: 110 ✅" in notifications[1][0]
+    assert "• TP1: 110 ✅" in notifications[0][0]
+    assert notifications[1][0].startswith("❌ BTCUSDT | 4H Stop Loss Hit")
+    assert "• Status: Stopped" in notifications[1][0]
+    assert "• SL: 95 ❌" in notifications[1][0]
+    assert "• TP1: 110 ✅" in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"

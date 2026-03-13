@@ -34,10 +34,22 @@ def _fmt_value(value) -> str:
     return str(value)
 
 
+def _humanize_token(value: str | None) -> str:
+    if not value:
+        return "-"
+    text = value.replace("_", " ").strip().title()
+    return (
+        text.replace("Tp1", "TP1")
+        .replace("Tp2", "TP2")
+        .replace("Tp3", "TP3")
+        .replace("Sl", "SL")
+    )
+
+
 def _optional_level_line(label: str, value, suffix: str = "") -> str | None:
     if value is None:
         return None
-    return f"{label}: {_fmt_value(value)}{suffix}"
+    return f"• {label}: {_fmt_value(value)}{suffix}"
 
 
 def _fallback_targets(
@@ -214,12 +226,14 @@ def _format_analysis_summary(analysis: dict) -> str:
         trigger_text = _fmt_value(entry)
 
     lines = [
-        f"{timeframe} | {pattern_type} | {scenario_name}",
-        f"Bias: {bias}",
-        f"Setup: {setup_status}",
-        f"Trigger: {trigger_text}",
-        f"Entry: {_fmt_value(entry)}",
-        f"SL: {_fmt_value(stop_loss)}",
+        timeframe,
+        f"• Structure: {pattern_type}",
+        f"• Scenario: {scenario_name}",
+        f"• Bias: {bias}",
+        f"• Setup: {_humanize_token(setup_status)}",
+        f"• Trigger: {trigger_text}",
+        f"• Entry: {_fmt_value(entry)}",
+        f"• SL: {_fmt_value(stop_loss)}",
         _optional_level_line("TP1", tp1),
         _optional_level_line("TP2", tp2),
         _optional_level_line("TP3", tp3),
@@ -245,8 +259,8 @@ def _refresh_runtime(
             safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
     for analysis in refreshed.analyses:
         send_notification(
-            f"🔄 {runtime.symbol} Re-analysis triggered\n"
-            f"Reason: {reason}\n\n"
+            f"🔄 {runtime.symbol} | Re-analysis Update\n\n"
+            f"Reason:\n• {reason.replace(', ', chr(10) + '• ')}\n\n"
             f"{_format_analysis_summary(analysis)}",
             timeframe=analysis.get("timeframe"),
         )
@@ -254,10 +268,10 @@ def _refresh_runtime(
 
 
 def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float | None = None) -> str:
-    parts = [f"Symbol: {runtime.symbol}"]
+    parts = []
     if current_price is not None:
-        parts.append(f"Current price: {_fmt_value(current_price)}")
-    parts.append("")
+        parts.append(f"💵 Current / Close: {_fmt_value(current_price)}")
+        parts.append("")
     parts.extend(_format_analysis_summary(analysis) for analysis in runtime.analyses)
     return "\n\n".join(parts)
 
@@ -275,17 +289,24 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp2 = signal_row["tp2"]
     tp3 = signal_row["tp3"]
     status = signal_row["status"]
+    symbol = signal_row["symbol"]
     tp1_mark = " ✅" if signal_row["tp1_hit_at"] else ""
     tp2_mark = " ✅" if signal_row["tp2_hit_at"] else ""
     tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
     sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
+    event_titles = {
+        "TP1_HIT": "TP1 Hit",
+        "TP2_HIT": "TP2 Hit",
+        "TP3_HIT": "TP3 Hit",
+        "STOP_LOSS_HIT": "Stop Loss Hit",
+    }
     lines = [
-        timeframe,
+        f"{'❌' if event_type == 'STOP_LOSS_HIT' else '✅'} {symbol} | {timeframe} {event_titles[event_type]}",
         "",
-        f"status: {status}",
-        f"scenario: {scenario_name}",
-        f"Entry: {_fmt_value(entry_price)}",
-        f"SL: {_fmt_value(stop_loss)}{sl_mark}",
+        f"• Scenario: {scenario_name}",
+        f"• Status: {_humanize_token(status)}",
+        f"• Entry: {_fmt_value(entry_price)}",
+        f"• SL: {_fmt_value(stop_loss)}{sl_mark}",
         _optional_level_line("TP1", tp1, tp1_mark),
         _optional_level_line("TP2", tp2, tp2_mark),
         _optional_level_line("TP3", tp3, tp3_mark),

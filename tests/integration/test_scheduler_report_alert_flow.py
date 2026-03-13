@@ -28,7 +28,7 @@ def test_run_daily_job_calls_notification(monkeypatch):
 
     run_daily_job(now=now, runtime=runtime, current_price=70123.4)
 
-    assert calls["message"] == "BTCUSDT Daily Close Summary\nDate: 2026-03-12\n\nTEST REPORT"
+    assert calls["message"] == "BTCUSDT | Daily Summary\n📅 2026-03-12\n\nTEST REPORT"
     assert calls["kwargs"] == {"topic_key": "daily_summary"}
 
 

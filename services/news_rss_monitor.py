@@ -215,12 +215,12 @@ def build_news_digest(items: list[dict], now: datetime | None = None) -> str:
 
     lines = [
         "📰 BTC News Context",
-        f"Updated: {now.strftime('%Y-%m-%d %H:%M ICT')}",
+        f"🕒 Updated: {now.strftime('%Y-%m-%d %H:%M ICT')}",
         "",
     ]
 
     for idx, item in enumerate(items, start=1):
-        tags = ", ".join(item.get("tags") or ["BTC"])
+        tags = " | ".join(item.get("tags") or ["BTC"])
         lines.extend(
             [
                 f"{idx}. [{item['source']}] {item['title']}",
@@ -229,7 +229,7 @@ def build_news_digest(items: list[dict], now: datetime | None = None) -> str:
             ]
         )
         if item.get("summary_th") or item.get("summary"):
-            lines.append(f"Summary: {item.get('summary_th') or item.get('summary')}")
+            lines.append(f"Thai Summary: {item.get('summary_th') or item.get('summary')}")
         lines.append(f"Link: {item['link']}")
         if idx != len(items):
             lines.append("")

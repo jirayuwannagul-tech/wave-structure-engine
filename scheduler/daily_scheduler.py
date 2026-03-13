@@ -29,8 +29,8 @@ def build_daily_summary_message(report: str, now: datetime | None = None) -> str
         now = now.astimezone(THAI_TZ)
 
     return (
-        "BTCUSDT Daily Close Summary\n"
-        f"Date: {now.strftime('%Y-%m-%d')}\n\n"
+        "BTCUSDT | Daily Summary\n"
+        f"📅 {now.strftime('%Y-%m-%d')}\n\n"
         f"{report}"
     )
 
