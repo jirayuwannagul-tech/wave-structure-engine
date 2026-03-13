@@ -6,6 +6,7 @@ def test_render_terminal_dashboard_shows_read_only_sections():
         {
             "exchange": "binance futures",
             "symbol": "BTCUSDT",
+            "monitored_symbols": ["BTCUSDT", "ETHUSDT"],
             "connection": "ok",
             "current_price": 71320,
             "orchestrator": "active",
@@ -24,8 +25,8 @@ def test_render_terminal_dashboard_shows_read_only_sections():
                 }
             ],
             "signals": [
-                {"timeframe": "1D", "bias": "BEARISH", "entry": 63030, "sl": 74050, "tp1": 52010},
-                {"timeframe": "4H", "bias": "BULLISH", "entry": 70800, "sl": 69205.91, "tp1": 72394.09},
+                {"symbol": "BTCUSDT", "timeframe": "1D", "bias": "BEARISH", "entry": 63030, "sl": 74050, "tp1": 52010},
+                {"symbol": "ETHUSDT", "timeframe": "4H", "bias": "BULLISH", "entry": 70800, "sl": 69205.91, "tp1": 72394.09},
             ],
         }
     )
@@ -36,10 +37,11 @@ def test_render_terminal_dashboard_shows_read_only_sections():
     assert "$ positions" in output
     assert "$ signals" in output
     assert "symbol        BTCUSDT" in output
+    assert "monitored     BTCUSDT, ETHUSDT" in output
     assert "price         71,320" in output
     assert "BTCUSDT LONG" in output
-    assert "1D  bearish" in output
-    assert "4H  bullish" in output
+    assert "BTCUSDT  1D  bearish" in output
+    assert "ETHUSDT  4H  bullish" in output
 
 
 def test_render_terminal_dashboard_handles_no_positions():
@@ -47,6 +49,7 @@ def test_render_terminal_dashboard_handles_no_positions():
         {
             "exchange": "binance futures",
             "symbol": "BTCUSDT",
+            "monitored_symbols": ["BTCUSDT"],
             "connection": "auth error",
             "current_price": None,
             "orchestrator": "n/a",

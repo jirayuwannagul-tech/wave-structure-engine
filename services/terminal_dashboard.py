@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from typing import Any
@@ -40,29 +41,42 @@ def _service_status(service_name: str) -> str:
     return status or "unknown"
 
 
-def _build_signals(runtime) -> list[dict[str, Any]]:
+def _resolve_dashboard_symbols(symbol: str) -> list[str]:
+    configured = (os.getenv("MONITOR_SYMBOLS") or "").split(",")
+    symbols = [item.strip().upper() for item in configured if item.strip()]
+    if not symbols:
+        symbols = [symbol.upper()]
+    if symbol.upper() not in symbols:
+        symbols.insert(0, symbol.upper())
+    return symbols
+
+
+def _build_signals(runtimes: list) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for analysis in runtime.analyses:
-        scenarios = analysis.get("scenarios") or []
-        scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
-        targets = list(getattr(scenario, "targets", []) or [])
-        tp1 = targets[0] if len(targets) >= 1 else None
-        signals.append(
-            {
-                "timeframe": analysis.get("timeframe"),
-                "bias": getattr(scenario, "bias", None) or "NONE",
-                "entry": getattr(scenario, "confirmation", None),
-                "sl": getattr(scenario, "stop_loss", None),
-                "tp1": tp1,
-            }
-        )
+    for runtime in runtimes:
+        for analysis in runtime.analyses:
+            scenarios = analysis.get("scenarios") or []
+            scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
+            targets = list(getattr(scenario, "targets", []) or [])
+            tp1 = targets[0] if len(targets) >= 1 else None
+            signals.append(
+                {
+                    "symbol": runtime.symbol,
+                    "timeframe": analysis.get("timeframe"),
+                    "bias": getattr(scenario, "bias", None) or "NONE",
+                    "entry": getattr(scenario, "confirmation", None),
+                    "sl": getattr(scenario, "stop_loss", None),
+                    "tp1": tp1,
+                }
+            )
     return signals
 
 
 def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
     config = load_execution_config()
     client = BinanceFuturesClient(config)
-    runtime = _load_runtime(symbol)
+    dashboard_symbols = _resolve_dashboard_symbols(symbol)
+    runtimes = [_load_runtime(item) for item in dashboard_symbols]
     try:
         current_price = get_last_price(symbol)
     except Exception:
@@ -105,11 +119,12 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
         "current_price": current_price,
         "orchestrator": _service_status("elliott-wave-orchestrator.service"),
         "news_monitor": _service_status("elliott-wave-news-monitor.service"),
+        "monitored_symbols": dashboard_symbols,
         "wallet": _fmt_number((usdt_balance or {}).get("balance")),
         "available": _fmt_number((usdt_balance or {}).get("availableBalance")),
         "upnl": _fmt_number((usdt_balance or {}).get("crossUnPnl")),
         "positions": open_positions,
-        "signals": _build_signals(runtime),
+        "signals": _build_signals(runtimes),
         "account_assets": len(account.get("assets", [])) if isinstance(account, dict) else 0,
     }
 
@@ -124,6 +139,7 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
         f"orchestrator  {snapshot['orchestrator']}",
         f"news-monitor  {snapshot['news_monitor']}",
         f"symbol        {snapshot['symbol']}",
+        f"monitored     {', '.join(snapshot.get('monitored_symbols') or [])}",
         f"price         {_fmt_number(snapshot.get('current_price'))}",
         "",
         "$ balance",
@@ -150,6 +166,7 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
     lines.extend(["", "$ signals"])
     for signal in snapshot.get("signals") or []:
         lines.append(
+            f"{signal['symbol']:<8} "
             f"{signal['timeframe']:<3} "
             f"{str(signal['bias']).lower():<7}  "
             f"entry {_fmt_number(signal['entry'])}  "
