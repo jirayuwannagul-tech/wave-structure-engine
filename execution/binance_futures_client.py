@@ -58,6 +58,9 @@ class BinanceFuturesClient:
     def get_balance(self):
         return self._request("GET", "/fapi/v2/balance", signed=True)
 
+    def get_position_risk(self):
+        return self._request("GET", "/fapi/v2/positionRisk", signed=True)
+
     def set_leverage(self, symbol: str, leverage: int):
         return self._request(
             "POST",

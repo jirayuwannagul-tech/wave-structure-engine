@@ -34,3 +34,26 @@ def test_run_trade_backtest_prints_summary(monkeypatch, capsys):
 
     output = json.loads(capsys.readouterr().out)
     assert output["1D"]["TP1"]["fee_bps"] == 4.0
+
+
+def test_terminal_dashboard_command_routes_to_dashboard(monkeypatch):
+    captured = {}
+
+    def fake_run_terminal_dashboard(symbol: str, watch: bool, refresh_seconds: float):
+        captured["symbol"] = symbol
+        captured["watch"] = watch
+        captured["refresh_seconds"] = refresh_seconds
+
+    monkeypatch.setattr("main.run_terminal_dashboard", fake_run_terminal_dashboard)
+
+    parser = main.build_parser()
+    args = parser.parse_args(["terminal-dashboard", "--symbol", "BTCUSDT", "--watch", "--refresh-seconds", "3"])
+
+    if args.command == "terminal-dashboard":
+        main.run_terminal_dashboard(
+            symbol=args.symbol,
+            watch=args.watch,
+            refresh_seconds=args.refresh_seconds,
+        )
+
+    assert captured == {"symbol": "BTCUSDT", "watch": True, "refresh_seconds": 3.0}

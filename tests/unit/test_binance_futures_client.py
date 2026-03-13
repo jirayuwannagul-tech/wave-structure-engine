@@ -42,3 +42,30 @@ def test_binance_futures_client_signed_request(monkeypatch):
     assert captured["headers"]["X-MBX-APIKEY"] == "key"
     assert "timestamp" in captured["params"]
     assert "signature" in captured["params"]
+
+
+def test_binance_futures_client_position_risk(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, params=None, headers=None, timeout=None):
+        captured["method"] = method
+        captured["url"] = url
+        captured["params"] = params
+        captured["headers"] = headers
+        return _Response([{"symbol": "BTCUSDT"}])
+
+    monkeypatch.setattr("execution.binance_futures_client.requests.request", fake_request)
+
+    client = BinanceFuturesClient(
+        ExecutionConfig(
+            api_key="key",
+            api_secret="secret",
+            use_testnet=False,
+        )
+    )
+
+    result = client.get_position_risk()
+
+    assert result == [{"symbol": "BTCUSDT"}]
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://fapi.binance.com/fapi/v2/positionRisk"
