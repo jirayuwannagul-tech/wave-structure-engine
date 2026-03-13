@@ -1,0 +1,15 @@
+[Unit]
+Description=Elliott Wave BTC News Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/wave-structure-engine
+ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py news-monitor --poll-interval 900
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
