@@ -1,0 +1,15 @@
+[Unit]
+Description=Elliott Wave Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/wave-structure-engine
+ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py orchestrator --symbol BTCUSDT --poll-interval 5
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
