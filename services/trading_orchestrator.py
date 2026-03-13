@@ -351,6 +351,7 @@ def process_market_update(
 
 def run_orchestrator(
     symbol: str = "BTCUSDT",
+    symbols: list[str] | None = None,
     poll_interval: float = 5.0,
     once: bool = False,
     repository: WaveRepository | None = None,
@@ -363,6 +364,7 @@ def run_orchestrator(
 
     Args:
         symbol: Trading pair to monitor (default "BTCUSDT").
+        symbols: Optional list of trading pairs to monitor in one process.
         poll_interval: Seconds between each price-check cycle (default 5.0).
         once: If True, run exactly one cycle and return (dry-run mode).
         repository: WaveRepository instance. A new one is created if None.
@@ -371,43 +373,54 @@ def run_orchestrator(
     Returns:
         The OrchestratorRuntime from the last completed cycle.
     """
-    runtime = _load_runtime(symbol)
+    symbols = [item.upper() for item in (symbols or [symbol]) if item]
+    runtimes = {item: _load_runtime(item) for item in symbols}
     store = AlertStateStore()
     repository = repository or WaveRepository()
-    signal_ids = repository.sync_runtime(runtime)
-    for signal_id in signal_ids:
-        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+    for runtime in runtimes.values():
+        signal_ids = repository.sync_runtime(runtime)
+        for signal_id in signal_ids:
+            safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
 
     print("Starting trading orchestrator...")
-    print("Loaded levels:")
-    for level in runtime.levels:
-        print(f"- {level.name}: {level.price} ({level.level_type})")
+    for runtime in runtimes.values():
+        print(f"Loaded levels for {runtime.symbol}:")
+        for level in runtime.levels:
+            print(f"- {level.name}: {level.price} ({level.level_type})")
 
     while True:
         try:
-            price = get_last_price(runtime.symbol)
-            print(f"BTC price: {price}")
-            daily_sent = maybe_run_daily_job(
-                repository=repository,
-                runtime=runtime,
-                current_price=price,
-            )
-            if daily_sent:
-                runtime = _load_runtime(runtime.symbol)
-                signal_ids = repository.sync_runtime(runtime, current_price=price)
-                for signal_id in signal_ids:
-                    safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
-            runtime = process_market_update(
-                runtime=runtime,
-                current_price=price,
-                store=store,
-                repository=repository,
-                sheets_logger=sheets_logger,
-            )
+            snapshots: list[str] = []
+            for runtime in list(runtimes.values()):
+                price = get_last_price(runtime.symbol)
+                print(f"{runtime.symbol} price: {price}")
+                daily_sent = maybe_run_daily_job(
+                    repository=repository,
+                    runtime=runtime,
+                    current_price=price,
+                )
+                if daily_sent:
+                    runtime = _load_runtime(runtime.symbol)
+                    runtimes[runtime.symbol] = runtime
+                    signal_ids = repository.sync_runtime(runtime, current_price=price)
+                    for signal_id in signal_ids:
+                        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+                runtime = process_market_update(
+                    runtime=runtime,
+                    current_price=price,
+                    store=store,
+                    repository=repository,
+                    sheets_logger=sheets_logger,
+                )
+                runtimes[runtime.symbol] = runtime
+                if once:
+                    snapshots.append(
+                        f"{runtime.symbol}\n\n{render_runtime_snapshot(runtime, current_price=price)}"
+                    )
 
             if once:
-                print(render_runtime_snapshot(runtime, current_price=price))
-                return runtime
+                print("\n\n".join(snapshots))
+                return next(iter(runtimes.values()))
 
             time.sleep(poll_interval)
 

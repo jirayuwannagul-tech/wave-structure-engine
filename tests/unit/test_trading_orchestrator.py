@@ -8,6 +8,7 @@ from services.trading_orchestrator import (
     _format_analysis_summary,
     _refresh_runtime,
     process_market_update,
+    run_orchestrator,
 )
 from storage.wave_repository import WaveRepository
 
@@ -440,3 +441,35 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     assert "• SL: 95 ❌" in notifications[2][0]
     assert "• TP1: 110 ✅" in notifications[2][0]
     assert notifications[2][1]["timeframe"] == "4H"
+
+
+def test_run_orchestrator_once_supports_multiple_symbols(monkeypatch):
+    runtimes = {
+        "BTCUSDT": OrchestratorRuntime(symbol="BTCUSDT", analyses=[], levels=[], scenarios=[]),
+        "ETHUSDT": OrchestratorRuntime(symbol="ETHUSDT", analyses=[], levels=[], scenarios=[]),
+    }
+    prices = {"BTCUSDT": 70000.0, "ETHUSDT": 3500.0}
+    sync_calls = []
+
+    class DummyRepository:
+        def sync_runtime(self, runtime, current_price=None):
+            sync_calls.append((runtime.symbol, current_price))
+            return []
+
+    monkeypatch.setattr("services.trading_orchestrator._load_runtime", lambda symbol: runtimes[symbol])
+    monkeypatch.setattr("services.trading_orchestrator.get_last_price", lambda symbol: prices[symbol])
+    monkeypatch.setattr("services.trading_orchestrator.maybe_run_daily_job", lambda **kwargs: False)
+    monkeypatch.setattr(
+        "services.trading_orchestrator.process_market_update",
+        lambda runtime, current_price, store, repository=None, sheets_logger=None: runtime,
+    )
+
+    result = run_orchestrator(
+        symbol="BTCUSDT",
+        symbols=["BTCUSDT", "ETHUSDT"],
+        once=True,
+        repository=DummyRepository(),
+    )
+
+    assert result.symbol == "BTCUSDT"
+    assert sync_calls == [("BTCUSDT", None), ("ETHUSDT", None)]

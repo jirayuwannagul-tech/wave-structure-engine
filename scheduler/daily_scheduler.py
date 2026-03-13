@@ -19,7 +19,7 @@ def is_daily_run_time(now: datetime | None = None) -> bool:
     return now.hour == 7 and now.minute == 5
 
 
-def build_daily_summary_message(report: str, now: datetime | None = None) -> str:
+def build_daily_summary_message(report: str, symbol: str = "BTCUSDT", now: datetime | None = None) -> str:
     if now is None:
         now = datetime.now(THAI_TZ)
 
@@ -29,13 +29,14 @@ def build_daily_summary_message(report: str, now: datetime | None = None) -> str
         now = now.astimezone(THAI_TZ)
 
     return (
-        "BTCUSDT | Daily Summary\n"
+        f"{symbol} | Daily Summary\n"
         f"📅 {now.strftime('%Y-%m-%d')}\n\n"
         f"{report}"
     )
 
 
 def run_daily_job(
+    symbol: str = "BTCUSDT",
     now: datetime | None = None,
     runtime=None,
     current_price: float | None = None,
@@ -43,11 +44,11 @@ def run_daily_job(
     from services.trading_orchestrator import _load_runtime, render_runtime_snapshot
 
     if runtime is None:
-        runtime = _load_runtime("BTCUSDT")
+        runtime = _load_runtime(symbol)
 
     report = render_runtime_snapshot(runtime, current_price=current_price)
     send_notification(
-        build_daily_summary_message(report, now=now),
+        build_daily_summary_message(report, symbol=symbol, now=now),
         topic_key="daily_summary",
     )
 
@@ -68,16 +69,17 @@ def maybe_run_daily_job(
     if now.hour < 7 or (now.hour == 7 and now.minute < 5):
         return False
 
-    event_key = f"DAILY_SUMMARY:{now.strftime('%Y-%m-%d')}"
+    symbol = getattr(runtime, "symbol", None) or "BTCUSDT"
+    event_key = f"DAILY_SUMMARY:{symbol}:{now.strftime('%Y-%m-%d')}"
     if repository.has_system_event(event_key):
         return False
 
     # Always render the daily summary from a fresh runtime snapshot so the
     # morning report does not depend on a long-lived in-memory state.
-    run_daily_job(now=now, runtime=None, current_price=current_price)
+    run_daily_job(symbol=symbol, now=now, runtime=None, current_price=current_price)
     repository.record_system_event(
         event_key,
-        details={"current_price": current_price},
+        details={"symbol": symbol, "current_price": current_price},
     )
     return True
 

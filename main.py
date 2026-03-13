@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.settings import load_env_file
@@ -30,6 +31,24 @@ def _resolve_timeframes(timeframes: list[str] | None) -> list[str]:
     if invalid:
         raise ValueError(f"Unsupported timeframe(s): {', '.join(invalid)}")
     return normalized
+
+
+def _resolve_symbols(symbol: str | None = None, symbols: list[str] | None = None) -> list[str]:
+    if symbols:
+        resolved = [item.strip().upper() for item in symbols if item and item.strip()]
+    elif symbol:
+        resolved = [symbol.strip().upper()]
+    else:
+        default_symbols = (os.getenv("MONITOR_SYMBOLS") or "BTCUSDT").split(",")
+        resolved = [item.strip().upper() for item in default_symbols if item.strip()]
+
+    unique_symbols: list[str] = []
+    seen: set[str] = set()
+    for item in resolved:
+        if item not in seen:
+            seen.add(item)
+            unique_symbols.append(item)
+    return unique_symbols
 
 
 def _run_dry_run(symbol: str) -> None:
@@ -80,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     orchestrator_parser = subparsers.add_parser("orchestrator", help="Run live monitor/orchestrator")
     orchestrator_parser.add_argument("--symbol", default="BTCUSDT")
+    orchestrator_parser.add_argument("--symbols", nargs="*")
     orchestrator_parser.add_argument("--poll-interval", type=float, default=5.0)
     orchestrator_parser.add_argument("--once", action="store_true")
 
@@ -118,6 +138,7 @@ def main() -> None:
     if args.command == "orchestrator":
         run_orchestrator(
             symbol=args.symbol,
+            symbols=_resolve_symbols(args.symbol, args.symbols),
             poll_interval=args.poll_interval,
             once=args.once,
             sheets_logger=GoogleSheetsSignalLogger.from_env(),

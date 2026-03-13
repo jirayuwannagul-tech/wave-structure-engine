@@ -9,6 +9,10 @@ def test_resolve_timeframes_defaults_to_all():
     assert main._resolve_timeframes(None) == ["1D", "1W", "4H"]
 
 
+def test_resolve_symbols_prefers_symbols_list():
+    assert main._resolve_symbols("BTCUSDT", ["BTCUSDT", "ethusdt", "BTCUSDT"]) == ["BTCUSDT", "ETHUSDT"]
+
+
 def test_resolve_timeframes_rejects_unknown_timeframe():
     with pytest.raises(ValueError):
         main._resolve_timeframes(["2H"])
