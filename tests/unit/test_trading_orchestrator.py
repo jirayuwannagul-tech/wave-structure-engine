@@ -63,9 +63,9 @@ def test_format_analysis_summary_includes_entry_sl_and_targets():
     assert "TP1: 75424.57" in summary
     assert "TP2: 77099.68" in summary
     assert "TP3: 79230.53" in summary
-    assert "RR1:" in summary
-    assert "RR2:" in summary
-    assert "RR3:" in summary
+    assert "RR1:" not in summary
+    assert "RR2:" not in summary
+    assert "RR3:" not in summary
 
 
 def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
@@ -94,7 +94,7 @@ def test_format_analysis_summary_marks_bearish_setup_as_waiting_breakdown():
     assert "Setup: WAITING_BREAKDOWN" in summary
     assert "Trigger: Below 63030" in summary
     assert "TP1: 52010" in summary
-    assert "RR1:" in summary
+    assert "RR1:" not in summary
 
 
 def test_format_analysis_summary_prefers_confirmed_alternate_scenario():

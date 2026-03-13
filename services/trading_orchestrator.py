@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from analysis.level_state_engine import detect_level_state
 from analysis.price_level_watcher import Level
-from analysis.risk_reward import calculate_rr_levels
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
 from services.alert_state_store import AlertStateStore
@@ -157,14 +156,6 @@ def _format_analysis_summary(analysis: dict) -> str:
     tp1 = targets[0] if len(targets) >= 1 else None
     tp2 = targets[1] if len(targets) >= 2 else None
     tp3 = targets[2] if len(targets) >= 3 else None
-    rr_levels = calculate_rr_levels(
-        side=bias,
-        entry_price=entry,
-        stop_loss=stop_loss,
-        tp1=tp1,
-        tp2=tp2,
-        tp3=tp3,
-    )
     scenario_name = getattr(main_scenario, "name", None) or "No active scenario"
     setup_status, trigger_side = _infer_setup_status(
         bias=bias,
@@ -192,10 +183,7 @@ def _format_analysis_summary(analysis: dict) -> str:
         f"SL: {_fmt_value(stop_loss)}\n"
         f"TP1: {_fmt_value(tp1)}\n"
         f"TP2: {_fmt_value(tp2)}\n"
-        f"TP3: {_fmt_value(tp3)}\n"
-        f"RR1: {_fmt_value(rr_levels['rr_tp1'])}\n"
-        f"RR2: {_fmt_value(rr_levels['rr_tp2'])}\n"
-        f"RR3: {_fmt_value(rr_levels['rr_tp3'])}"
+        f"TP3: {_fmt_value(tp3)}"
     )
 
 
@@ -251,15 +239,6 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp2_mark = " ✅" if signal_row["tp2_hit_at"] else ""
     tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
     sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
-    rr_levels = calculate_rr_levels(
-        side=signal_row["side"],
-        entry_price=entry_price,
-        stop_loss=stop_loss,
-        tp1=tp1,
-        tp2=tp2,
-        tp3=tp3,
-    )
-
     return (
         f"{timeframe}\n\n"
         f"status: {status}\n"
@@ -268,10 +247,7 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         f"SL: {_fmt_value(stop_loss)}{sl_mark}\n"
         f"TP1: {_fmt_value(tp1)}{tp1_mark}\n"
         f"TP2: {_fmt_value(tp2)}{tp2_mark}\n"
-        f"TP3: {_fmt_value(tp3)}{tp3_mark}\n"
-        f"RR1: {_fmt_value(rr_levels['rr_tp1'])}\n"
-        f"RR2: {_fmt_value(rr_levels['rr_tp2'])}\n"
-        f"RR3: {_fmt_value(rr_levels['rr_tp3'])}"
+        f"TP3: {_fmt_value(tp3)}{tp3_mark}"
     )
 
 
