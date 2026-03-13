@@ -39,4 +39,7 @@ def load_execution_config() -> ExecutionConfig:
         margin_type=(os.getenv("BINANCE_MARGIN_TYPE") or "ISOLATED").upper(),
         allow_long=_env_flag("BINANCE_ALLOW_LONG", True),
         allow_short=_env_flag("BINANCE_ALLOW_SHORT", True),
+        tp1_size_pct=_env_float("BINANCE_TP1_SIZE_PCT", 0.40),
+        tp2_size_pct=_env_float("BINANCE_TP2_SIZE_PCT", 0.30),
+        tp3_size_pct=_env_float("BINANCE_TP3_SIZE_PCT", 0.30),
     )

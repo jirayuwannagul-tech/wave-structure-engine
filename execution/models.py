@@ -16,6 +16,9 @@ class ExecutionConfig:
     margin_type: str = "ISOLATED"
     allow_long: bool = True
     allow_short: bool = True
+    tp1_size_pct: float = 0.40
+    tp2_size_pct: float = 0.30
+    tp3_size_pct: float = 0.30
 
     @property
     def credentials_ready(self) -> bool:
@@ -26,6 +29,10 @@ class ExecutionConfig:
         if self.use_testnet:
             return "https://testnet.binancefuture.com"
         return "https://fapi.binance.com"
+
+    @property
+    def tp_allocation_total(self) -> float:
+        return float(self.tp1_size_pct) + float(self.tp2_size_pct) + float(self.tp3_size_pct)
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,27 @@ class ExecutionEngine:
         self.config = config or load_execution_config()
         self.client = client or BinanceFuturesClient(self.config)
 
+    def _build_exit_plan(self, intent: OrderIntent) -> list[dict]:
+        plan: list[dict] = []
+        exit_specs = [
+            ("TP1", intent.tp1, float(self.config.tp1_size_pct)),
+            ("TP2", intent.tp2, float(self.config.tp2_size_pct)),
+            ("TP3", intent.tp3, float(self.config.tp3_size_pct)),
+        ]
+
+        for label, target_price, size_pct in exit_specs:
+            if target_price is None or size_pct <= 0:
+                continue
+            plan.append(
+                {
+                    "label": label,
+                    "target_price": target_price,
+                    "size_pct": round(size_pct, 4),
+                    "quantity": round(float(intent.quantity) * size_pct, 6),
+                }
+            )
+        return plan
+
     def preview_signal(self, signal_row, *, account_equity_usdt: float) -> dict:
         intent = build_order_intent_from_signal(
             signal_row,
@@ -62,6 +83,7 @@ class ExecutionEngine:
                 "tp2": intent.tp2,
                 "tp3": intent.tp3,
             },
+            "exit_plan": self._build_exit_plan(intent),
         }
 
     @staticmethod
