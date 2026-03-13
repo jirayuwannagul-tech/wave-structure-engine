@@ -5,7 +5,9 @@ def test_render_terminal_dashboard_shows_read_only_sections():
     output = render_terminal_dashboard(
         {
             "exchange": "binance futures",
+            "symbol": "BTCUSDT",
             "connection": "ok",
+            "current_price": 71320,
             "orchestrator": "active",
             "news_monitor": "active",
             "wallet": "125.4",
@@ -33,6 +35,8 @@ def test_render_terminal_dashboard_shows_read_only_sections():
     assert "$ balance" in output
     assert "$ positions" in output
     assert "$ signals" in output
+    assert "symbol        BTCUSDT" in output
+    assert "price         71,320" in output
     assert "BTCUSDT LONG" in output
     assert "1D  bearish" in output
     assert "4H  bullish" in output
@@ -42,7 +46,9 @@ def test_render_terminal_dashboard_handles_no_positions():
     output = render_terminal_dashboard(
         {
             "exchange": "binance futures",
+            "symbol": "BTCUSDT",
             "connection": "auth error",
+            "current_price": None,
             "orchestrator": "n/a",
             "news_monitor": "n/a",
             "wallet": "-",

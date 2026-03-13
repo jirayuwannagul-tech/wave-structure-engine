@@ -6,7 +6,8 @@ from typing import Any
 
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.settings import load_execution_config
-from services.trading_orchestrator import _load_runtime
+from services.binance_price_service import get_last_price
+from services.trading_orchestrator import _load_runtime, _select_display_scenario
 
 
 def _fmt_number(value: Any) -> str:
@@ -43,7 +44,7 @@ def _build_signals(runtime) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     for analysis in runtime.analyses:
         scenarios = analysis.get("scenarios") or []
-        scenario = scenarios[0] if scenarios else None
+        scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
         targets = list(getattr(scenario, "targets", []) or [])
         tp1 = targets[0] if len(targets) >= 1 else None
         signals.append(
@@ -62,6 +63,10 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
     config = load_execution_config()
     client = BinanceFuturesClient(config)
     runtime = _load_runtime(symbol)
+    try:
+        current_price = get_last_price(symbol)
+    except Exception:
+        current_price = None
     try:
         account = client.get_account_information()
         balance_rows = client.get_balance()
@@ -95,7 +100,9 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
 
     return {
         "exchange": "binance futures",
+        "symbol": symbol,
         "connection": connection,
+        "current_price": current_price,
         "orchestrator": _service_status("elliott-wave-orchestrator.service"),
         "news_monitor": _service_status("elliott-wave-news-monitor.service"),
         "wallet": _fmt_number((usdt_balance or {}).get("balance")),
@@ -116,6 +123,8 @@ def render_terminal_dashboard(snapshot: dict[str, Any]) -> str:
         f"connection    {snapshot['connection']}",
         f"orchestrator  {snapshot['orchestrator']}",
         f"news-monitor  {snapshot['news_monitor']}",
+        f"symbol        {snapshot['symbol']}",
+        f"price         {_fmt_number(snapshot.get('current_price'))}",
         "",
         "$ balance",
         f"wallet        {snapshot['wallet']} usdt",

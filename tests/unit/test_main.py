@@ -57,3 +57,30 @@ def test_terminal_dashboard_command_routes_to_dashboard(monkeypatch):
         )
 
     assert captured == {"symbol": "BTCUSDT", "watch": True, "refresh_seconds": 3.0}
+
+
+def test_web_dashboard_command_routes_to_server(monkeypatch):
+    captured = {}
+
+    def fake_run_web_dashboard(symbol: str, host: str, port: int, refresh_seconds: float):
+        captured["symbol"] = symbol
+        captured["host"] = host
+        captured["port"] = port
+        captured["refresh_seconds"] = refresh_seconds
+
+    monkeypatch.setattr("main.run_web_dashboard", fake_run_web_dashboard)
+
+    parser = main.build_parser()
+    args = parser.parse_args(
+        ["web-dashboard", "--symbol", "BTCUSDT", "--host", "0.0.0.0", "--port", "8080", "--refresh-seconds", "2"]
+    )
+
+    if args.command == "web-dashboard":
+        main.run_web_dashboard(
+            symbol=args.symbol,
+            host=args.host,
+            port=args.port,
+            refresh_seconds=args.refresh_seconds,
+        )
+
+    assert captured == {"symbol": "BTCUSDT", "host": "0.0.0.0", "port": 8080, "refresh_seconds": 2.0}

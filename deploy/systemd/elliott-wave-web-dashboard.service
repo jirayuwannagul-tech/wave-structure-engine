@@ -1,0 +1,13 @@
+[Unit]
+Description=elliott-wave-web-dashboard.service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/wave-structure-engine
+ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py web-dashboard --symbol BTCUSDT --host 0.0.0.0 --port 8080 --refresh-seconds 5
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,7 @@ from services.binance_price_service import get_last_price
 from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
 from services.news_rss_monitor import run_news_monitor
 from services.terminal_dashboard import run_terminal_dashboard
+from services.web_dashboard import run_web_dashboard
 from services.trading_orchestrator import _load_runtime, render_runtime_snapshot, run_orchestrator
 from storage.wave_repository import WaveRepository
 
@@ -100,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_parser.add_argument("--watch", action="store_true")
     dashboard_parser.add_argument("--refresh-seconds", type=float, default=5.0)
 
+    web_dashboard_parser = subparsers.add_parser("web-dashboard", help="Run read-only web dashboard")
+    web_dashboard_parser.add_argument("--symbol", default="BTCUSDT")
+    web_dashboard_parser.add_argument("--host", default="127.0.0.1")
+    web_dashboard_parser.add_argument("--port", type=int, default=8080)
+    web_dashboard_parser.add_argument("--refresh-seconds", type=float, default=5.0)
+
     return parser
 
 
@@ -141,6 +148,15 @@ def main() -> None:
         run_terminal_dashboard(
             symbol=args.symbol,
             watch=args.watch,
+            refresh_seconds=args.refresh_seconds,
+        )
+        return
+
+    if args.command == "web-dashboard":
+        run_web_dashboard(
+            symbol=args.symbol,
+            host=args.host,
+            port=args.port,
             refresh_seconds=args.refresh_seconds,
         )
         return
