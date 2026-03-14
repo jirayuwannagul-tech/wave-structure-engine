@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "contexts": {
+    "BTCUSDT|1W": {
+      "bias": "BEARISH",
+      "wave_number": "5",
+      "structure": "IMPULSE",
+      "position": "WAVE_5_COMPLETE",
+      "note": "Seeded weekly master count: 2025 peak treated as completed weekly wave 5; lower timeframes should be evaluated in a bearish corrective context.",
+      "source": "manual"
+    }
+  }
+}

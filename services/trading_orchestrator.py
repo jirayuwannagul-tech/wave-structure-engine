@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import traceback
 from dataclasses import dataclass
+import os
 
 from analysis.price_level_watcher import Level
 from analysis.setup_filter import extract_trade_bias
@@ -12,7 +13,9 @@ from scheduler.daily_scheduler import maybe_run_daily_job
 from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import safe_sync_signal
+from services.market_data_sync import sync_recent_market_data
 from services.notifier import send_notification
+from storage.manual_wave_context import get_manual_wave_context, serialize_manual_wave_context
 from storage.wave_repository import WaveRepository
 from scenarios.scenario_state_machine import update_scenario_state
 
@@ -23,6 +26,10 @@ class OrchestratorRuntime:
     analyses: list[dict]
     levels: list[Level]
     scenarios: list
+
+
+MARKET_DATA_SYNC_TIMEFRAMES = ("1W", "1D", "4H")
+MARKET_DATA_SYNC_INTERVAL_SECONDS = float(os.getenv("MARKET_DATA_SYNC_INTERVAL_SECONDS", "300"))
 
 
 def _fmt_value(value) -> str:
@@ -175,12 +182,43 @@ def _build_runtime(symbol: str, analyses: list[dict]) -> OrchestratorRuntime:
     )
 
 
+def _resolve_weekly_context(symbol: str) -> tuple[dict, str | None, str | None]:
+    analysis_1w = build_timeframe_analysis(symbol, "1w", 200)
+    manual_context = get_manual_wave_context(symbol, "1W")
+
+    weekly_bias = extract_trade_bias(analysis_1w)
+    weekly_position = analysis_1w.get("position")
+    weekly_wave_number = None
+    if weekly_position is not None:
+        weekly_wave_number = getattr(weekly_position, "wave_number", None) or describe_current_leg(weekly_position)
+
+    if manual_context is None:
+        analysis_1w["manual_wave_context"] = None
+        return analysis_1w, weekly_bias, weekly_wave_number
+
+    analysis_1w["manual_wave_context"] = serialize_manual_wave_context(manual_context)
+    return analysis_1w, manual_context.bias, manual_context.wave_number or weekly_wave_number
+
+
 def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRuntime:
     """Load analysis for all timeframes, retrying on transient failures."""
     delay = 5.0
     for attempt in range(1, retries + 1):
         try:
-            analysis_1d = build_timeframe_analysis(symbol, "1d", 200)
+            analysis_1w, weekly_bias, weekly_wave_number = _resolve_weekly_context(symbol)
+            analysis_1d = build_timeframe_analysis(
+                symbol,
+                "1d",
+                200,
+                higher_timeframe_bias=weekly_bias,
+                higher_timeframe_wave_number=weekly_wave_number,
+            )
+            analysis_1d["higher_timeframe_context"] = {
+                "timeframe": "1W",
+                "bias": weekly_bias,
+                "wave_number": weekly_wave_number,
+                "manual": analysis_1w.get("manual_wave_context"),
+            }
             higher_timeframe_bias = extract_trade_bias(analysis_1d)
             inprogress_1d = analysis_1d.get("inprogress")
             position_1d = analysis_1d.get("position")
@@ -188,12 +226,18 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
             if inprogress_1d is not None and getattr(inprogress_1d, "is_valid", False):
                 htf_wave_number = getattr(inprogress_1d, "wave_number", None)
             elif position_1d is not None:
-                htf_wave_number = getattr(position_1d, "wave_number", None)
+                htf_wave_number = getattr(position_1d, "wave_number", None) or describe_current_leg(position_1d)
             analysis_4h = build_timeframe_analysis(
                 symbol, "4h", 200,
                 higher_timeframe_bias=higher_timeframe_bias,
                 higher_timeframe_wave_number=htf_wave_number,
             )
+            analysis_4h["higher_timeframe_context"] = {
+                "timeframe": "1D",
+                "bias": higher_timeframe_bias,
+                "wave_number": htf_wave_number,
+                "weekly_context": analysis_1d.get("higher_timeframe_context"),
+            }
             analyses = [analysis_1d, analysis_4h]
             return _build_runtime(symbol, analyses)
         except Exception as exc:
@@ -386,9 +430,15 @@ def run_orchestrator(
         The OrchestratorRuntime from the last completed cycle.
     """
     symbols = [item.upper() for item in (symbols or [symbol]) if item]
-    runtimes = {item: _load_runtime(item) for item in symbols}
     store = AlertStateStore()
     repository = repository or WaveRepository()
+    sync_recent_market_data(
+        symbols=symbols,
+        timeframes=list(MARKET_DATA_SYNC_TIMEFRAMES),
+        repository=repository,
+    )
+    last_market_data_sync_at = time.time()
+    runtimes = {item: _load_runtime(item) for item in symbols}
     for runtime in runtimes.values():
         signal_ids = repository.sync_runtime(runtime)
         for signal_id in signal_ids:
@@ -403,6 +453,14 @@ def run_orchestrator(
     while True:
         try:
             snapshots: list[str] = []
+            now_ts = time.time()
+            if now_ts - last_market_data_sync_at >= MARKET_DATA_SYNC_INTERVAL_SECONDS:
+                sync_recent_market_data(
+                    symbols=symbols,
+                    timeframes=list(MARKET_DATA_SYNC_TIMEFRAMES),
+                    repository=repository,
+                )
+                last_market_data_sync_at = now_ts
             for runtime in list(runtimes.values()):
                 price = get_last_price(runtime.symbol)
                 print(f"{runtime.symbol} price: {price}")

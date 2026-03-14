@@ -55,6 +55,32 @@ def test_resolve_backtest_dataset_fetches_when_missing(monkeypatch):
     assert main._resolve_backtest_dataset("DOGEUSDT", "4H") == "data/DOGEUSDT_4H.csv"
 
 
+def test_run_market_data_sync_prints_summary(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "main.sync_market_data",
+        lambda **kwargs: {
+            "symbols": kwargs["symbols"],
+            "timeframes": kwargs["timeframes"],
+            "items": {
+                "BTCUSDT:1D": {
+                    "rows": 100,
+                    "csv_path": "data/BTCUSDT_1d.csv",
+                }
+            },
+        },
+    )
+
+    main._run_market_data_sync(
+        symbols=["BTCUSDT"],
+        timeframes=["1D"],
+        years=8,
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["symbols"] == ["BTCUSDT"]
+    assert output["items"]["BTCUSDT:1D"]["rows"] == 100
+
+
 def test_terminal_dashboard_command_routes_to_dashboard(monkeypatch):
     captured = {}
 

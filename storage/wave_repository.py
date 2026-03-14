@@ -230,6 +230,27 @@ class WaveRepository:
                 CREATE INDEX IF NOT EXISTS idx_signal_events_signal_id
                 ON signal_events(signal_id);
 
+                CREATE TABLE IF NOT EXISTS market_candles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    open_time TEXT NOT NULL,
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL,
+                    close_time TEXT,
+                    quote_asset_volume REAL,
+                    number_of_trades INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(symbol, timeframe, open_time)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_market_candles_symbol_timeframe_open_time
+                ON market_candles(symbol, timeframe, open_time);
+
                 CREATE TABLE IF NOT EXISTS news_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -275,6 +296,71 @@ class WaveRepository:
             conn.execute(
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
             )
+
+    def upsert_market_candles(self, symbol: str, timeframe: str, df) -> int:
+        if df is None or len(df) == 0:
+            return 0
+
+        now = _utc_now()
+        rows = []
+        for _, row in df.iterrows():
+            open_time = row["open_time"]
+            close_time = row.get("close_time")
+            rows.append(
+                (
+                    symbol.upper(),
+                    timeframe.upper(),
+                    open_time.isoformat() if hasattr(open_time, "isoformat") else str(open_time),
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    float(row["volume"]) if row.get("volume") is not None else None,
+                    close_time.isoformat() if hasattr(close_time, "isoformat") else (str(close_time) if close_time is not None else None),
+                    float(row["quote_asset_volume"]) if row.get("quote_asset_volume") is not None else None,
+                    int(row["number_of_trades"]) if row.get("number_of_trades") is not None else None,
+                    now,
+                    now,
+                )
+            )
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO market_candles (
+                    symbol, timeframe, open_time, open, high, low, close, volume,
+                    close_time, quote_asset_volume, number_of_trades, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, timeframe, open_time) DO UPDATE SET
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    volume = excluded.volume,
+                    close_time = excluded.close_time,
+                    quote_asset_volume = excluded.quote_asset_volume,
+                    number_of_trades = excluded.number_of_trades,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+            conn.commit()
+
+        return len(rows)
+
+    def count_market_candles(self, symbol: str | None = None, timeframe: str | None = None) -> int:
+        query = "SELECT COUNT(*) AS count FROM market_candles WHERE 1=1"
+        params: list[str] = []
+        if symbol is not None:
+            query += " AND symbol = ?"
+            params.append(symbol.upper())
+        if timeframe is not None:
+            query += " AND timeframe = ?"
+            params.append(timeframe.upper())
+
+        with self._connect() as conn:
+            row = conn.execute(query, tuple(params)).fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def fetch_active_signals(self, symbol: str | None = None) -> list[sqlite3.Row]:
         query = "SELECT * FROM signals WHERE status IN ({})".format(

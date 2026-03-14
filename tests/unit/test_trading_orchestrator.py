@@ -6,6 +6,7 @@ from services.trading_orchestrator import (
     OrchestratorRuntime,
     _build_levels_from_analysis,
     _format_analysis_summary,
+    _load_runtime,
     _refresh_runtime,
     process_market_update,
     run_orchestrator,
@@ -450,6 +451,7 @@ def test_run_orchestrator_once_supports_multiple_symbols(monkeypatch):
     }
     prices = {"BTCUSDT": 70000.0, "ETHUSDT": 3500.0}
     sync_calls = []
+    market_sync_calls = []
 
     class DummyRepository:
         def sync_runtime(self, runtime, current_price=None):
@@ -459,6 +461,10 @@ def test_run_orchestrator_once_supports_multiple_symbols(monkeypatch):
     monkeypatch.setattr("services.trading_orchestrator._load_runtime", lambda symbol: runtimes[symbol])
     monkeypatch.setattr("services.trading_orchestrator.get_last_price", lambda symbol: prices[symbol])
     monkeypatch.setattr("services.trading_orchestrator.maybe_run_daily_job", lambda **kwargs: False)
+    monkeypatch.setattr(
+        "services.trading_orchestrator.sync_recent_market_data",
+        lambda **kwargs: market_sync_calls.append(kwargs) or {"items": {}},
+    )
     monkeypatch.setattr(
         "services.trading_orchestrator.process_market_update",
         lambda runtime, current_price, store, repository=None, sheets_logger=None: runtime,
@@ -473,3 +479,53 @@ def test_run_orchestrator_once_supports_multiple_symbols(monkeypatch):
 
     assert result.symbol == "BTCUSDT"
     assert sync_calls == [("BTCUSDT", None), ("ETHUSDT", None)]
+    assert len(market_sync_calls) == 1
+    assert market_sync_calls[0]["symbols"] == ["BTCUSDT", "ETHUSDT"]
+    assert market_sync_calls[0]["timeframes"] == ["1W", "1D", "4H"]
+
+
+def test_load_runtime_uses_weekly_manual_context_for_1d_then_1d_context_for_4h(monkeypatch):
+    calls = []
+
+    class Position:
+        def __init__(self, bias, wave_number):
+            self.bias = bias
+            self.wave_number = wave_number
+
+    def fake_build_timeframe_analysis(symbol, interval, limit, higher_timeframe_bias=None, higher_timeframe_wave_number=None):
+        calls.append((interval, higher_timeframe_bias, higher_timeframe_wave_number))
+        interval = interval.lower()
+        if interval == "1w":
+            return {"timeframe": "1W", "position": Position("BULLISH", "2"), "scenarios": [], "wave_summary": {}}
+        if interval == "1d":
+            return {"timeframe": "1D", "position": Position("BEARISH", "3"), "scenarios": [], "wave_summary": {}}
+        if interval == "4h":
+            return {"timeframe": "4H", "position": Position("BEARISH", "C"), "scenarios": [], "wave_summary": {}}
+        raise AssertionError(interval)
+
+    class ManualContext:
+        bias = "BEARISH"
+        wave_number = "5"
+        structure = "IMPULSE"
+        position = "WAVE_5_COMPLETE"
+        symbol = "BTCUSDT"
+        timeframe = "1W"
+        note = "seed"
+        source = "manual"
+
+    monkeypatch.setattr("services.trading_orchestrator.build_timeframe_analysis", fake_build_timeframe_analysis)
+    monkeypatch.setattr("services.trading_orchestrator.get_manual_wave_context", lambda symbol, timeframe: ManualContext())
+
+    runtime = _load_runtime("BTCUSDT", retries=1)
+
+    assert runtime.symbol == "BTCUSDT"
+    assert calls == [
+        ("1w", None, None),
+        ("1d", "BEARISH", "5"),
+        ("4h", "BEARISH", "3"),
+    ]
+    assert runtime.analyses[0]["higher_timeframe_context"]["timeframe"] == "1W"
+    assert runtime.analyses[0]["higher_timeframe_context"]["bias"] == "BEARISH"
+    assert runtime.analyses[0]["higher_timeframe_context"]["wave_number"] == "5"
+    assert runtime.analyses[1]["higher_timeframe_context"]["timeframe"] == "1D"
+    assert runtime.analyses[1]["higher_timeframe_context"]["wave_number"] == "3"

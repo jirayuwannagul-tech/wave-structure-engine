@@ -1,3 +1,5 @@
+import pandas as pd
+
 from scenarios.scenario_engine import Scenario
 from storage.wave_repository import WaveRepository, build_signal_snapshot
 
@@ -145,3 +147,37 @@ def test_sync_analysis_backfills_rr_for_existing_signal(tmp_path):
     assert row["rr_tp1"] == 2.0
     assert row["rr_tp2"] == 4.0
     assert row["rr_tp3"] == 6.0
+
+
+def test_repository_upserts_market_candles(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    df = pd.DataFrame(
+        {
+            "open_time": pd.to_datetime(["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"], utc=True),
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.0, 102.0],
+            "volume": [10.0, 11.0],
+            "close_time": pd.to_datetime(["2026-01-01T23:59:59Z", "2026-01-02T23:59:59Z"], utc=True),
+            "quote_asset_volume": [20.0, 21.0],
+            "number_of_trades": [5, 6],
+        }
+    )
+
+    inserted = repo.upsert_market_candles("BTCUSDT", "1D", df)
+    assert inserted == 2
+    assert repo.count_market_candles("BTCUSDT", "1D") == 2
+
+    updated = df.copy()
+    updated.loc[1, "close"] = 202.0
+    upserted = repo.upsert_market_candles("BTCUSDT", "1D", updated.iloc[1:])
+    assert upserted == 1
+
+    with repo._connect() as conn:
+        row = conn.execute(
+            "SELECT close FROM market_candles WHERE symbol = ? AND timeframe = ? AND open_time = ?",
+            ("BTCUSDT", "1D", "2026-01-02T00:00:00+00:00"),
+        ).fetchone()
+
+    assert row["close"] == 202.0

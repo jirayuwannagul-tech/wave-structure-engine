@@ -17,6 +17,7 @@ from data.market_data_fetcher import MarketDataFetcher
 from execution.settings import load_execution_config
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
+from services.market_data_sync import sync_market_data
 from services.news_rss_monitor import run_news_monitor
 from services.terminal_dashboard import run_terminal_dashboard
 from services.web_dashboard import run_web_dashboard
@@ -111,6 +112,21 @@ def _run_dry_run(symbol: str) -> None:
     for signal_id in signal_ids:
         safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
     print(render_runtime_snapshot(runtime, current_price=current_price))
+
+
+def _run_market_data_sync(
+    symbols: list[str],
+    timeframes: list[str],
+    years: int = 8,
+) -> None:
+    start_time = pd.Timestamp.now(tz="UTC") - timedelta(days=365 * years)
+    summary = sync_market_data(
+        symbols=symbols,
+        timeframes=timeframes,
+        repository=WaveRepository(),
+        start_time=start_time,
+    )
+    print(json.dumps(summary, indent=2))
 
 
 def _run_trade_backtest(
@@ -469,6 +485,15 @@ def build_parser() -> argparse.ArgumentParser:
     news_parser = subparsers.add_parser("news-monitor", help="Run BTC RSS news context monitor")
     news_parser.add_argument("--once", action="store_true")
 
+    market_data_parser = subparsers.add_parser(
+        "sync-market-data",
+        help="Backfill and persist market candles to CSV and SQLite",
+    )
+    market_data_parser.add_argument("--symbol", default="BTCUSDT")
+    market_data_parser.add_argument("--symbols", nargs="*")
+    market_data_parser.add_argument("--timeframes", nargs="*", default=["1W", "1D", "4H"])
+    market_data_parser.add_argument("--years", type=int, default=8)
+
     dashboard_parser = subparsers.add_parser("terminal-dashboard", help="Render read-only terminal dashboard")
     dashboard_parser.add_argument("--symbol", default="BTCUSDT")
     dashboard_parser.add_argument("--watch", action="store_true")
@@ -556,6 +581,14 @@ def main() -> None:
             slippage_bps=args.slippage_bps,
             refresh_data=args.refresh_data,
             fetch_limit=args.fetch_limit,
+            years=args.years,
+        )
+        return
+
+    if args.command == "sync-market-data":
+        _run_market_data_sync(
+            symbols=_resolve_symbols(args.symbol, args.symbols),
+            timeframes=args.timeframes,
             years=args.years,
         )
         return
