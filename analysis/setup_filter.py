@@ -21,6 +21,12 @@ CORRECTIVE_PATTERNS = {
     "DESCENDING_BARRIER_TRIANGLE",
 }
 
+IMPULSE_LIKE_PATTERNS = {
+    "IMPULSE",
+    "LEADING_DIAGONAL",
+    "ENDING_DIAGONAL",
+}
+
 
 @dataclass
 class TradeFilterDecision:
@@ -56,6 +62,25 @@ def extract_trade_bias(analysis: dict | None) -> str | None:
     return None
 
 
+def build_higher_timeframe_context(analysis: dict | None) -> dict | None:
+    if not analysis:
+        return None
+
+    position = analysis.get("position")
+    wave_summary = analysis.get("wave_summary") or {}
+    return {
+        "timeframe": str(analysis.get("timeframe") or "").upper() or None,
+        "bias": extract_trade_bias(analysis),
+        "wave_number": (
+            getattr(position, "wave_number", None)
+            or wave_summary.get("wave_number")
+            or wave_summary.get("current_wave")
+        ),
+        "structure": getattr(position, "structure", None) or analysis.get("primary_pattern_type"),
+        "position": getattr(position, "position", None),
+    }
+
+
 def _trend_state(analysis: dict) -> str:
     trend = analysis.get("trend")
     return (getattr(trend, "state", None) or "SIDEWAY").upper()
@@ -87,6 +112,85 @@ def _is_alternate(scenario, index: int) -> bool:
     return index > 0 or "ALTERNATE" in name
 
 
+def _pattern_family(pattern: str | None) -> str:
+    normalized = str(pattern or "").upper()
+    if normalized in IMPULSE_LIKE_PATTERNS:
+        return "IMPULSE"
+    if normalized in CORRECTIVE_PATTERNS:
+        return "CORRECTIVE"
+    return "UNKNOWN"
+
+
+def _normalize_higher_timeframe_context(
+    higher_timeframe_bias: str | None,
+    htf_wave_number: str | None,
+    higher_timeframe_context: dict | None,
+) -> dict | None:
+    context = dict(higher_timeframe_context or {})
+    if higher_timeframe_bias and not context.get("bias"):
+        context["bias"] = higher_timeframe_bias
+    if htf_wave_number and not context.get("wave_number"):
+        context["wave_number"] = htf_wave_number
+    return context or None
+
+
+def _higher_timeframe_phase(context: dict | None) -> str | None:
+    if not context:
+        return None
+
+    wave_number = str(context.get("wave_number") or "").upper()
+    position = str(context.get("position") or "").upper()
+    structure = str(context.get("structure") or "").upper()
+
+    if wave_number == "5" and "COMPLETE" in position:
+        return "POST_IMPULSE_CORRECTION"
+    if wave_number in {"1", "3", "5"}:
+        return "IMPULSE"
+    if wave_number in {"2", "4", "A", "B", "C", "W", "X", "Y", "Z"}:
+        return "CORRECTION"
+    if structure in CORRECTIVE_PATTERNS:
+        return "CORRECTION"
+    if structure in IMPULSE_LIKE_PATTERNS:
+        return "IMPULSE"
+    return None
+
+
+def _passes_structure_gate(
+    analysis: dict,
+    scenario,
+    confidence: float,
+    higher_timeframe_context: dict | None,
+) -> tuple[bool, str | None]:
+    if not higher_timeframe_context:
+        return True, None
+
+    htf_bias = str(higher_timeframe_context.get("bias") or "").upper() or None
+    lower_bias = _scenario_bias(scenario)
+    if not htf_bias or not lower_bias or lower_bias == htf_bias:
+        return True, None
+
+    pattern_family = _pattern_family(analysis.get("primary_pattern_type"))
+    phase = _higher_timeframe_phase(higher_timeframe_context)
+    timeframe = str(analysis.get("timeframe") or "").upper()
+
+    if pattern_family != "CORRECTIVE":
+        return False, "counter-trend non-corrective against higher timeframe structure"
+
+    threshold = 0.90
+    if phase == "IMPULSE":
+        threshold = 0.88
+    elif phase == "POST_IMPULSE_CORRECTION":
+        threshold = 0.92
+
+    if timeframe == "4H":
+        threshold += 0.02
+
+    if confidence < threshold:
+        return False, "counter-trend correction confidence too low for higher timeframe structure"
+
+    return True, None
+
+
 def _is_tradeable_regime(analysis: dict) -> bool:
     trend_state = _trend_state(analysis)
     indicator_context = _indicator_context(analysis)
@@ -107,6 +211,7 @@ def _passes_quality_gate(
     index: int,
     higher_timeframe_bias: str | None,
     htf_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
 ) -> tuple[bool, str | None]:
     symbol = str(analysis.get("symbol") or "")
     timeframe = str(analysis.get("timeframe") or "")
@@ -123,6 +228,11 @@ def _passes_quality_gate(
     is_alternate = _is_alternate(scenario, index)
     side = "LONG" if bias == "BULLISH" else "SHORT" if bias == "BEARISH" else None
     pattern_edge = get_pattern_edge(symbol, timeframe, pattern, side)
+    normalized_htf_context = _normalize_higher_timeframe_context(
+        higher_timeframe_bias=higher_timeframe_bias,
+        htf_wave_number=htf_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
+    )
 
     main_confidence_threshold = MIN_MAIN_CONFIDENCE
     alternate_confidence_threshold = MIN_ALTERNATE_CONFIDENCE
@@ -149,6 +259,15 @@ def _passes_quality_gate(
         # For 1D, soft-block: allow if very high confidence
         if confidence < 0.85:
             return False, "1D counter-trend: confidence too low"
+
+    structure_ok, structure_note = _passes_structure_gate(
+        analysis=analysis,
+        scenario=scenario,
+        confidence=confidence,
+        higher_timeframe_context=normalized_htf_context,
+    )
+    if not structure_ok:
+        return False, structure_note
 
     # Wave nesting: if we know the HTF wave number, use it to calibrate confidence
     if htf_wave_number:
@@ -199,6 +318,7 @@ def filter_trade_scenarios(
     analysis: dict,
     higher_timeframe_bias: str | None = None,
     htf_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
 ) -> tuple[list, TradeFilterDecision]:
     scenarios = list(analysis.get("scenarios") or [])
     notes: list[str] = []
@@ -244,6 +364,7 @@ def filter_trade_scenarios(
             index=index,
             higher_timeframe_bias=higher_timeframe_bias,
             htf_wave_number=htf_wave_number,
+            higher_timeframe_context=higher_timeframe_context,
         )
         if passed:
             filtered.append(scenario)
@@ -264,6 +385,7 @@ def apply_trade_filters(
     analysis: dict,
     higher_timeframe_bias: str | None = None,
     htf_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
 ) -> dict:
     if not analysis:
         return analysis
@@ -272,6 +394,7 @@ def apply_trade_filters(
         analysis,
         higher_timeframe_bias=higher_timeframe_bias,
         htf_wave_number=htf_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
     )
 
     out = dict(analysis)

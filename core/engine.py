@@ -25,6 +25,7 @@ def build_dataframe_analysis(
     current_price: float | None = None,
     higher_timeframe_bias: str | None = None,
     higher_timeframe_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
 ) -> dict:
     """Run the full Elliott Wave analysis pipeline on a pre-loaded DataFrame.
 
@@ -133,12 +134,14 @@ def build_dataframe_analysis(
         "probability": probability,
         "indicator_context": indicator_context,
         "report": report,
+        "higher_timeframe_context": higher_timeframe_context,
     }
 
     return apply_trade_filters(
         analysis,
         higher_timeframe_bias=higher_timeframe_bias,
         htf_wave_number=higher_timeframe_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
     )
 
 
@@ -148,6 +151,7 @@ def build_timeframe_analysis(
     limit: int = 200,
     higher_timeframe_bias: str | None = None,
     higher_timeframe_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
 ) -> dict:
     """Fetch live OHLCV data from Binance and run the full analysis pipeline.
 
@@ -177,6 +181,7 @@ def build_timeframe_analysis(
         current_price=current_price,
         higher_timeframe_bias=higher_timeframe_bias,
         higher_timeframe_wave_number=higher_timeframe_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
     )
 
 

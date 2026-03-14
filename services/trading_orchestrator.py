@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 
 from analysis.price_level_watcher import Level
-from analysis.setup_filter import extract_trade_bias
+from analysis.setup_filter import build_higher_timeframe_context, extract_trade_bias
 from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
@@ -182,22 +182,16 @@ def _build_runtime(symbol: str, analyses: list[dict]) -> OrchestratorRuntime:
     )
 
 
-def _resolve_weekly_context(symbol: str) -> tuple[dict, str | None, str | None]:
+def _resolve_weekly_context(symbol: str) -> tuple[dict, dict | None]:
     analysis_1w = build_timeframe_analysis(symbol, "1w", 200)
     manual_context = get_manual_wave_context(symbol, "1W")
 
-    weekly_bias = extract_trade_bias(analysis_1w)
-    weekly_position = analysis_1w.get("position")
-    weekly_wave_number = None
-    if weekly_position is not None:
-        weekly_wave_number = getattr(weekly_position, "wave_number", None) or describe_current_leg(weekly_position)
-
     if manual_context is None:
         analysis_1w["manual_wave_context"] = None
-        return analysis_1w, weekly_bias, weekly_wave_number
+        return analysis_1w, build_higher_timeframe_context(analysis_1w)
 
     analysis_1w["manual_wave_context"] = serialize_manual_wave_context(manual_context)
-    return analysis_1w, manual_context.bias, manual_context.wave_number or weekly_wave_number
+    return analysis_1w, analysis_1w["manual_wave_context"]
 
 
 def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRuntime:
@@ -205,20 +199,18 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
     delay = 5.0
     for attempt in range(1, retries + 1):
         try:
-            analysis_1w, weekly_bias, weekly_wave_number = _resolve_weekly_context(symbol)
+            analysis_1w, weekly_context = _resolve_weekly_context(symbol)
+            weekly_bias = (weekly_context or {}).get("bias")
+            weekly_wave_number = (weekly_context or {}).get("wave_number")
             analysis_1d = build_timeframe_analysis(
                 symbol,
                 "1d",
                 200,
                 higher_timeframe_bias=weekly_bias,
                 higher_timeframe_wave_number=weekly_wave_number,
+                higher_timeframe_context=weekly_context,
             )
-            analysis_1d["higher_timeframe_context"] = {
-                "timeframe": "1W",
-                "bias": weekly_bias,
-                "wave_number": weekly_wave_number,
-                "manual": analysis_1w.get("manual_wave_context"),
-            }
+            analysis_1d["higher_timeframe_context"] = weekly_context
             higher_timeframe_bias = extract_trade_bias(analysis_1d)
             inprogress_1d = analysis_1d.get("inprogress")
             position_1d = analysis_1d.get("position")
@@ -227,17 +219,20 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
                 htf_wave_number = getattr(inprogress_1d, "wave_number", None)
             elif position_1d is not None:
                 htf_wave_number = getattr(position_1d, "wave_number", None) or describe_current_leg(position_1d)
+            daily_context = build_higher_timeframe_context(analysis_1d) or {
+                "timeframe": "1D",
+                "bias": higher_timeframe_bias,
+                "wave_number": htf_wave_number,
+            }
+            if weekly_context:
+                daily_context["parent"] = weekly_context
             analysis_4h = build_timeframe_analysis(
                 symbol, "4h", 200,
                 higher_timeframe_bias=higher_timeframe_bias,
                 higher_timeframe_wave_number=htf_wave_number,
+                higher_timeframe_context=daily_context,
             )
-            analysis_4h["higher_timeframe_context"] = {
-                "timeframe": "1D",
-                "bias": higher_timeframe_bias,
-                "wave_number": htf_wave_number,
-                "weekly_context": analysis_1d.get("higher_timeframe_context"),
-            }
+            analysis_4h["higher_timeframe_context"] = daily_context
             analyses = [analysis_1d, analysis_4h]
             return _build_runtime(symbol, analyses)
         except Exception as exc:

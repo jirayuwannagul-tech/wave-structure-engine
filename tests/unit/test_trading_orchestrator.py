@@ -492,26 +492,37 @@ def test_load_runtime_uses_weekly_manual_context_for_1d_then_1d_context_for_4h(m
             self.bias = bias
             self.wave_number = wave_number
 
-    def fake_build_timeframe_analysis(symbol, interval, limit, higher_timeframe_bias=None, higher_timeframe_wave_number=None):
-        calls.append((interval, higher_timeframe_bias, higher_timeframe_wave_number))
+    def fake_build_timeframe_analysis(
+        symbol,
+        interval,
+        limit,
+        higher_timeframe_bias=None,
+        higher_timeframe_wave_number=None,
+        higher_timeframe_context=None,
+    ):
+        calls.append((interval, higher_timeframe_bias, higher_timeframe_wave_number, higher_timeframe_context))
         interval = interval.lower()
         if interval == "1w":
             return {"timeframe": "1W", "position": Position("BULLISH", "2"), "scenarios": [], "wave_summary": {}}
         if interval == "1d":
-            return {"timeframe": "1D", "position": Position("BEARISH", "3"), "scenarios": [], "wave_summary": {}}
+            pos = Position("BEARISH", "3")
+            pos.structure = "IMPULSE"
+            pos.position = "WAVE_3"
+            return {"timeframe": "1D", "position": pos, "scenarios": [], "wave_summary": {}}
         if interval == "4h":
             return {"timeframe": "4H", "position": Position("BEARISH", "C"), "scenarios": [], "wave_summary": {}}
         raise AssertionError(interval)
 
     class ManualContext:
-        bias = "BEARISH"
-        wave_number = "5"
-        structure = "IMPULSE"
-        position = "WAVE_5_COMPLETE"
-        symbol = "BTCUSDT"
-        timeframe = "1W"
-        note = "seed"
-        source = "manual"
+        def __init__(self):
+            self.bias = "BEARISH"
+            self.wave_number = "5"
+            self.structure = "IMPULSE"
+            self.position = "WAVE_5_COMPLETE"
+            self.symbol = "BTCUSDT"
+            self.timeframe = "1W"
+            self.note = "seed"
+            self.source = "manual"
 
     monkeypatch.setattr("services.trading_orchestrator.build_timeframe_analysis", fake_build_timeframe_analysis)
     monkeypatch.setattr("services.trading_orchestrator.get_manual_wave_context", lambda symbol, timeframe: ManualContext())
@@ -520,12 +531,13 @@ def test_load_runtime_uses_weekly_manual_context_for_1d_then_1d_context_for_4h(m
 
     assert runtime.symbol == "BTCUSDT"
     assert calls == [
-        ("1w", None, None),
-        ("1d", "BEARISH", "5"),
-        ("4h", "BEARISH", "3"),
+        ("1w", None, None, None),
+        ("1d", "BEARISH", "5", {"symbol": "BTCUSDT", "timeframe": "1W", "bias": "BEARISH", "wave_number": "5", "structure": "IMPULSE", "position": "WAVE_5_COMPLETE", "note": "seed", "source": "manual"}),
+        ("4h", "BEARISH", "3", {"timeframe": "1D", "bias": "BEARISH", "wave_number": "3", "structure": "IMPULSE", "position": "WAVE_3", "parent": {"symbol": "BTCUSDT", "timeframe": "1W", "bias": "BEARISH", "wave_number": "5", "structure": "IMPULSE", "position": "WAVE_5_COMPLETE", "note": "seed", "source": "manual"}}),
     ]
     assert runtime.analyses[0]["higher_timeframe_context"]["timeframe"] == "1W"
     assert runtime.analyses[0]["higher_timeframe_context"]["bias"] == "BEARISH"
     assert runtime.analyses[0]["higher_timeframe_context"]["wave_number"] == "5"
     assert runtime.analyses[1]["higher_timeframe_context"]["timeframe"] == "1D"
     assert runtime.analyses[1]["higher_timeframe_context"]["wave_number"] == "3"
+    assert runtime.analyses[1]["higher_timeframe_context"]["parent"]["timeframe"] == "1W"

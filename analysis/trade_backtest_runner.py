@@ -8,7 +8,7 @@ from analysis.trade_backtest import (
     build_trade_setup_from_scenario,
     simulate_trade_from_setup,
 )
-from analysis.setup_filter import apply_trade_filters, extract_trade_bias
+from analysis.setup_filter import apply_trade_filters, build_higher_timeframe_context, extract_trade_bias
 from core.engine import build_dataframe_analysis
 
 
@@ -131,6 +131,7 @@ def run_trade_backtest(
             current_price=float(sample_df.iloc[-1]["close"]),
         )
         higher_timeframe_bias = None
+        higher_timeframe_context = None
         if (
             timeframe.upper() == "4H"
             and higher_timeframe_df is not None
@@ -149,8 +150,13 @@ def run_trade_backtest(
                     current_price=float(higher_sample_df.iloc[-1]["close"]),
                 )
                 higher_timeframe_bias = extract_trade_bias(higher_analysis)
+                higher_timeframe_context = build_higher_timeframe_context(higher_analysis)
 
-        analysis = apply_trade_filters(analysis, higher_timeframe_bias=higher_timeframe_bias)
+        analysis = apply_trade_filters(
+            analysis,
+            higher_timeframe_bias=higher_timeframe_bias,
+            higher_timeframe_context=higher_timeframe_context,
+        )
 
         if not analysis.get("has_pattern"):
             continue

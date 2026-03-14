@@ -5,6 +5,7 @@ from storage.experience_store import clear_experience_store_cache, save_experien
 from analysis.setup_filter import (
     _trend_aligned,
     apply_trade_filters,
+    build_higher_timeframe_context,
     extract_trade_bias,
     filter_trade_scenarios,
     _is_tradeable_regime,
@@ -60,6 +61,50 @@ def test_apply_trade_filters_blocks_countertrend_4h_setup():
     )
 
     filtered = apply_trade_filters(analysis, higher_timeframe_bias="BEARISH")
+
+    assert filtered["scenarios"] == []
+    assert "counter-trend against 1D context" in filtered["trade_filter"]["notes"]
+
+
+def test_build_higher_timeframe_context_extracts_structure_and_position():
+    analysis = {
+        "timeframe": "1D",
+        "primary_pattern_type": "IMPULSE",
+        "position": SimpleNamespace(bias="BEARISH", wave_number="3", structure="IMPULSE", position="WAVE_3"),
+        "wave_summary": {},
+        "scenarios": [SimpleNamespace(name="Main Bearish", bias="BEARISH")],
+    }
+
+    context = build_higher_timeframe_context(analysis)
+
+    assert context == {
+        "timeframe": "1D",
+        "bias": "BEARISH",
+        "wave_number": "3",
+        "structure": "IMPULSE",
+        "position": "WAVE_3",
+    }
+
+
+def test_apply_trade_filters_blocks_countertrend_impulse_against_higher_timeframe_structure():
+    analysis = _analysis_with(
+        confidence=0.95,
+        scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "IMPULSE"
+
+    filtered = apply_trade_filters(
+        analysis,
+        higher_timeframe_bias="BEARISH",
+        higher_timeframe_context={
+            "timeframe": "1D",
+            "bias": "BEARISH",
+            "wave_number": "3",
+            "structure": "IMPULSE",
+            "position": "WAVE_3",
+        },
+    )
 
     assert filtered["scenarios"] == []
     assert "counter-trend against 1D context" in filtered["trade_filter"]["notes"]
@@ -279,6 +324,31 @@ def test_1d_countertrend_high_confidence_passes():
     filtered = apply_trade_filters(analysis, higher_timeframe_bias="BEARISH")
     # High confidence should pass even against HTF bias on 1D
     assert len(filtered["scenarios"]) >= 0  # Just ensure no crash; result may vary
+
+
+def test_1d_countertrend_impulse_blocked_by_weekly_structure_even_when_confident():
+    analysis = _analysis_with(
+        timeframe="1D",
+        confidence=0.92,
+        scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "IMPULSE"
+
+    filtered = apply_trade_filters(
+        analysis,
+        higher_timeframe_bias="BEARISH",
+        higher_timeframe_context={
+            "timeframe": "1W",
+            "bias": "BEARISH",
+            "wave_number": "5",
+            "structure": "IMPULSE",
+            "position": "WAVE_5_COMPLETE",
+        },
+    )
+
+    assert filtered["scenarios"] == []
+    assert any("higher timeframe structure" in n for n in filtered["trade_filter"]["notes"])
 
 
 # ── apply_trade_filters with None analysis ────────────────────────────────────
