@@ -8,7 +8,42 @@ from typing import Any
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.settings import load_execution_config
 from services.binance_price_service import get_last_price
-from services.trading_orchestrator import _load_runtime, _select_display_scenario
+from services.trading_orchestrator import _fallback_targets, _load_runtime, _select_display_scenario
+
+
+def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> bool:
+    if bias is None or entry is None or stop_loss is None:
+        return False
+    try:
+        entry_value = float(entry)
+        stop_value = float(stop_loss)
+    except (TypeError, ValueError):
+        return False
+
+    side = str(bias).upper()
+    if side == "BULLISH":
+        if stop_value >= entry_value:
+            return False
+        if tp1 is not None:
+            try:
+                if float(tp1) <= entry_value:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
+    if side == "BEARISH":
+        if stop_value <= entry_value:
+            return False
+        if tp1 is not None:
+            try:
+                if float(tp1) >= entry_value:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
+    return False
 
 
 def _fmt_number(value: Any) -> str:
@@ -55,17 +90,50 @@ def _build_signals(runtimes: list) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     for runtime in runtimes:
         for analysis in runtime.analyses:
-            scenarios = analysis.get("scenarios") or []
+            scenarios = analysis.get("scenarios") or analysis.get("all_scenarios") or []
             scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
-            targets = list(getattr(scenario, "targets", []) or [])
+            wave_summary = analysis.get("wave_summary") or {}
+            summary_bias = wave_summary.get("bias")
+            summary_entry = wave_summary.get("confirm")
+            summary_stop = wave_summary.get("stop_loss")
+            summary_targets = list(wave_summary.get("targets", []) or [])
+            summary_tp1 = summary_targets[0] if len(summary_targets) >= 1 else None
+
+            scenario_bias = getattr(scenario, "bias", None) if scenario is not None else None
+            scenario_entry = getattr(scenario, "confirmation", None) if scenario is not None else None
+            scenario_stop = getattr(scenario, "stop_loss", None) if scenario is not None else None
+            scenario_targets = list(getattr(scenario, "targets", []) or []) if scenario is not None else []
+            scenario_tp1 = scenario_targets[0] if len(scenario_targets) >= 1 else None
+
+            use_summary = _is_valid_signal_shape(summary_bias, summary_entry, summary_stop, summary_tp1)
+            use_scenario = _is_valid_signal_shape(scenario_bias, scenario_entry, scenario_stop, scenario_tp1)
+
+            if use_summary:
+                bias = summary_bias
+                entry = summary_entry
+                stop_loss = summary_stop
+                targets = summary_targets
+            elif use_scenario:
+                bias = scenario_bias
+                entry = scenario_entry
+                stop_loss = scenario_stop
+                targets = scenario_targets
+            else:
+                bias = summary_bias or scenario_bias
+                entry = summary_entry if summary_entry is not None else scenario_entry
+                stop_loss = summary_stop if summary_stop is not None else scenario_stop
+                targets = summary_targets or scenario_targets
+
+            if not targets:
+                targets = _fallback_targets(bias, entry, stop_loss)
             tp1 = targets[0] if len(targets) >= 1 else None
             signals.append(
                 {
                     "symbol": runtime.symbol,
                     "timeframe": analysis.get("timeframe"),
-                    "bias": getattr(scenario, "bias", None) or "NONE",
-                    "entry": getattr(scenario, "confirmation", None),
-                    "sl": getattr(scenario, "stop_loss", None),
+                    "bias": bias or "NONE",
+                    "entry": entry,
+                    "sl": stop_loss,
                     "tp1": tp1,
                 }
             )
