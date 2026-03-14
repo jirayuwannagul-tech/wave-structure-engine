@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from analysis.wave_position import describe_current_leg
+
 from storage.experience_store import get_pattern_edge
 
 
@@ -191,6 +193,109 @@ def _passes_structure_gate(
     return True, None
 
 
+def derive_wave_hierarchy(
+    analysis: dict,
+    higher_timeframe_bias: str | None = None,
+    htf_wave_number: str | None = None,
+    higher_timeframe_context: dict | None = None,
+) -> dict | None:
+    normalized_htf_context = _normalize_higher_timeframe_context(
+        higher_timeframe_bias=higher_timeframe_bias,
+        htf_wave_number=htf_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
+    )
+    if not normalized_htf_context:
+        return None
+
+    position = analysis.get("position")
+    indicator_context = _indicator_context(analysis)
+    child_bias = extract_trade_bias(analysis)
+    child_pattern = str(analysis.get("primary_pattern_type") or "").upper()
+    child_family = _pattern_family(child_pattern)
+    child_wave_number = (
+        getattr(position, "wave_number", None)
+        or (describe_current_leg(position) if getattr(position, "wave_number", None) is not None or getattr(position, "structure", None) is not None else None)
+        or str((analysis.get("wave_summary") or {}).get("current_wave") or "").upper()
+        or None
+    )
+    parent_bias = str(normalized_htf_context.get("bias") or "").upper() or None
+    parent_phase = _higher_timeframe_phase(normalized_htf_context)
+    confidence = float(analysis.get("confidence") or 0.0)
+
+    indicator_support = bool(indicator_context.get("indicator_validation")) or bool(indicator_context.get("atr_ok"))
+    indicator_support = indicator_support or str(indicator_context.get("rsi_divergence") or "NONE").upper() != "NONE"
+    indicator_support = indicator_support or str(indicator_context.get("macd_divergence") or "NONE").upper() != "NONE"
+
+    role = "UNCLASSIFIED"
+    aligned = True
+
+    if parent_bias is None:
+        return {
+            "parent_timeframe": normalized_htf_context.get("timeframe"),
+            "parent_bias": parent_bias,
+            "parent_wave_number": normalized_htf_context.get("wave_number"),
+            "parent_structure": normalized_htf_context.get("structure"),
+            "parent_position": normalized_htf_context.get("position"),
+            "parent_phase": parent_phase,
+            "child_timeframe": str(analysis.get("timeframe") or "").upper(),
+            "child_bias": child_bias,
+            "child_wave_number": child_wave_number,
+            "child_pattern_family": child_family,
+            "child_pattern_type": child_pattern,
+            "child_role": role,
+            "indicator_support": indicator_support,
+            "aligned": True,
+        }
+
+    if parent_phase in {"CORRECTION", "POST_IMPULSE_CORRECTION"}:
+        if child_bias == parent_bias:
+            if child_family == "CORRECTIVE":
+                role = "A_OR_C"
+                aligned = True
+            elif child_family == "IMPULSE":
+                role = "C_EXTENSION"
+                aligned = indicator_support
+        else:
+            if child_family == "CORRECTIVE":
+                role = "B_OR_X"
+                aligned = confidence >= 0.88 and indicator_support
+            else:
+                role = "COUNTERTREND_IMPULSE"
+                aligned = False
+    elif parent_phase == "IMPULSE":
+        if child_bias == parent_bias:
+            if child_family == "CORRECTIVE":
+                role = "PULLBACK_2_OR_4"
+                aligned = True
+            elif child_family == "IMPULSE":
+                role = "TREND_CONTINUATION_1_3_5"
+                aligned = True
+        else:
+            if child_family == "CORRECTIVE":
+                role = "COUNTERTREND_BOUNCE"
+                aligned = confidence >= 0.9 and indicator_support
+            else:
+                role = "COUNTERTREND_IMPULSE"
+                aligned = False
+
+    return {
+        "parent_timeframe": normalized_htf_context.get("timeframe"),
+        "parent_bias": parent_bias,
+        "parent_wave_number": normalized_htf_context.get("wave_number"),
+        "parent_structure": normalized_htf_context.get("structure"),
+        "parent_position": normalized_htf_context.get("position"),
+        "parent_phase": parent_phase,
+        "child_timeframe": str(analysis.get("timeframe") or "").upper(),
+        "child_bias": child_bias,
+        "child_wave_number": child_wave_number,
+        "child_pattern_family": child_family,
+        "child_pattern_type": child_pattern,
+        "child_role": role,
+        "indicator_support": indicator_support,
+        "aligned": aligned,
+    }
+
+
 def _is_tradeable_regime(analysis: dict) -> bool:
     trend_state = _trend_state(analysis)
     indicator_context = _indicator_context(analysis)
@@ -233,6 +338,12 @@ def _passes_quality_gate(
         htf_wave_number=htf_wave_number,
         higher_timeframe_context=higher_timeframe_context,
     )
+    hierarchy = derive_wave_hierarchy(
+        analysis=analysis,
+        higher_timeframe_bias=higher_timeframe_bias,
+        htf_wave_number=htf_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
+    )
 
     main_confidence_threshold = MIN_MAIN_CONFIDENCE
     alternate_confidence_threshold = MIN_ALTERNATE_CONFIDENCE
@@ -268,6 +379,8 @@ def _passes_quality_gate(
     )
     if not structure_ok:
         return False, structure_note
+    if hierarchy is not None and not hierarchy.get("aligned"):
+        return False, "child wave not aligned with higher timeframe hierarchy"
 
     # Wave nesting: if we know the HTF wave number, use it to calibrate confidence
     if htf_wave_number:
@@ -400,6 +513,12 @@ def apply_trade_filters(
     out = dict(analysis)
     out["all_scenarios"] = list(analysis.get("scenarios") or [])
     out["scenarios"] = filtered_scenarios
+    out["wave_hierarchy"] = derive_wave_hierarchy(
+        analysis,
+        higher_timeframe_bias=higher_timeframe_bias,
+        htf_wave_number=htf_wave_number,
+        higher_timeframe_context=higher_timeframe_context,
+    )
     out["trade_filter"] = {
         "scenario_count_before": decision.scenario_count_before,
         "scenario_count_after": decision.scenario_count_after,

@@ -6,6 +6,7 @@ from analysis.setup_filter import (
     _trend_aligned,
     apply_trade_filters,
     build_higher_timeframe_context,
+    derive_wave_hierarchy,
     extract_trade_bias,
     filter_trade_scenarios,
     _is_tradeable_regime,
@@ -108,6 +109,58 @@ def test_apply_trade_filters_blocks_countertrend_impulse_against_higher_timefram
 
     assert filtered["scenarios"] == []
     assert "counter-trend against 1D context" in filtered["trade_filter"]["notes"]
+
+
+def test_derive_wave_hierarchy_marks_same_bias_corrective_as_a_or_c():
+    analysis = _analysis_with(
+        timeframe="1D",
+        confidence=0.91,
+        scenarios=[SimpleNamespace(name="Main Bearish", bias="BEARISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "EXPANDED_FLAT"
+    analysis["position"] = SimpleNamespace(bias="BEARISH", wave_number="C", structure="EXPANDED_FLAT", position="WAVE_C_END")
+
+    hierarchy = derive_wave_hierarchy(
+        analysis,
+        higher_timeframe_context={
+            "timeframe": "1W",
+            "bias": "BEARISH",
+            "wave_number": "5",
+            "structure": "IMPULSE",
+            "position": "WAVE_5_COMPLETE",
+        },
+    )
+
+    assert hierarchy["child_role"] == "A_OR_C"
+    assert hierarchy["aligned"] is True
+
+
+def test_derive_wave_hierarchy_marks_countertrend_corrective_as_b_or_x_only_with_support():
+    analysis = _analysis_with(
+        timeframe="4H",
+        confidence=0.91,
+        indicator_validation=True,
+        atr_ok=True,
+        scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
+    analysis["position"] = SimpleNamespace(bias="BULLISH", wave_number="B", structure="ABC_CORRECTION", position="IN_WAVE_B")
+
+    hierarchy = derive_wave_hierarchy(
+        analysis,
+        higher_timeframe_context={
+            "timeframe": "1D",
+            "bias": "BEARISH",
+            "wave_number": "3",
+            "structure": "IMPULSE",
+            "position": "IN_WAVE_3",
+        },
+    )
+
+    assert hierarchy["child_role"] == "COUNTERTREND_BOUNCE"
+    assert hierarchy["aligned"] is True
 
 
 def test_apply_trade_filters_blocks_sideway_without_expansion():

@@ -20,6 +20,7 @@ from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_sign
 from services.market_data_sync import sync_market_data
 from services.news_rss_monitor import run_news_monitor
 from services.terminal_dashboard import run_terminal_dashboard
+from services.wave_overlay_chart import build_wave_overlay_svg
 from services.web_dashboard import run_web_dashboard
 from services.trading_orchestrator import _load_runtime, render_runtime_snapshot, run_orchestrator
 from storage.experience_store import build_experience_payload, save_experience_store
@@ -127,6 +128,11 @@ def _run_market_data_sync(
         start_time=start_time,
     )
     print(json.dumps(summary, indent=2))
+
+
+def _run_wave_overlay_chart(symbol: str, output: str | None = None) -> None:
+    path = build_wave_overlay_svg(symbol=symbol, output_path=output)
+    print(json.dumps({"symbol": symbol.upper(), "output_path": str(path)}, indent=2))
 
 
 def _run_trade_backtest(
@@ -494,6 +500,13 @@ def build_parser() -> argparse.ArgumentParser:
     market_data_parser.add_argument("--timeframes", nargs="*", default=["1W", "1D", "4H"])
     market_data_parser.add_argument("--years", type=int, default=8)
 
+    wave_overlay_parser = subparsers.add_parser(
+        "wave-overlay-chart",
+        help="Render a single SVG with 1D wave and 4H sub-wave overlay",
+    )
+    wave_overlay_parser.add_argument("--symbol", default="BTCUSDT")
+    wave_overlay_parser.add_argument("--output")
+
     dashboard_parser = subparsers.add_parser("terminal-dashboard", help="Render read-only terminal dashboard")
     dashboard_parser.add_argument("--symbol", default="BTCUSDT")
     dashboard_parser.add_argument("--watch", action="store_true")
@@ -590,6 +603,13 @@ def main() -> None:
             symbols=_resolve_symbols(args.symbol, args.symbols),
             timeframes=args.timeframes,
             years=args.years,
+        )
+        return
+
+    if args.command == "wave-overlay-chart":
+        _run_wave_overlay_chart(
+            symbol=args.symbol,
+            output=args.output,
         )
         return
 
