@@ -4,6 +4,8 @@ from storage.experience_store import clear_experience_store_cache, save_experien
 
 from analysis.setup_filter import (
     _trend_aligned,
+    _higher_timeframe_phase,
+    _passes_structure_gate,
     apply_trade_filters,
     build_higher_timeframe_context,
     derive_wave_hierarchy,
@@ -84,7 +86,38 @@ def test_build_higher_timeframe_context_extracts_structure_and_position():
         "wave_number": "3",
         "structure": "IMPULSE",
         "position": "WAVE_3",
+        "wave_sequence": {
+            "current_leg": None,
+            "last_completed_leg": None,
+            "pattern_count": 0,
+        },
     }
+
+
+def test_build_higher_timeframe_context_prefers_wave_sequence_current_leg():
+    analysis = {
+        "timeframe": "1D",
+        "primary_pattern_type": "ABC_CORRECTION",
+        "position": SimpleNamespace(bias="BEARISH", wave_number="", structure="ABC_CORRECTION", position="UNKNOWN"),
+        "wave_summary": {},
+        "wave_sequence": {
+            "current_leg": {
+                "label": "C",
+                "structure": "ABC_CORRECTION",
+                "position": "IN_WAVE_C",
+            },
+            "last_completed_leg": {"label": "B", "structure": "ABC_CORRECTION"},
+            "pattern_count": 2,
+        },
+        "scenarios": [SimpleNamespace(name="Main Bearish", bias="BEARISH")],
+    }
+
+    context = build_higher_timeframe_context(analysis)
+
+    assert context["wave_number"] == "C"
+    assert context["position"] == "IN_WAVE_C"
+    assert context["structure"] == "ABC_CORRECTION"
+    assert context["wave_sequence"]["pattern_count"] == 2
 
 
 def test_apply_trade_filters_blocks_countertrend_impulse_against_higher_timeframe_structure():
@@ -724,3 +757,240 @@ def test_main_not_aligned_with_trend(tmp_path, monkeypatch):
     )
     assert passed is False
     assert note == "main not aligned with trend"
+
+
+# ── build_higher_timeframe_context: None input (line 69) ─────────────────────
+
+def test_build_higher_timeframe_context_none_input():
+    """None/empty analysis → return None (line 69)."""
+    assert build_higher_timeframe_context(None) is None
+    assert build_higher_timeframe_context({}) is None
+
+
+# ── _higher_timeframe_phase: edge cases (lines 156, 169, 171) ─────────────────
+
+def test_higher_timeframe_phase_none_context():
+    """None context → returns None (line 156)."""
+    assert _higher_timeframe_phase(None) is None
+
+
+def test_higher_timeframe_phase_structure_is_corrective():
+    """structure in CORRECTIVE_PATTERNS with no matching wave_number → phase='CORRECTION' (line 169)."""
+    ctx = {"wave_number": "", "position": "", "structure": "ABC_CORRECTION"}
+    assert _higher_timeframe_phase(ctx) == "CORRECTION"
+
+
+def test_higher_timeframe_phase_structure_is_impulse():
+    """structure in IMPULSE_LIKE_PATTERNS with no matching wave_number → phase='IMPULSE' (line 171)."""
+    ctx = {"wave_number": "", "position": "", "structure": "IMPULSE"}
+    assert _higher_timeframe_phase(ctx) == "IMPULSE"
+
+
+# ── _passes_structure_gate thresholds (lines 198, 200, 203, 208) ──────────────
+
+def test_structure_gate_phase_impulse_threshold_passes():
+    """Counter-trend CORRECTIVE vs IMPULSE HTF: threshold=0.88, confidence=0.89 → passes (line 208)."""
+    analysis = {"timeframe": "1D", "primary_pattern_type": "ABC_CORRECTION"}
+    scenario = SimpleNamespace(bias="BEARISH")
+    htf_context = {"bias": "BULLISH", "wave_number": "3", "position": "", "structure": ""}
+    ok, note = _passes_structure_gate(
+        analysis=analysis, scenario=scenario, confidence=0.89,
+        higher_timeframe_context=htf_context,
+    )
+    assert ok is True
+    assert note is None
+
+
+def test_structure_gate_phase_post_impulse_threshold():
+    """phase=POST_IMPULSE_CORRECTION → threshold=0.92; confidence=0.91 → fails (line 200)."""
+    analysis = {"timeframe": "1D", "primary_pattern_type": "ABC_CORRECTION"}
+    scenario = SimpleNamespace(bias="BEARISH")
+    htf_context = {"bias": "BULLISH", "wave_number": "5", "position": "WAVE_5_COMPLETE", "structure": ""}
+    ok, note = _passes_structure_gate(
+        analysis=analysis, scenario=scenario, confidence=0.91,
+        higher_timeframe_context=htf_context,
+    )
+    assert ok is False
+    assert "confidence" in (note or "")
+
+
+def test_structure_gate_4h_adds_threshold():
+    """4H adds 0.02 to threshold (line 203): phase=IMPULSE threshold=0.88+0.02=0.90; conf=0.89 fails."""
+    analysis = {"timeframe": "4H", "primary_pattern_type": "ABC_CORRECTION"}
+    scenario = SimpleNamespace(bias="BEARISH")
+    htf_context = {"bias": "BULLISH", "wave_number": "3", "position": "", "structure": ""}
+    ok, note = _passes_structure_gate(
+        analysis=analysis, scenario=scenario, confidence=0.89,
+        higher_timeframe_context=htf_context,
+    )
+    assert ok is False
+    assert "confidence" in (note or "")
+
+
+# ── derive_wave_hierarchy: missing branch tests (lines 282-284, 287-288, 294-299) ──
+
+def test_derive_wave_hierarchy_correction_phase_same_bias_impulse_child(tmp_path, monkeypatch):
+    """parent_phase=CORRECTION, child_bias==parent_bias, child_family=IMPULSE → role=C_EXTENSION (lines 282-284)."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+    analysis = _analysis_with(
+        timeframe="4H", confidence=0.75,
+        scenarios=[SimpleNamespace(name="Main Bearish", bias="BEARISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "IMPULSE"
+
+    result = derive_wave_hierarchy(
+        analysis=analysis,
+        higher_timeframe_context={
+            "bias": "BEARISH",
+            "wave_number": "A",
+            "position": "",
+            "structure": "ABC_CORRECTION",
+            "timeframe": "1D",
+        },
+    )
+    assert result is not None
+    assert result["child_role"] == "C_EXTENSION"
+
+
+def test_derive_wave_hierarchy_correction_phase_opposite_bias_corrective_child(tmp_path, monkeypatch):
+    """parent_phase=CORRECTION, child_bias != parent_bias, child=CORRECTIVE → role=B_OR_X (lines 287-288)."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+    analysis = _analysis_with(timeframe="4H", confidence=0.75)
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
+    # child_bias = BULLISH, parent_bias = BEARISH → opposite
+    analysis["wave_summary"] = {"bias": "BULLISH", "is_ambiguous": False}
+
+    result = derive_wave_hierarchy(
+        analysis=analysis,
+        higher_timeframe_context={
+            "bias": "BEARISH",
+            "wave_number": "A",
+            "position": "",
+            "structure": "ABC_CORRECTION",
+            "timeframe": "1D",
+        },
+    )
+    assert result is not None
+    assert result["child_role"] == "B_OR_X"
+
+
+def test_derive_wave_hierarchy_impulse_phase_same_bias_corrective_child(tmp_path, monkeypatch):
+    """parent_phase=IMPULSE, child_bias==parent_bias, child=CORRECTIVE → role=PULLBACK_2_OR_4 (lines 294-296)."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+    analysis = _analysis_with(timeframe="4H", confidence=0.75)
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
+    analysis["wave_summary"] = {"bias": "BULLISH", "is_ambiguous": False}
+
+    result = derive_wave_hierarchy(
+        analysis=analysis,
+        higher_timeframe_context={
+            "bias": "BULLISH",
+            "wave_number": "3",
+            "position": "",
+            "structure": "IMPULSE",
+            "timeframe": "1D",
+        },
+    )
+    assert result is not None
+    assert result["child_role"] == "PULLBACK_2_OR_4"
+
+
+def test_derive_wave_hierarchy_impulse_phase_same_bias_impulse_child(tmp_path, monkeypatch):
+    """parent_phase=IMPULSE, child_bias==parent_bias, child=IMPULSE → role=TREND_CONTINUATION_1_3_5 (lines 297-299)."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+    analysis = _analysis_with(timeframe="4H", confidence=0.75)
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "IMPULSE"
+    analysis["wave_summary"] = {"bias": "BULLISH", "is_ambiguous": False}
+
+    result = derive_wave_hierarchy(
+        analysis=analysis,
+        higher_timeframe_context={
+            "bias": "BULLISH",
+            "wave_number": "3",
+            "position": "",
+            "structure": "IMPULSE",
+            "timeframe": "1D",
+        },
+    )
+    assert result is not None
+    assert result["child_role"] == "TREND_CONTINUATION_1_3_5"
+
+
+# ── line 411: hierarchy not aligned ───────────────────────────────────────────
+
+def test_quality_gate_hierarchy_not_aligned(tmp_path, monkeypatch):
+    """hierarchy.aligned=False → blocked (line 411).
+    Uses 1D with counter-trend ABC correction: structure gate passes but hierarchy fails."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+
+    analysis = _analysis_with(
+        timeframe="1D",
+        confidence=0.88,   # > 0.85 (passes counter-trend 1D soft-block)
+                           # >= 0.88 (passes structure gate IMPULSE threshold)
+                           # < 0.90  (fails COUNTERTREND_BOUNCE aligned check)
+        probability=0.60,
+        trend_state="UPTREND",
+        indicator_validation=True,
+        atr_ok=True,
+        scenarios=[SimpleNamespace(name="Main Bearish", bias="BEARISH")],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
+
+    passed, note = _passes_quality_gate(
+        analysis=analysis,
+        scenario=SimpleNamespace(name="Main Bearish", bias="BEARISH"),
+        index=0,
+        higher_timeframe_bias="BULLISH",
+        higher_timeframe_context={
+            "bias": "BULLISH",
+            "wave_number": "3",  # IMPULSE phase → structure gate threshold=0.88
+            "position": "",
+            "structure": "IMPULSE",
+            "timeframe": "1D",
+        },
+    )
+    assert passed is False
+    assert note == "child wave not aligned with higher timeframe hierarchy"
+
+
+# ── line 446: alternate scenario passes (return True, None) ───────────────────
+
+def test_alternate_passes_quality_gate(tmp_path, monkeypatch):
+    """Alternate scenario meeting all conditions → passes (line 446)."""
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
+    clear_experience_store_cache()
+
+    analysis = _analysis_with(
+        timeframe="4H",
+        confidence=0.90,
+        probability=0.56,
+        trend_state="UPTREND",
+        indicator_validation=True,
+        atr_ok=True,
+        rsi_divergence="NONE",
+        scenarios=[
+            SimpleNamespace(name="Main Bullish", bias="BULLISH"),
+            SimpleNamespace(name="Alternate Bearish", bias="BULLISH"),
+        ],
+    )
+    analysis = dict(analysis)
+    analysis["primary_pattern_type"] = "IMPULSE"
+
+    passed, note = _passes_quality_gate(
+        analysis=analysis,
+        scenario=SimpleNamespace(name="Alternate Bearish", bias="BULLISH"),
+        index=1,
+        higher_timeframe_bias=None,
+    )
+    assert passed is True
+    assert note is None

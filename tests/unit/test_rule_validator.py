@@ -531,3 +531,157 @@ def test_dispatch_ascending_barrier():
     p = _make_triangle("ascending_barrier", 0.0, 1.5)
     result = validate_pattern_rules("ASCENDING_BARRIER_TRIANGLE", p)
     assert result.is_valid is True
+
+
+# ── validate_impulse_rules: poor alternation branch (line 74) ─────────────────
+
+def test_impulse_poor_alternation_both_sharp():
+    """wave2 and wave4 both sharp (>0.618) → poor alternation appended (line 74)."""
+    pattern = ImpulsePattern(
+        p1=Pivot(index=1, price=100, type="L", timestamp="2026-01-01"),
+        p2=Pivot(index=2, price=110, type="H", timestamp="2026-01-02"),
+        p3=Pivot(index=3, price=105, type="L", timestamp="2026-01-03"),
+        p4=Pivot(index=4, price=130, type="H", timestamp="2026-01-04"),
+        p5=Pivot(index=5, price=125, type="L", timestamp="2026-01-05"),
+        p6=Pivot(index=6, price=145, type="H", timestamp="2026-01-06"),
+        direction="bullish",
+        wave1_length=10,
+        wave2_length=5,
+        wave3_length=25,
+        wave4_length=10,
+        wave5_length=20,
+        wave2_retrace_ratio=0.70,   # > 0.618 → sharp
+        wave4_retrace_ratio=0.75,   # > 0.618 → sharp → both sharp → poor alternation
+        wave3_vs_wave1_ratio=2.5,
+        wave5_vs_wave1_ratio=2.0,
+        rule_wave2_not_beyond_wave1_origin=True,
+        rule_wave3_not_shortest=True,
+        rule_wave4_no_overlap_wave1=True,
+        is_valid=True,
+    )
+    result = validate_impulse_rules(pattern)
+    assert "poor alternation" in result.message
+
+
+def test_impulse_poor_alternation_both_flat():
+    """wave2 and wave4 both flat (<0.382) → poor alternation appended (line 74)."""
+    pattern = ImpulsePattern(
+        p1=Pivot(index=1, price=100, type="L", timestamp="2026-01-01"),
+        p2=Pivot(index=2, price=110, type="H", timestamp="2026-01-02"),
+        p3=Pivot(index=3, price=105, type="L", timestamp="2026-01-03"),
+        p4=Pivot(index=4, price=130, type="H", timestamp="2026-01-04"),
+        p5=Pivot(index=5, price=125, type="L", timestamp="2026-01-05"),
+        p6=Pivot(index=6, price=145, type="H", timestamp="2026-01-06"),
+        direction="bullish",
+        wave1_length=10,
+        wave2_length=5,
+        wave3_length=25,
+        wave4_length=10,
+        wave5_length=20,
+        wave2_retrace_ratio=0.25,   # < 0.382 → flat
+        wave4_retrace_ratio=0.30,   # < 0.382 → flat → both flat → poor alternation
+        wave3_vs_wave1_ratio=2.5,
+        wave5_vs_wave1_ratio=2.0,
+        rule_wave2_not_beyond_wave1_origin=True,
+        rule_wave3_not_shortest=True,
+        rule_wave4_no_overlap_wave1=True,
+        is_valid=True,
+    )
+    result = validate_impulse_rules(pattern)
+    assert "poor alternation" in result.message
+
+
+# ── validate_abc_rules: bearish else branch (line 99) ─────────────────────────
+
+def test_validate_abc_bearish_valid():
+    """Bearish ABC → else branch (line 99)."""
+    pattern = ABCPattern(
+        a=Pivot(index=1, price=74050.0, type="H", timestamp="2026-03-01"),
+        b=Pivot(index=2, price=63030.0, type="L", timestamp="2026-03-05"),
+        c=Pivot(index=3, price=70000.0, type="H", timestamp="2026-03-09"),
+        direction="bearish",
+        ab_length=11020.0,
+        bc_length=6970.0,
+        bc_vs_ab_ratio=0.632,
+    )
+    result = validate_abc_rules(pattern)
+    assert result.is_valid is True
+    assert result.correction_rule is True
+
+
+def test_validate_abc_bearish_invalid_c_too_high():
+    """Bearish ABC where c >= a → invalid (else branch line 99)."""
+    pattern = ABCPattern(
+        a=Pivot(index=1, price=74050.0, type="H", timestamp="2026-03-01"),
+        b=Pivot(index=2, price=63030.0, type="L", timestamp="2026-03-05"),
+        c=Pivot(index=3, price=75000.0, type="H", timestamp="2026-03-09"),  # c >= a
+        direction="bearish",
+        ab_length=11020.0,
+        bc_length=11970.0,
+        bc_vs_ab_ratio=1.086,
+    )
+    result = validate_abc_rules(pattern)
+    assert result.is_valid is False
+
+
+# ── validate_triangle_rules: unknown subtype → correction_rule=False (line 255) ─
+
+def test_validate_triangle_unknown_subtype():
+    """Unknown triangle subtype → correction_rule=False (line 255)."""
+    p = _make_triangle("unknown_subtype", 0.0, 0.0)
+    result = validate_triangle_rules(p)
+    assert result.is_valid is False
+
+
+# ── validate_pattern_rules: missing dispatch branches ─────────────────────────
+
+def test_dispatch_abc_correction():
+    """ABC_CORRECTION dispatch (line 303)."""
+    pattern = ABCPattern(
+        a=Pivot(index=1, price=74050.0, type="H", timestamp="2026-03-01"),
+        b=Pivot(index=2, price=63030.0, type="L", timestamp="2026-03-05"),
+        c=Pivot(index=3, price=70000.0, type="H", timestamp="2026-03-09"),
+        direction="bearish",
+        ab_length=11020.0,
+        bc_length=6970.0,
+        bc_vs_ab_ratio=0.632,
+    )
+    result = validate_pattern_rules("ABC_CORRECTION", pattern)
+    assert result.pattern_type == "abc"
+
+
+def test_dispatch_impulse():
+    """IMPULSE dispatch (line 306)."""
+    pattern = ImpulsePattern(
+        p1=Pivot(index=1, price=100, type="H", timestamp="2026-01-01"),
+        p2=Pivot(index=2, price=90, type="L", timestamp="2026-01-02"),
+        p3=Pivot(index=3, price=95, type="H", timestamp="2026-01-03"),
+        p4=Pivot(index=4, price=70, type="L", timestamp="2026-01-04"),
+        p5=Pivot(index=5, price=80, type="H", timestamp="2026-01-05"),
+        p6=Pivot(index=6, price=60, type="L", timestamp="2026-01-06"),
+        direction="bearish",
+        wave1_length=10, wave2_length=5, wave3_length=25,
+        wave4_length=10, wave5_length=20,
+        wave2_retrace_ratio=0.5, wave4_retrace_ratio=0.4,
+        wave3_vs_wave1_ratio=2.5, wave5_vs_wave1_ratio=2.0,
+        rule_wave2_not_beyond_wave1_origin=True,
+        rule_wave3_not_shortest=True,
+        rule_wave4_no_overlap_wave1=True,
+        is_valid=True,
+    )
+    result = validate_pattern_rules("IMPULSE", pattern)
+    assert result.pattern_type == "impulse"
+
+
+def test_dispatch_running_flat():
+    """RUNNING_FLAT dispatch (line 315)."""
+    a = _swing(1, 100.0, "L")
+    b = _swing(2, 120.0, "H")
+    c = _swing(3, 104.0, "L")
+    p = RunningFlatPattern(
+        pattern_type="running_flat", direction="bullish",
+        a=a, b=b, c=c, ab_length=20.0, bc_length=16.0,
+        b_vs_a_ratio=0.80, c_vs_a_ratio=0.80,
+    )
+    result = validate_pattern_rules("RUNNING_FLAT", p)
+    assert result.pattern_type == "running_flat"

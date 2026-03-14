@@ -550,3 +550,52 @@ def test_generate_labeled_wave_counts_returns_list(monkeypatch):
 
     result = generate_labeled_wave_counts([], timeframe="1D")
     assert isinstance(result, list)
+
+
+# ── _indicator_adjustment_with_context: missing bonus branches ────────────────
+
+def test_indicator_adjustment_bullish_all_bonuses(monkeypatch):
+    """Bullish with aligned_divergence, macd_divergence, volume_spike, vol_div, macd_hist → all bonus lines."""
+    from types import SimpleNamespace
+    df = _make_df_with_indicators()
+
+    fake_divergence = SimpleNamespace(state="BULLISH_RSI_DIVERGENCE", message="bullish div")
+
+    monkeypatch.setattr("analysis.multi_count_engine.detect_aligned_rsi_divergence", lambda d, df, p: fake_divergence)
+    monkeypatch.setattr("analysis.multi_count_engine.detect_bullish_macd_divergence", lambda df, p: fake_divergence)
+    monkeypatch.setattr("analysis.multi_count_engine.check_volume_spike", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_volume_divergence_bullish", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_macd_momentum_turning_bullish", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.validate_bullish_wave_with_indicators", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_bullish_trend_context", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_bullish_momentum", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_atr_expansion", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_long_term_bullish_trend", lambda df: True)
+
+    adj, ctx = _indicator_adjustment_with_context("bullish", df, [])
+    # base=0.08 + 0.02 (divergence) + 0.015 (macd) + 0.01 (spike) + 0.01 (vol_div) + 0.01 (hist) + 0.01 (long term)
+    assert adj > 0.08
+    assert ctx["indicator_validation"] is True
+
+
+def test_indicator_adjustment_bearish_all_bonuses(monkeypatch):
+    """Bearish with all bonuses → covers lines 184, 186, 188, 190, 192."""
+    from types import SimpleNamespace
+    df = _make_df_with_indicators()
+
+    fake_divergence = SimpleNamespace(state="BEARISH_RSI_DIVERGENCE", message="bearish div")
+
+    monkeypatch.setattr("analysis.multi_count_engine.detect_aligned_rsi_divergence", lambda d, df, p: fake_divergence)
+    monkeypatch.setattr("analysis.multi_count_engine.detect_bearish_macd_divergence", lambda df, p: fake_divergence)
+    monkeypatch.setattr("analysis.multi_count_engine.check_volume_spike", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_volume_divergence_bearish", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_macd_momentum_turning_bearish", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.validate_bearish_wave_with_indicators", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_bearish_trend_context", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_bearish_momentum", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_atr_expansion", lambda df: True)
+    monkeypatch.setattr("analysis.multi_count_engine.check_long_term_bearish_trend", lambda df: True)
+
+    adj, ctx = _indicator_adjustment_with_context("bearish", df, [])
+    assert adj > 0.08
+    assert ctx["indicator_validation"] is True

@@ -35,7 +35,7 @@ def mark_broken_pivots(pivots: List[Pivot], df: pd.DataFrame) -> List[Pivot]:
     return pivots
 
 
-def detect_pivots(df: pd.DataFrame, left: int = 2, right: int = 2) -> List[Pivot]:
+def detect_pivots(df: pd.DataFrame, left: int = 3, right: int = 3) -> List[Pivot]:
     pivots: List[Pivot] = []
 
     highs = df["high"].values

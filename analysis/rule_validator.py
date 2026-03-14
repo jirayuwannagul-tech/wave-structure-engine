@@ -84,7 +84,7 @@ def validate_impulse_rules(pattern: ImpulsePattern) -> RuleValidationResult:
 
 
 def validate_abc_rules(pattern: ABCPattern) -> RuleValidationResult:
-    max_bc_ratio = 1.618
+    max_bc_ratio = 1.000
 
     if pattern.direction == "bullish":
         correction_rule = bool(
@@ -93,7 +93,7 @@ def validate_abc_rules(pattern: ABCPattern) -> RuleValidationResult:
             and pattern.c.price > pattern.a.price
             and pattern.ab_length > 0
             and pattern.bc_length > 0
-            and 0.382 <= pattern.bc_vs_ab_ratio <= max_bc_ratio
+            and 0.500 <= pattern.bc_vs_ab_ratio <= max_bc_ratio
         )
     else:
         correction_rule = bool(
@@ -102,7 +102,7 @@ def validate_abc_rules(pattern: ABCPattern) -> RuleValidationResult:
             and pattern.c.price < pattern.a.price
             and pattern.ab_length > 0
             and pattern.bc_length > 0
-            and 0.382 <= pattern.bc_vs_ab_ratio <= max_bc_ratio
+            and 0.500 <= pattern.bc_vs_ab_ratio <= max_bc_ratio
         )
 
     is_valid = bool(correction_rule)

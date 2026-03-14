@@ -59,6 +59,22 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
     ]
 
     monkeypatch.setattr("core.engine.detect_pivots", lambda data: pivots)
+    monkeypatch.setattr(
+        "core.engine.build_wave_sequence",
+        lambda pivots, inprogress=None: {
+            "completed_legs": [],
+            "patterns": [],
+            "current_leg": {
+                "label": "3",
+                "structure": "IMPULSE",
+                "direction": "bullish",
+                "position": "IN_WAVE_3",
+                "building": True,
+            },
+            "last_completed_leg": {"label": "2", "structure": "IMPULSE"},
+            "pattern_count": 0,
+        },
+    )
     monkeypatch.setattr("core.engine.generate_wave_counts", lambda pivots, df=None: ["count"])
     monkeypatch.setattr(
         "core.engine.generate_labeled_wave_counts",
@@ -109,6 +125,8 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
 
     assert result["has_pattern"] is True
     assert result["trend"].state == "UPTREND"
+    assert result["wave_sequence"]["current_leg"]["label"] == "3"
+    assert result["position"].wave_number == "3"
     assert "UPTREND" in result["report"]
     assert "HH_HL" in result["report"]
     assert "BULLISH_RSI_DIVERGENCE" in result["report"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from analysis.future_projection import project_next_wave
 from analysis.inprogress_detector import detect_inprogress_wave
 from analysis.key_levels import extract_pattern_key_levels
@@ -12,6 +14,7 @@ from analysis.setup_filter import apply_trade_filters
 from analysis.trend_classifier import classify_market_trend
 from analysis.wave_decision_engine import build_wave_summary
 from analysis.wave_position import detect_wave_position
+from analysis.wave_sequence_engine import build_wave_sequence
 from data.candle_utils import drop_unclosed_candle
 from data.market_data_fetcher import MarketDataFetcher
 from output.report_formatter import format_report
@@ -44,6 +47,7 @@ def build_dataframe_analysis(
     pivots = detect_pivots(df)
     trend = classify_market_trend(pivots, df=df)
     inprogress = detect_inprogress_wave(pivots)
+    wave_sequence = build_wave_sequence(pivots, inprogress=inprogress)
     wave_counts = generate_wave_counts(pivots, df=df)
     labeled_wave_counts = generate_labeled_wave_counts(pivots, timeframe.upper(), df=df)
 
@@ -81,6 +85,24 @@ def build_dataframe_analysis(
         pattern=primary_pattern,
         inprogress=inprogress,
     )
+    current_leg = (wave_sequence.get("current_leg") or {})
+    current_leg_label = current_leg.get("label")
+    current_leg_structure = current_leg.get("structure")
+    current_leg_position = current_leg.get("position")
+    if current_leg_label:
+        if hasattr(position, "__dataclass_fields__"):
+            position = replace(
+                position,
+                wave_number=current_leg_label,
+                building_wave=bool(current_leg.get("building", position.building_wave)),
+                position=current_leg_position or position.position,
+                structure=current_leg_structure or position.structure,
+            )
+        else:
+            position.wave_number = current_leg_label
+            position.building_wave = bool(current_leg.get("building", getattr(position, "building_wave", False)))
+            position.position = current_leg_position or getattr(position, "position", None)
+            position.structure = current_leg_structure or getattr(position, "structure", None)
 
     scenarios = []
     projection = None
@@ -125,6 +147,7 @@ def build_dataframe_analysis(
         "primary_pattern": primary_pattern,
         "position": position,
         "inprogress": inprogress,
+        "wave_sequence": wave_sequence,
         "key_levels": key_levels,
         "projection": projection,
         "scenarios": scenarios,

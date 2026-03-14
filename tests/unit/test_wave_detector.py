@@ -1,5 +1,5 @@
 from analysis.pivot_detector import Pivot
-from analysis.wave_detector import detect_latest_impulse
+from analysis.wave_detector import detect_latest_impulse, detect_latest_abc, _safe_ratio
 
 
 def test_detect_valid_bearish_impulse():
@@ -51,3 +51,20 @@ def test_detect_bearish_impulse_with_truncated_wave5_when_wave5_is_still_large()
     assert pattern is not None
     assert pattern.direction == "bearish"
     assert pattern.is_valid is True
+
+
+def test_safe_ratio_zero_denominator():
+    """b=0 → return 0.0 (line 53)."""
+    assert _safe_ratio(5.0, 0.0) == 0.0
+
+
+def test_detect_latest_abc_bearish():
+    """H-L-H sequence where p2 < p1 and p3 < p1 → bearish ABC (lines 66-68)."""
+    pivots = [
+        Pivot(index=1, price=100.0, type="H", timestamp="2026-01-01"),
+        Pivot(index=2, price=80.0, type="L", timestamp="2026-01-02"),
+        Pivot(index=3, price=90.0, type="H", timestamp="2026-01-03"),
+    ]
+    result = detect_latest_abc(pivots)
+    assert result is not None
+    assert result.direction == "bearish"

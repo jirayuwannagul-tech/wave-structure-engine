@@ -533,7 +533,7 @@ def test_load_runtime_uses_weekly_manual_context_for_1d_then_1d_context_for_4h(m
     assert calls == [
         ("1w", None, None, None),
         ("1d", "BEARISH", "5", {"symbol": "BTCUSDT", "timeframe": "1W", "bias": "BEARISH", "wave_number": "5", "structure": "IMPULSE", "position": "WAVE_5_COMPLETE", "note": "seed", "source": "manual"}),
-        ("4h", "BEARISH", "3", {"timeframe": "1D", "bias": "BEARISH", "wave_number": "3", "structure": "IMPULSE", "position": "WAVE_3", "parent": {"symbol": "BTCUSDT", "timeframe": "1W", "bias": "BEARISH", "wave_number": "5", "structure": "IMPULSE", "position": "WAVE_5_COMPLETE", "note": "seed", "source": "manual"}}),
+        ("4h", "BEARISH", "3", {"timeframe": "1D", "bias": "BEARISH", "wave_number": "3", "structure": "IMPULSE", "position": "WAVE_3", "wave_sequence": {"current_leg": None, "last_completed_leg": None, "pattern_count": 0}, "parent": {"symbol": "BTCUSDT", "timeframe": "1W", "bias": "BEARISH", "wave_number": "5", "structure": "IMPULSE", "position": "WAVE_5_COMPLETE", "note": "seed", "source": "manual"}}),
     ]
     assert runtime.analyses[0]["higher_timeframe_context"]["timeframe"] == "1W"
     assert runtime.analyses[0]["higher_timeframe_context"]["bias"] == "BEARISH"

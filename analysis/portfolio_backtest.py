@@ -359,6 +359,11 @@ def simulate_trade_lifecycle(
     else:
         outcome = "STOP_LOSS"
 
+    # Override outcome if net PnL is negative despite hitting all targets
+    # (fees/slippage can erode profits to negative even when all targets hit)
+    if net_total <= 0 and outcome in ("TP3_HIT", "TP2_HIT", "TP1_HIT"):
+        outcome = "STOP_LOSS"
+
     return TradeLifecycleResult(
         triggered=True,
         outcome=outcome,

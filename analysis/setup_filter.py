@@ -70,16 +70,31 @@ def build_higher_timeframe_context(analysis: dict | None) -> dict | None:
 
     position = analysis.get("position")
     wave_summary = analysis.get("wave_summary") or {}
+    wave_sequence = analysis.get("wave_sequence") or {}
+    current_leg = wave_sequence.get("current_leg") or {}
+    last_completed_leg = wave_sequence.get("last_completed_leg") or {}
     return {
         "timeframe": str(analysis.get("timeframe") or "").upper() or None,
         "bias": extract_trade_bias(analysis),
         "wave_number": (
-            getattr(position, "wave_number", None)
+            current_leg.get("label")
+            or getattr(position, "wave_number", None)
+            or last_completed_leg.get("label")
             or wave_summary.get("wave_number")
             or wave_summary.get("current_wave")
         ),
-        "structure": getattr(position, "structure", None) or analysis.get("primary_pattern_type"),
-        "position": getattr(position, "position", None),
+        "structure": (
+            current_leg.get("structure")
+            or getattr(position, "structure", None)
+            or last_completed_leg.get("structure")
+            or analysis.get("primary_pattern_type")
+        ),
+        "position": current_leg.get("position") or getattr(position, "position", None),
+        "wave_sequence": {
+            "current_leg": current_leg or None,
+            "last_completed_leg": last_completed_leg or None,
+            "pattern_count": wave_sequence.get("pattern_count", 0),
+        },
     }
 
 
@@ -210,14 +225,25 @@ def derive_wave_hierarchy(
     position = analysis.get("position")
     indicator_context = _indicator_context(analysis)
     child_bias = extract_trade_bias(analysis)
-    child_pattern = str(analysis.get("primary_pattern_type") or "").upper()
+    wave_sequence = analysis.get("wave_sequence") or {}
+    current_leg = wave_sequence.get("current_leg") or {}
+    last_completed_leg = wave_sequence.get("last_completed_leg") or {}
+    child_pattern = str(
+        current_leg.get("structure")
+        or last_completed_leg.get("structure")
+        or analysis.get("primary_pattern_type")
+        or ""
+    ).upper()
     child_family = _pattern_family(child_pattern)
     child_wave_number = (
-        getattr(position, "wave_number", None)
+        current_leg.get("label")
+        or getattr(position, "wave_number", None)
+        or last_completed_leg.get("label")
         or (describe_current_leg(position) if getattr(position, "wave_number", None) is not None or getattr(position, "structure", None) is not None else None)
         or str((analysis.get("wave_summary") or {}).get("current_wave") or "").upper()
         or None
     )
+    child_position = current_leg.get("position") or getattr(position, "position", None)
     parent_bias = str(normalized_htf_context.get("bias") or "").upper() or None
     parent_phase = _higher_timeframe_phase(normalized_htf_context)
     confidence = float(analysis.get("confidence") or 0.0)
@@ -240,6 +266,7 @@ def derive_wave_hierarchy(
             "child_timeframe": str(analysis.get("timeframe") or "").upper(),
             "child_bias": child_bias,
             "child_wave_number": child_wave_number,
+            "child_position": child_position,
             "child_pattern_family": child_family,
             "child_pattern_type": child_pattern,
             "child_role": role,
@@ -288,6 +315,7 @@ def derive_wave_hierarchy(
         "child_timeframe": str(analysis.get("timeframe") or "").upper(),
         "child_bias": child_bias,
         "child_wave_number": child_wave_number,
+        "child_position": child_position,
         "child_pattern_family": child_family,
         "child_pattern_type": child_pattern,
         "child_role": role,

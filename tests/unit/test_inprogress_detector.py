@@ -541,3 +541,162 @@ def test_try_partial_bearish_corrective_wrong_sequence():
     pivots = [make_pivot(1, 120.0, "H"), make_pivot(2, 100.0, "L")]
     result = _try_partial_bearish_corrective(pivots)
     assert result is None
+
+
+# ── line 70: current_wave_direction for bearish even wave ────────────────────
+
+def test_current_wave_direction_bearish_even_wave():
+    """Bearish InProgressWave with wave_number='2' → current_wave_direction='bullish' (line 70)."""
+    wave = InProgressWave(
+        structure="IMPULSE",
+        direction="bearish",
+        wave_number="2",
+        completed_waves=1,
+        pivots=[],
+        last_pivot=make_pivot(1, 120.0, "H"),
+        current_wave_start=120.0,
+        invalidation=130.0,
+        fib_targets={},
+        rule_checks={},
+        is_valid=True,
+        confidence=0.5,
+    )
+    assert wave.current_wave_direction == "bullish"
+    assert "↑" in wave.label  # label uses current_wave_direction
+
+
+# ── line 308: bullish impulse with n > 5 ─────────────────────────────────────
+
+def test_try_partial_bullish_impulse_too_many_pivots():
+    """n=6 > 5 → return None (line 308)."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),
+        make_pivot(2, 120.0, "H"),
+        make_pivot(3, 110.0, "L"),
+        make_pivot(4, 130.0, "H"),
+        make_pivot(5, 120.0, "L"),
+        make_pivot(6, 140.0, "H"),
+    ]
+    result = _try_partial_bullish_impulse(pivots)
+    assert result is None
+
+
+# ── line 320: bullish impulse monotonic fail at i=1 ─────────────────────────
+
+def test_try_partial_bullish_impulse_first_high_not_above_low():
+    """[L,H] where H.price <= L.price → return None (line 320)."""
+    pivots = [make_pivot(1, 120.0, "L"), make_pivot(2, 100.0, "H")]  # H below L
+    result = _try_partial_bullish_impulse(pivots)
+    assert result is None
+
+
+# ── line 361: bearish impulse with n > 5 ─────────────────────────────────────
+
+def test_try_partial_bearish_impulse_too_many_pivots():
+    """n=6 > 5 → return None (line 361)."""
+    pivots = [
+        make_pivot(1, 140.0, "H"),
+        make_pivot(2, 120.0, "L"),
+        make_pivot(3, 130.0, "H"),
+        make_pivot(4, 110.0, "L"),
+        make_pivot(5, 120.0, "H"),
+        make_pivot(6, 100.0, "L"),
+    ]
+    result = _try_partial_bearish_impulse(pivots)
+    assert result is None
+
+
+# ── line 373: bearish impulse monotonic fail at i=1 ─────────────────────────
+
+def test_try_partial_bearish_impulse_first_low_not_below_high():
+    """[H,L] where L.price >= H.price → return None (line 373)."""
+    pivots = [make_pivot(1, 100.0, "H"), make_pivot(2, 120.0, "L")]  # L above H
+    result = _try_partial_bearish_impulse(pivots)
+    assert result is None
+
+
+# ── line 380: bearish impulse validation fails (w3 < w1) ─────────────────────
+
+def test_try_partial_bearish_impulse_wave3_too_short():
+    """n=4 [H,L,H,L] where w3 < w1 → is_valid=False → return None (line 380)."""
+    # w1 = H0-L1 = 120-100 = 20
+    # w3 = H2-L2 = 115-99 = 16 < 20 → rule2 fails
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+        make_pivot(3, 115.0, "H"),
+        make_pivot(4, 99.0, "L"),
+    ]
+    result = _try_partial_bearish_impulse(pivots)
+    assert result is None
+
+
+# ── line 491: bullish corrective H not above L ───────────────────────────────
+
+def test_try_partial_bullish_corrective_a_not_down():
+    """[H,L] where H.price <= L.price (A didn't go down) → return None (line 491)."""
+    pivots = [make_pivot(1, 100.0, "H"), make_pivot(2, 120.0, "L")]  # L > H, invalid
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is None
+
+
+# ── line 495: bullish corrective n=3, B didn't retrace up ────────────────────
+
+def test_try_partial_bullish_corrective_b_not_above_a_end():
+    """n=3 [H,L,H] where H2 <= L (B didn't retrace above A end) → return None (line 495)."""
+    # H1=120, L=100, H2=90 → H2 <= L → B didn't retrace
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+        make_pivot(3, 90.0, "H"),  # below A end (L=100)
+    ]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is None
+
+
+# ── line 523: bearish corrective n > 3 ──────────────────────────────────────
+
+def test_try_partial_bearish_corrective_too_many_pivots():
+    """n=4 > 3 → return None (line 523)."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),
+        make_pivot(2, 120.0, "H"),
+        make_pivot(3, 110.0, "L"),
+        make_pivot(4, 130.0, "H"),
+    ]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is None
+
+
+# ── line 530: bearish corrective A not upward ───────────────────────────────
+
+def test_try_partial_bearish_corrective_a_not_up():
+    """[L,H] where L.price >= H.price (A didn't go up) → return None (line 530)."""
+    pivots = [make_pivot(1, 120.0, "L"), make_pivot(2, 100.0, "H")]  # H < L, invalid
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is None
+
+
+# ── line 534: bearish corrective n=3, B didn't retrace down ─────────────────
+
+def test_try_partial_bearish_corrective_b_above_a_end():
+    """n=3 [L,H,L] where L2.price >= H.price (B didn't pull back) → return None (line 534)."""
+    # L1=100, H=120, L2=125 → L2 > H → B went higher than A end (invalid)
+    pivots = [
+        make_pivot(1, 100.0, "L"),
+        make_pivot(2, 120.0, "H"),
+        make_pivot(3, 125.0, "L"),  # L type but price above H = invalid
+    ]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is None
+
+
+# ── lines 592-603: corrective detection loop via detect_inprogress_wave ──────
+
+def test_detect_inprogress_wave_corrective_loop_reached():
+    """Inverted-price [L(120), H(100)] fails all impulse checks, reaches corrective loop.
+    Both corrective also fail → returns None (covers lines 592-599, 603)."""
+    # Prices are inverted: L type has higher price than H type
+    pivots = [make_pivot(1, 120.0, "L"), make_pivot(2, 100.0, "H")]
+    result = detect_inprogress_wave(pivots)
+    assert result is None

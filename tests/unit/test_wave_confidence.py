@@ -342,3 +342,16 @@ def test_wave_confidence_non_impulse_ignores_alternation():
     score_abc = compute_wave_confidence(1, 0.8, 1, 0.8, pattern=p, pattern_type="ABC_CORRECTION")
     score_base = compute_wave_confidence(1, 0.8, 1, 0.8)
     assert score_abc == score_base
+
+
+def test_fib_ratio_medium_match():
+    """best_diff > tolerance but <= tolerance*2 → return 0.6 (line 52)."""
+    # ratio=0.75, target=0.618: diff=0.132. tolerance=0.12 → 0.12 < 0.132 <= 0.24
+    assert score_fib_ratio(0.75, [0.618], tolerance=0.12) == 0.6
+
+
+def test_fib_confluence_exactly_two_levels():
+    """Exactly 2 targets near entry → return 0.03 (line 207)."""
+    targets = {"a": 100.3, "b": 100.5, "c": 200.0}
+    score = score_fib_confluence(100.0, targets, tolerance_pct=0.015)
+    assert score == 0.03

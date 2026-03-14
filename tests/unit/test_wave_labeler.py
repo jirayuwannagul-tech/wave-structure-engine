@@ -174,3 +174,11 @@ def test_phase_impulse_waves():
 
 def test_phase_wave_c():
     assert "Final" in phase_description("C", "bearish")
+
+
+def test_phase_wave_a():
+    assert "Corrective Wave A" in phase_description("A", "bearish")
+
+
+def test_phase_unknown_wave():
+    assert phase_description("X", "bullish") == "Wave in Progress"

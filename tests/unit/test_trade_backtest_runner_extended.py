@@ -245,3 +245,34 @@ def test_run_trade_backtest_suite_calls_all_targets(monkeypatch):
     assert "TP1" in result
     assert "TP2" in result
     assert "TP3" in result
+
+
+def test_run_trade_backtest_with_parent_timeframe_csv(monkeypatch):
+    """Pass parent_timeframe_csv_path to cover lines 122-124."""
+    dummy_main = _make_dummy_ohlcv(30)
+    dummy_weekly = _make_dummy_ohlcv(20)
+
+    csv_call_count = [0]
+    def fake_read_csv(path, *args, **kwargs):
+        csv_call_count[0] += 1
+        if csv_call_count[0] == 1:
+            return dummy_main.copy()
+        return dummy_weekly.copy()
+
+    monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis",
+                        lambda **kwargs: {"has_pattern": False})
+    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters",
+                        lambda a, **kw: a)
+
+    with patch("pandas.read_csv", side_effect=fake_read_csv):
+        result = run_trade_backtest(
+            "dummy_1d.csv",
+            "1D",
+            min_window=10,
+            step=5,
+            parent_timeframe_csv_path="dummy_weekly.csv",
+            parent_timeframe_min_window=5,
+        )
+
+    assert "summary" in result
+    assert csv_call_count[0] >= 2

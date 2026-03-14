@@ -228,3 +228,24 @@ def test_macd_hist_not_turning_bearish():
 def test_macd_hist_bearish_no_column():
     df = pd.DataFrame({"close": [100.0] * 5})
     assert check_macd_momentum_turning_bearish(df) is False
+
+
+def test_volume_spike_nan_volume():
+    """NaN current volume → return False (line 48)."""
+    import numpy as np
+    df = pd.DataFrame({"volume": [1000.0] * 4 + [np.nan]})
+    assert check_volume_spike(df, lookback=3) is False
+
+
+def test_macd_hist_bullish_nan_values():
+    """macd_hist with NaN → return False (line 110)."""
+    import numpy as np
+    df = pd.DataFrame({"macd_hist": [float("nan"), 0.0, 0.1]})
+    assert check_macd_momentum_turning_bullish(df, lookback=3) is False
+
+
+def test_macd_hist_bearish_nan_values():
+    """macd_hist with NaN → return False (line 123)."""
+    import numpy as np
+    df = pd.DataFrame({"macd_hist": [float("nan"), 0.5, 0.3]})
+    assert check_macd_momentum_turning_bearish(df, lookback=3) is False

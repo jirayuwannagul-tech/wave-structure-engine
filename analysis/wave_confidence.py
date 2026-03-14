@@ -50,7 +50,7 @@ def score_fib_ratio(ratio: float | None, targets: list[float], tolerance: float 
         return 0.8
     if best_diff <= tolerance * 2:
         return 0.6
-    return 0.35
+    return 0.10
 
 
 def score_abc_fibonacci(pattern) -> float:

@@ -42,7 +42,7 @@ def detect_flat(swings: List[SwingPoint]) -> Optional[FlatPattern]:
 
             # Regular Flat: B retraces ≥ 90% of A (bc/ab ≥ 0.90), C stays ≥ A origin
             b_vs_a_ratio = _safe_ratio(bc, ab)
-            c_vs_a_ratio = b_vs_a_ratio
+            c_vs_a_ratio = _safe_ratio(c.price - a.price, ab)
 
             if b_vs_a_ratio >= 0.90 and c.price >= a.price and c_vs_a_ratio <= 1.05:
                 return FlatPattern(
@@ -67,7 +67,7 @@ def detect_flat(swings: List[SwingPoint]) -> Optional[FlatPattern]:
 
             # Regular Flat bearish: B retraces ≥ 90% of A, C stays ≤ A origin
             b_vs_a_ratio = _safe_ratio(bc, ab)
-            c_vs_a_ratio = b_vs_a_ratio
+            c_vs_a_ratio = _safe_ratio(a.price - c.price, ab)
 
             if b_vs_a_ratio >= 0.90 and c.price <= a.price and c_vs_a_ratio <= 1.05:
                 return FlatPattern(

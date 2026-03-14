@@ -159,7 +159,7 @@ def _indicator_adjustment_with_context(
         context["trend_ok"] = check_bullish_trend_context(df)
         context["momentum_ok"] = check_bullish_momentum(df)
         context["indicator_validation"] = validate_bullish_wave_with_indicators(df)
-        adjustment = 0.08 if context["indicator_validation"] else -0.08
+        adjustment = 0.04 if context["indicator_validation"] else -0.04
         if aligned_divergence is not None and context["indicator_validation"]:
             adjustment += 0.02
         if macd_divergence is not None:
@@ -179,7 +179,7 @@ def _indicator_adjustment_with_context(
         context["trend_ok"] = check_bearish_trend_context(df)
         context["momentum_ok"] = check_bearish_momentum(df)
         context["indicator_validation"] = validate_bearish_wave_with_indicators(df)
-        adjustment = 0.08 if context["indicator_validation"] else -0.08
+        adjustment = 0.04 if context["indicator_validation"] else -0.04
         if aligned_divergence is not None and context["indicator_validation"]:
             adjustment += 0.02
         if macd_divergence is not None:
