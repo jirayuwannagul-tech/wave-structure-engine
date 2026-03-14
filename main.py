@@ -162,11 +162,30 @@ def _run_trade_backtest(
             )
             higher_timeframe_csv_path = None
             higher_timeframe_min_window = None
+            parent_timeframe_csv_path = None
+            parent_timeframe_min_window = None
+            if timeframe.upper() == "1D":
+                _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                parent_timeframe_csv_path = _resolve_backtest_dataset(
+                    symbol=symbol,
+                    timeframe="1W",
+                    refresh_data=refresh_data,
+                    limit=fetch_limit,
+                    years=years,
+                )
             if timeframe.upper() == "4H":
                 _, higher_timeframe_min_window = TIMEFRAME_CONFIG["1D"]
                 higher_timeframe_csv_path = _resolve_backtest_dataset(
                     symbol=symbol,
                     timeframe="1D",
+                    refresh_data=refresh_data,
+                    limit=fetch_limit,
+                    years=years,
+                )
+                _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                parent_timeframe_csv_path = _resolve_backtest_dataset(
+                    symbol=symbol,
+                    timeframe="1W",
                     refresh_data=refresh_data,
                     limit=fetch_limit,
                     years=years,
@@ -181,6 +200,8 @@ def _run_trade_backtest(
                 slippage_rate=slippage_rate,
                 higher_timeframe_csv_path=higher_timeframe_csv_path,
                 higher_timeframe_min_window=higher_timeframe_min_window,
+                parent_timeframe_csv_path=parent_timeframe_csv_path,
+                parent_timeframe_min_window=parent_timeframe_min_window,
             )
             symbol_output[timeframe] = {target: result["summary"] for target, result in suite.items()}
         output[symbol] = symbol_output
@@ -225,11 +246,30 @@ def _run_portfolio_backtest(
             )
             higher_timeframe_csv_path = None
             higher_timeframe_min_window = None
+            parent_timeframe_csv_path = None
+            parent_timeframe_min_window = None
+            if timeframe.upper() == "1D":
+                _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                parent_timeframe_csv_path = _resolve_backtest_dataset(
+                    symbol=symbol,
+                    timeframe="1W",
+                    refresh_data=refresh_data,
+                    limit=fetch_limit,
+                    years=years,
+                )
             if timeframe.upper() == "4H":
                 _, higher_timeframe_min_window = TIMEFRAME_CONFIG["1D"]
                 higher_timeframe_csv_path = _resolve_backtest_dataset(
                     symbol=symbol,
                     timeframe="1D",
+                    refresh_data=refresh_data,
+                    limit=fetch_limit,
+                    years=years,
+                )
+                _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                parent_timeframe_csv_path = _resolve_backtest_dataset(
+                    symbol=symbol,
+                    timeframe="1W",
                     refresh_data=refresh_data,
                     limit=fetch_limit,
                     years=years,
@@ -248,6 +288,8 @@ def _run_portfolio_backtest(
                 tp_allocations=tp_allocations,
                 higher_timeframe_csv_path=higher_timeframe_csv_path,
                 higher_timeframe_min_window=higher_timeframe_min_window,
+                parent_timeframe_csv_path=parent_timeframe_csv_path,
+                parent_timeframe_min_window=parent_timeframe_min_window,
             )
             symbol_output[timeframe] = result["summary"]
         output[symbol] = symbol_output
@@ -312,6 +354,22 @@ def _run_global_portfolio_backtest(
                         if timeframe.upper() == "4H"
                         else None
                     ),
+                    "parent_timeframe_csv_path": (
+                        _resolve_backtest_dataset(
+                            symbol=symbol,
+                            timeframe="1W",
+                            refresh_data=refresh_data,
+                            limit=fetch_limit,
+                            years=years,
+                        )
+                        if timeframe.upper() in {"1D", "4H"}
+                        else None
+                    ),
+                    "parent_timeframe_min_window": (
+                        TIMEFRAME_CONFIG["1W"][1]
+                        if timeframe.upper() in {"1D", "4H"}
+                        else None
+                    ),
                 }
             )
 
@@ -364,11 +422,30 @@ def _refresh_experience_store(
                 )
                 higher_timeframe_csv_path = None
                 higher_timeframe_min_window = None
+                parent_timeframe_csv_path = None
+                parent_timeframe_min_window = None
+                if timeframe.upper() == "1D":
+                    _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                    parent_timeframe_csv_path = _resolve_backtest_dataset(
+                        symbol=symbol,
+                        timeframe="1W",
+                        refresh_data=refresh_data,
+                        limit=fetch_limit,
+                        years=years,
+                    )
                 if timeframe.upper() == "4H":
                     _, higher_timeframe_min_window = TIMEFRAME_CONFIG["1D"]
                     higher_timeframe_csv_path = _resolve_backtest_dataset(
                         symbol=symbol,
                         timeframe="1D",
+                        refresh_data=refresh_data,
+                        limit=fetch_limit,
+                        years=years,
+                    )
+                    _, parent_timeframe_min_window = TIMEFRAME_CONFIG["1W"]
+                    parent_timeframe_csv_path = _resolve_backtest_dataset(
+                        symbol=symbol,
+                        timeframe="1W",
                         refresh_data=refresh_data,
                         limit=fetch_limit,
                         years=years,
@@ -385,6 +462,8 @@ def _refresh_experience_store(
                     tp_allocations=tp_allocations,
                     higher_timeframe_csv_path=higher_timeframe_csv_path,
                     higher_timeframe_min_window=higher_timeframe_min_window,
+                    parent_timeframe_csv_path=parent_timeframe_csv_path,
+                    parent_timeframe_min_window=parent_timeframe_min_window,
                 )
 
                 key = f"{symbol.upper()}:{timeframe.upper()}"

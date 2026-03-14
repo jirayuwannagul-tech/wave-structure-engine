@@ -4,11 +4,12 @@ from dataclasses import asdict, dataclass
 
 import pandas as pd
 
+from analysis.backtest_timeframe_context import resolve_backtest_higher_timeframe_context
 from analysis.trade_backtest import (
     build_trade_setup_from_scenario,
     simulate_trade_from_setup,
 )
-from analysis.setup_filter import apply_trade_filters, build_higher_timeframe_context, extract_trade_bias
+from analysis.setup_filter import apply_trade_filters
 from core.engine import build_dataframe_analysis
 
 
@@ -98,6 +99,8 @@ def run_trade_backtest(
     slippage_rate: float = 0.0,
     higher_timeframe_csv_path: str | None = None,
     higher_timeframe_min_window: int | None = None,
+    parent_timeframe_csv_path: str | None = None,
+    parent_timeframe_min_window: int | None = None,
 ) -> dict:
     df = pd.read_csv(csv_path).copy()
 
@@ -110,6 +113,16 @@ def run_trade_backtest(
         if "open_time" in higher_timeframe_df.columns:
             higher_timeframe_df["open_time"] = pd.to_datetime(
                 higher_timeframe_df["open_time"],
+                utc=True,
+                errors="coerce",
+            )
+
+    parent_timeframe_df = None
+    if parent_timeframe_csv_path:
+        parent_timeframe_df = pd.read_csv(parent_timeframe_csv_path).copy()
+        if "open_time" in parent_timeframe_df.columns:
+            parent_timeframe_df["open_time"] = pd.to_datetime(
+                parent_timeframe_df["open_time"],
                 utc=True,
                 errors="coerce",
             )
@@ -130,27 +143,19 @@ def run_trade_backtest(
             df=sample_df,
             current_price=float(sample_df.iloc[-1]["close"]),
         )
-        higher_timeframe_bias = None
-        higher_timeframe_context = None
-        if (
-            timeframe.upper() == "4H"
-            and higher_timeframe_df is not None
-            and higher_timeframe_min_window is not None
-            and "open_time" in sample_df.columns
-        ):
-            cutoff_time = sample_df.iloc[-1]["open_time"]
-            higher_sample_df = higher_timeframe_df[
-                higher_timeframe_df["open_time"] <= cutoff_time
-            ].copy()
-            if len(higher_sample_df) >= higher_timeframe_min_window:
-                higher_analysis = build_dataframe_analysis(
-                    symbol=symbol,
-                    timeframe="1D",
-                    df=higher_sample_df,
-                    current_price=float(higher_sample_df.iloc[-1]["close"]),
-                )
-                higher_timeframe_bias = extract_trade_bias(higher_analysis)
-                higher_timeframe_context = build_higher_timeframe_context(higher_analysis)
+        higher_timeframe_bias, higher_timeframe_context, allow_analysis = (
+            resolve_backtest_higher_timeframe_context(
+                symbol=symbol,
+                timeframe=timeframe,
+                sample_df=sample_df,
+                higher_timeframe_df=higher_timeframe_df,
+                higher_timeframe_min_window=higher_timeframe_min_window,
+                parent_timeframe_df=parent_timeframe_df,
+                parent_timeframe_min_window=parent_timeframe_min_window,
+            )
+        )
+        if not allow_analysis:
+            continue
 
         analysis = apply_trade_filters(
             analysis,
@@ -233,6 +238,8 @@ def run_trade_backtest_suite(
     slippage_rate: float = 0.0,
     higher_timeframe_csv_path: str | None = None,
     higher_timeframe_min_window: int | None = None,
+    parent_timeframe_csv_path: str | None = None,
+    parent_timeframe_min_window: int | None = None,
 ) -> dict[str, dict]:
     output: dict[str, dict] = {}
     for target_label in ("TP1", "TP2", "TP3"):
@@ -247,5 +254,7 @@ def run_trade_backtest_suite(
             slippage_rate=slippage_rate,
             higher_timeframe_csv_path=higher_timeframe_csv_path,
             higher_timeframe_min_window=higher_timeframe_min_window,
+            parent_timeframe_csv_path=parent_timeframe_csv_path,
+            parent_timeframe_min_window=parent_timeframe_min_window,
         )
     return output

@@ -540,6 +540,44 @@ def test_build_trade_candidates_with_triggered(monkeypatch):
     assert result["candidates"]
 
 
+def test_build_trade_candidates_skips_4h_when_daily_context_is_not_tradeable(monkeypatch):
+    dummy_df = _make_dummy_ohlcv(30)
+
+    scenario = MagicMock()
+    scenario.bias = "BULLISH"
+    scenario.confirmation = 105.0
+    scenario.stop_loss = 95.0
+    scenario.targets = [115.0, 125.0, 135.0]
+    analysis = {
+        "has_pattern": True,
+        "scenarios": [scenario],
+        "primary_pattern_type": "ABC_CORRECTION",
+        "confidence": 0.8,
+        "probability": 0.7,
+    }
+
+    monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: analysis)
+    monkeypatch.setattr(
+        "analysis.portfolio_backtest.resolve_backtest_higher_timeframe_context",
+        lambda **kwargs: ("BEARISH", {"timeframe": "1D", "is_tradeable": False}, False),
+    )
+    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
+
+    with patch("pandas.read_csv", return_value=dummy_df):
+        result = build_trade_candidates(
+            csv_path="dummy.csv",
+            symbol="BTCUSDT",
+            timeframe="4H",
+            min_window=10,
+            step=5,
+            higher_timeframe_csv_path="dummy_1d.csv",
+            higher_timeframe_min_window=5,
+        )
+
+    assert result["summary"]["triggered_candidates"] == 0
+    assert result["candidates"] == []
+
+
 # ---------- run_global_portfolio_backtest with losing trade (line 836-837) ----------
 
 def test_run_global_portfolio_backtest_drawdown(monkeypatch):
