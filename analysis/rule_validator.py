@@ -58,13 +58,28 @@ def validate_impulse_rules(pattern: ImpulsePattern) -> RuleValidationResult:
 
     is_valid = bool(wave2_rule and wave3_rule and wave4_rule and pattern.is_valid)
 
+    # Alternation guideline (not a hard rule, but tracked)
+    w2_ratio = pattern.wave2_retrace_ratio
+    w4_ratio = pattern.wave4_retrace_ratio
+    w2_sharp = w2_ratio > 0.618
+    w4_sharp = w4_ratio > 0.618
+    alternation_ok = not (w2_sharp and w4_sharp) and not (w2_ratio < 0.382 and w4_ratio < 0.382)
+
+    msg_parts = []
+    if is_valid:
+        msg_parts.append("valid impulse")
+    else:
+        msg_parts.append("invalid impulse")
+    if not alternation_ok:
+        msg_parts.append("poor alternation W2/W4")
+
     return RuleValidationResult(
         pattern_type="impulse",
         is_valid=is_valid,
         wave2_rule=wave2_rule,
         wave3_rule=wave3_rule,
         wave4_rule=wave4_rule,
-        message="valid impulse" if is_valid else "invalid impulse",
+        message=", ".join(msg_parts),
     )
 
 
@@ -102,19 +117,23 @@ def validate_abc_rules(pattern: ABCPattern) -> RuleValidationResult:
 
 def validate_flat_rules(pattern) -> RuleValidationResult:
     direction = (pattern.direction or "").lower()
-    ratio_ok = bool(0.0 < pattern.c_vs_a_ratio <= 0.618)
+    # Regular Flat: B retraces 90-105% of A, C stays within 90-105% of A
+    b_ratio_ok = bool(0.90 <= pattern.b_vs_a_ratio <= 1.05)
+    c_ratio_ok = bool(0.90 <= pattern.c_vs_a_ratio <= 1.05)
 
     if direction == "bullish":
         correction_rule = bool(
             pattern.b.price > pattern.a.price
             and pattern.c.price >= pattern.a.price
-            and ratio_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
     else:
         correction_rule = bool(
             pattern.b.price < pattern.a.price
             and pattern.c.price <= pattern.a.price
-            and ratio_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
 
     return _build_result(
@@ -127,19 +146,23 @@ def validate_flat_rules(pattern) -> RuleValidationResult:
 
 def validate_expanded_flat_rules(pattern) -> RuleValidationResult:
     direction = (pattern.direction or "").lower()
-    extension_ok = bool(pattern.c_extension_ratio > 1.0)
+    # Expanded Flat: B must retrace ≥ 100% of A, C must extend > 100% of A
+    b_ratio_ok = bool(pattern.b_extension_ratio >= 1.00)
+    c_ratio_ok = bool(pattern.c_extension_ratio > 1.0)
 
     if direction == "bullish":
         correction_rule = bool(
             pattern.b.price > pattern.a.price
             and pattern.c.price < pattern.a.price
-            and extension_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
     else:
         correction_rule = bool(
             pattern.b.price < pattern.a.price
             and pattern.c.price > pattern.a.price
-            and extension_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
 
     return _build_result(
@@ -152,19 +175,24 @@ def validate_expanded_flat_rules(pattern) -> RuleValidationResult:
 
 def validate_running_flat_rules(pattern) -> RuleValidationResult:
     direction = (pattern.direction or "").lower()
-    ratio_ok = bool(0.0 < pattern.c_vs_a_ratio < 1.0)
+    # Running Flat: C retraces less than A (bc/ab < 1.0), C fails to reach A origin
+    # b_vs_a_ratio = bc/ab; < 1.0 means C doesn't fully retrace the AB move
+    b_ratio_ok = bool(0.0 < getattr(pattern, "b_vs_a_ratio", 0.0) < 1.0)
+    c_ratio_ok = bool(0.0 < pattern.c_vs_a_ratio < 1.0)
 
     if direction == "bullish":
         correction_rule = bool(
             pattern.b.price > pattern.a.price
             and pattern.c.price > pattern.a.price
-            and ratio_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
     else:
         correction_rule = bool(
             pattern.b.price < pattern.a.price
             and pattern.c.price < pattern.a.price
-            and ratio_ok
+            and b_ratio_ok
+            and c_ratio_ok
         )
 
     return _build_result(
@@ -177,7 +205,7 @@ def validate_running_flat_rules(pattern) -> RuleValidationResult:
 
 def validate_wxy_rules(pattern) -> RuleValidationResult:
     direction = (pattern.direction or "").lower()
-    ratio_ok = bool(0.3 <= pattern.y_vs_w_ratio <= 1.2)
+    ratio_ok = bool(0.50 <= pattern.y_vs_w_ratio <= 1.10)  # tightened from 0.3-1.2
 
     if direction == "bullish":
         correction_rule = bool(
@@ -204,34 +232,64 @@ def validate_triangle_rules(pattern) -> RuleValidationResult:
     has_five_points = len(getattr(pattern, "points", [])) == 5
     upper_slope = float(getattr(pattern, "upper_slope", 0.0))
     lower_slope = float(getattr(pattern, "lower_slope", 0.0))
-    correction_rule = bool(has_five_points and upper_slope < 0 and lower_slope > 0)
+    subtype = str(getattr(pattern, "triangle_subtype", "contracting")).lower()
+    pattern_name = str(getattr(pattern, "pattern_type", "triangle"))
+
+    if subtype == "contracting":
+        # Highs descend (upper_slope < 0), lows ascend (lower_slope > 0)
+        correction_rule = bool(has_five_points and upper_slope < 0 and lower_slope > 0)
+
+    elif subtype == "expanding":
+        # Highs ascend (upper_slope > 0), lows descend (lower_slope < 0)
+        correction_rule = bool(has_five_points and upper_slope > 0 and lower_slope < 0)
+
+    elif subtype == "ascending_barrier":
+        # Upper boundary flat, lower boundary rising
+        correction_rule = bool(has_five_points and lower_slope > 0)
+
+    elif subtype == "descending_barrier":
+        # Lower boundary flat, upper boundary falling
+        correction_rule = bool(has_five_points and upper_slope < 0)
+
+    else:
+        correction_rule = False
 
     return _build_result(
-        pattern_type="triangle",
+        pattern_type=pattern_name,
         is_valid=correction_rule,
         correction_rule=correction_rule,
-        message="valid triangle" if correction_rule else "invalid triangle",
+        message=f"valid {subtype} triangle" if correction_rule else f"invalid {subtype} triangle",
     )
 
 
 def validate_diagonal_rules(pattern) -> RuleValidationResult:
     direction = (pattern.direction or "").lower()
+    pattern_type_name = str(getattr(pattern, "pattern_type", "diagonal"))
+    is_contracting = getattr(pattern, "is_contracting", False)
+    w3_vs_w1 = getattr(pattern, "w3_vs_w1_ratio", 0.0)
 
     if direction == "bullish":
-        correction_rule = bool(
+        overlap_ok = bool(
             pattern.p2.price > pattern.p1.price
             and pattern.p4.price > pattern.p3.price
             and getattr(pattern, "overlap_exists", False)
         )
     else:
-        correction_rule = bool(
+        overlap_ok = bool(
             pattern.p2.price < pattern.p1.price
             and pattern.p4.price < pattern.p3.price
             and getattr(pattern, "overlap_exists", False)
         )
 
+    # For ending diagonal: must be contracting
+    if "ending" in pattern_type_name.lower():
+        correction_rule = bool(overlap_ok and is_contracting)
+    else:
+        # Leading diagonal: just need overlap and valid direction
+        correction_rule = bool(overlap_ok)
+
     return _build_result(
-        pattern_type=getattr(pattern, "pattern_type", "diagonal"),
+        pattern_type=pattern_type_name,
         is_valid=correction_rule,
         correction_rule=correction_rule,
         message="valid diagonal" if correction_rule else "invalid diagonal",
@@ -259,7 +317,13 @@ def validate_pattern_rules(pattern_type: str, pattern) -> RuleValidationResult:
     if pattern_type == "WXY":
         return validate_wxy_rules(pattern)
 
-    if pattern_type == "TRIANGLE":
+    if pattern_type in {
+        "TRIANGLE",
+        "CONTRACTING_TRIANGLE",
+        "EXPANDING_TRIANGLE",
+        "ASCENDING_BARRIER_TRIANGLE",
+        "DESCENDING_BARRIER_TRIANGLE",
+    }:
         return validate_triangle_rules(pattern)
 
     if pattern_type in {"ENDING_DIAGONAL", "LEADING_DIAGONAL"}:

@@ -68,6 +68,23 @@ def _fallback_from_closes(df: pd.DataFrame | None) -> TrendClassification:
     )
 
 
+def _apply_bos(
+    state: str,
+    last_high: float | None,
+    last_low: float | None,
+    df: pd.DataFrame | None,
+) -> str:
+    """Return BROKEN_UP or BROKEN_DOWN if the latest close has crossed the last swing."""
+    if df is None or "close" not in df.columns or len(df) == 0:
+        return state
+    last_close = float(df.iloc[-1]["close"])
+    if last_low is not None and last_close < last_low:
+        return "BROKEN_DOWN"
+    if last_high is not None and last_close > last_high:
+        return "BROKEN_UP"
+    return state
+
+
 def classify_market_trend(
     pivots: list[Pivot],
     df: pd.DataFrame | None = None,
@@ -79,41 +96,53 @@ def classify_market_trend(
         return _fallback_from_closes(df)
 
     if last_high > previous_high and last_low > previous_low:
+        state = _apply_bos("UPTREND", last_high, last_low, df)
         return TrendClassification(
-            state="UPTREND",
+            state=state,
             last_high=last_high,
             previous_high=previous_high,
             last_low=last_low,
             previous_low=previous_low,
-            swing_structure="HH_HL",
+            swing_structure="BOS_DOWN" if state == "BROKEN_DOWN" else "HH_HL",
             source="dow_theory",
-            confidence=0.8,
-            message="higher highs and higher lows",
+            confidence=0.85 if state in {"BROKEN_UP", "BROKEN_DOWN"} else 0.8,
+            message="break of structure downward" if state == "BROKEN_DOWN" else "higher highs and higher lows",
         )
 
     if last_high < previous_high and last_low < previous_low:
+        state = _apply_bos("DOWNTREND", last_high, last_low, df)
         return TrendClassification(
-            state="DOWNTREND",
+            state=state,
             last_high=last_high,
             previous_high=previous_high,
             last_low=last_low,
             previous_low=previous_low,
-            swing_structure="LH_LL",
+            swing_structure="BOS_UP" if state == "BROKEN_UP" else "LH_LL",
             source="dow_theory",
-            confidence=0.8,
-            message="lower highs and lower lows",
+            confidence=0.85 if state in {"BROKEN_UP", "BROKEN_DOWN"} else 0.8,
+            message="break of structure upward" if state == "BROKEN_UP" else "lower highs and lower lows",
         )
 
+    state = _apply_bos("SIDEWAY", last_high, last_low, df)
+    swing_structure = (
+        "BOS_UP" if state == "BROKEN_UP"
+        else "BOS_DOWN" if state == "BROKEN_DOWN"
+        else "MIXED_SWINGS"
+    )
     return TrendClassification(
-        state="SIDEWAY",
+        state=state,
         last_high=last_high,
         previous_high=previous_high,
         last_low=last_low,
         previous_low=previous_low,
-        swing_structure="MIXED_SWINGS",
+        swing_structure=swing_structure,
         source="dow_theory",
-        confidence=0.65,
-        message="pivot highs and lows are mixed",
+        confidence=0.85 if state in {"BROKEN_UP", "BROKEN_DOWN"} else 0.65,
+        message=(
+            "break of structure upward" if state == "BROKEN_UP"
+            else "break of structure downward" if state == "BROKEN_DOWN"
+            else "pivot highs and lows are mixed"
+        ),
     )
 
 
@@ -123,10 +152,10 @@ def dow_theory_alignment_adjustment(direction: str, trend: TrendClassification) 
     if direction not in {"bullish", "bearish"}:
         return 0.0
 
-    if trend.state == "UPTREND":
+    if trend.state in {"UPTREND", "BROKEN_UP"}:
         return 0.003 if direction == "bullish" else 0.0
 
-    if trend.state == "DOWNTREND":
+    if trend.state in {"DOWNTREND", "BROKEN_DOWN"}:
         return 0.003 if direction == "bearish" else 0.0
 
     return 0.0

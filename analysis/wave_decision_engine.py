@@ -10,6 +10,7 @@ PATTERN_AMBIGUITY_THRESHOLDS = {
     "WXY": 0.002,
 }
 PATTERN_MIN_CONFIDENCE = {
+    "IMPULSE": 0.75,
     "ABC_CORRECTION": 0.72,
     "EXPANDED_FLAT": 0.72,
     "RUNNING_FLAT": 0.72,
@@ -90,22 +91,14 @@ def _build_trade_levels(pattern: dict) -> dict:
         stop_loss = support
 
         if resistance is not None:
-            targets = [
-                round(resistance, 2),
-                round(resistance * 1.03, 2),
-                round(resistance * 1.06, 2),
-            ]
+            targets = [round(resistance, 2)]
 
     if direction == "BEARISH":
         confirm = support
         stop_loss = resistance
 
         if support is not None:
-            targets = [
-                round(support, 2),
-                round(support * 0.97, 2),
-                round(support * 0.94, 2),
-            ]
+            targets = [round(support, 2)]
 
     return {
         "confirm": confirm,

@@ -43,10 +43,11 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
             if ab <= 0 or bc <= 0:
                 continue
 
-            b_extension_ratio = 1.0
-            c_extension_ratio = _safe_ratio(bc, ab)
+            # Expanded Flat: B must retrace ≥ 100% of A (bc/ab ≥ 1.00), C extends beyond A
+            b_extension_ratio = _safe_ratio(bc, ab)
+            c_extension_ratio = b_extension_ratio
 
-            if c.price < a.price and c_extension_ratio > 1.0:
+            if b_extension_ratio >= 1.00 and c.price < a.price and c_extension_ratio > 1.0:
                 return ExpandedFlatPattern(
                     pattern_type="expanded_flat",
                     direction="bullish",
@@ -70,10 +71,11 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
             if ab <= 0 or bc <= 0:
                 continue
 
-            b_extension_ratio = 1.0
-            c_extension_ratio = _safe_ratio(bc, ab)
+            # Expanded Flat bearish: B must retrace ≥ 100% of A, C extends beyond A
+            b_extension_ratio = _safe_ratio(bc, ab)
+            c_extension_ratio = b_extension_ratio
 
-            if c.price > a.price and c_extension_ratio > 1.0:
+            if b_extension_ratio >= 1.00 and c.price > a.price and c_extension_ratio > 1.0:
                 return ExpandedFlatPattern(
                     pattern_type="expanded_flat",
                     direction="bearish",

@@ -5,7 +5,7 @@ import traceback
 from dataclasses import dataclass
 
 from analysis.price_level_watcher import Level
-from analysis.setup_filter import apply_trade_filters, extract_trade_bias
+from analysis.setup_filter import extract_trade_bias
 from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_daily_job
@@ -182,9 +182,17 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
         try:
             analysis_1d = build_timeframe_analysis(symbol, "1d", 200)
             higher_timeframe_bias = extract_trade_bias(analysis_1d)
-            analysis_4h = apply_trade_filters(
-                build_timeframe_analysis(symbol, "4h", 200),
+            inprogress_1d = analysis_1d.get("inprogress")
+            position_1d = analysis_1d.get("position")
+            htf_wave_number = None
+            if inprogress_1d is not None and getattr(inprogress_1d, "is_valid", False):
+                htf_wave_number = getattr(inprogress_1d, "wave_number", None)
+            elif position_1d is not None:
+                htf_wave_number = getattr(position_1d, "wave_number", None)
+            analysis_4h = build_timeframe_analysis(
+                symbol, "4h", 200,
                 higher_timeframe_bias=higher_timeframe_bias,
+                higher_timeframe_wave_number=htf_wave_number,
             )
             analyses = [analysis_1d, analysis_4h]
             return _build_runtime(symbol, analyses)

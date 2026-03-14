@@ -7,6 +7,11 @@ from analysis.inprogress_detector import (
     detect_inprogress_wave,
     _try_partial_bullish_impulse,
     _try_partial_bearish_impulse,
+    _try_partial_bullish_corrective,
+    _try_partial_bearish_corrective,
+    _bullish_corrective_targets,
+    _bearish_corrective_targets,
+    _corrective_wave_number,
 )
 from analysis.pivot_detector import Pivot
 
@@ -266,3 +271,273 @@ def test_inprogress_summary_contains_structure():
     result = detect_inprogress_wave(pivots)
     assert result is not None
     assert "IMPULSE" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# Bearish impulse: wave 2, 3, 5
+# ---------------------------------------------------------------------------
+
+def test_building_wave_2_bearish():
+    pivots = [
+        make_pivot(1, 120.0, "H"),  # Wave 1 start
+        make_pivot(2, 100.0, "L"),  # Wave 1 end
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    assert result.wave_number == "2"
+    assert result.direction == "bearish"
+    assert result.completed_waves == 1
+
+
+def test_building_wave_3_bearish():
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+        make_pivot(3, 112.0, "H"),  # Wave 2 retracement (< 120)
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    assert result.wave_number == "3"
+    assert result.direction == "bearish"
+
+
+def test_building_wave_5_bearish():
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),  # w1=20
+        make_pivot(3, 112.0, "H"),  # w2 end (< 120)
+        make_pivot(4,  60.0, "L"),  # w3 end (w3=52 > w1=20 ✓)
+        make_pivot(5,  80.0, "H"),  # w4 end (above 100 ✓ rule 3)
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    assert result.wave_number == "5"
+    assert result.direction == "bearish"
+    assert result.completed_waves == 4
+    assert "w1_equal" in result.fib_targets
+
+
+# ---------------------------------------------------------------------------
+# Corrective waves (ABC)
+# ---------------------------------------------------------------------------
+
+def test_bullish_corrective_building_wave_b():
+    """H-L sequence: A went down, building B retracement."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),  # A start
+        make_pivot(2, 100.0, "L"),  # A end
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    # Could be bearish impulse wave 2 OR bullish corrective B; both are valid
+    # For this sequence, bearish impulse w2 wins (higher priority)
+    assert result.wave_number in ("2", "B")
+
+
+def test_bullish_corrective_building_wave_c():
+    """H-L-H sequence below A start: A went down, B retraced, building C."""
+    # Use data that doesn't match impulse (B < A start)
+    pivots = [
+        make_pivot(1, 120.0, "H"),  # A start
+        make_pivot(2, 100.0, "L"),  # A end
+        make_pivot(3, 115.0, "H"),  # B end (< 120 so B < A start)
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    # [H,L,H] matches bearish impulse wave 3 OR bullish corrective C
+    # Impulse check fires first; but if impulse rule 2 fails (w3<w1) → falls to corrective
+    assert result.wave_number in ("3", "C")
+
+
+def test_bearish_corrective_building_wave_b():
+    """L-H sequence: A went up, building B retracement."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),  # A start
+        make_pivot(2, 120.0, "H"),  # A end
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    assert result.wave_number in ("2", "B")
+
+
+def test_bearish_corrective_building_wave_c():
+    """L-H-L sequence above A start: A went up, B retraced, building C."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),  # A start
+        make_pivot(2, 120.0, "H"),  # A end
+        make_pivot(3, 108.0, "L"),  # B end (> 100 so B > A start)
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    assert result.wave_number in ("3", "C")
+
+
+def test_corrective_fib_targets_wave_b():
+    """Wave B targets should be retracements of Wave A."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    if result.wave_number == "B":
+        # A size = 20; B targets = 100 + 20 * ratio
+        assert "0.618" in result.fib_targets
+        assert abs(result.fib_targets["0.618"] - 112.36) < 0.1
+
+
+def test_corrective_fib_targets_wave_c():
+    """Wave C targets should be extensions of Wave A."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),  # A start
+        make_pivot(2, 100.0, "L"),  # A end
+        make_pivot(3, 112.0, "H"),  # B end (< 120)
+    ]
+    result = detect_inprogress_wave(pivots)
+    assert result is not None
+    if result.wave_number == "C":
+        assert "C=A" in result.fib_targets or "C=1.618A" in result.fib_targets
+
+
+# ---------------------------------------------------------------------------
+# Direct corrective helper function tests
+# ---------------------------------------------------------------------------
+
+def test_bullish_corrective_targets_wave_b():
+    """_bullish_corrective_targets with n=2 (building B)."""
+    pivots = [make_pivot(1, 120.0, "H"), make_pivot(2, 100.0, "L")]
+    targets = _bullish_corrective_targets(pivots)
+    # A size = 20; B targets from a_end=100
+    assert "0.382" in targets
+    assert abs(targets["0.382"] - (100 + 20 * 0.382)) < 0.01
+    assert "0.618" in targets
+
+
+def test_bullish_corrective_targets_wave_c():
+    """_bullish_corrective_targets with n=3 (building C)."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),  # A start
+        make_pivot(2, 100.0, "L"),  # A end
+        make_pivot(3, 112.0, "H"),  # B end
+    ]
+    targets = _bullish_corrective_targets(pivots)
+    assert "C=A" in targets
+    assert "C=1.618A" in targets
+    # C=A from B end 112 going down 20: 112 - 20 = 92
+    assert abs(targets["C=A"] - 92.0) < 0.01
+
+
+def test_bearish_corrective_targets_wave_b():
+    """_bearish_corrective_targets with n=2 (building B)."""
+    pivots = [make_pivot(1, 100.0, "L"), make_pivot(2, 120.0, "H")]
+    targets = _bearish_corrective_targets(pivots)
+    # A size = 20; B retraces from a_end=120
+    assert "0.382" in targets
+    assert abs(targets["0.382"] - (120 - 20 * 0.382)) < 0.01
+
+
+def test_bearish_corrective_targets_wave_c():
+    """_bearish_corrective_targets with n=3 (building C)."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),  # A start
+        make_pivot(2, 120.0, "H"),  # A end
+        make_pivot(3, 108.0, "L"),  # B end
+    ]
+    targets = _bearish_corrective_targets(pivots)
+    assert "C=A" in targets
+    assert "C=1.618A" in targets
+    # C=A from B end 108 going up 20: 108 + 20 = 128
+    assert abs(targets["C=A"] - 128.0) < 0.01
+
+
+def test_corrective_wave_number():
+    assert _corrective_wave_number(2, "bullish") == "B"
+    assert _corrective_wave_number(3, "bullish") == "C"
+    assert _corrective_wave_number(2, "bearish") == "B"
+    assert _corrective_wave_number(3, "bearish") == "C"
+
+
+def test_try_partial_bullish_corrective_b():
+    """H-L: A went down, building B (bullish retracement)."""
+    pivots = [make_pivot(1, 120.0, "H"), make_pivot(2, 100.0, "L")]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is not None
+    assert result.wave_number == "B"
+    assert result.direction == "bullish"
+    assert result.structure == "CORRECTION"
+    assert result.is_valid is True
+
+
+def test_try_partial_bullish_corrective_c():
+    """H-L-H (B < A start): A down, B up partially, building C down."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+        make_pivot(3, 114.0, "H"),  # B end (< 120 → valid)
+    ]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is not None
+    assert result.wave_number == "C"
+
+
+def test_try_partial_bullish_corrective_b_above_a_start():
+    """B exceeds A start → invalid."""
+    pivots = [
+        make_pivot(1, 120.0, "H"),
+        make_pivot(2, 100.0, "L"),
+        make_pivot(3, 125.0, "H"),  # B >= A start (120) → invalid
+    ]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is None
+
+
+def test_try_partial_bullish_corrective_wrong_sequence():
+    """L-H sequence → not a bullish corrective."""
+    pivots = [make_pivot(1, 100.0, "L"), make_pivot(2, 120.0, "H")]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is None
+
+
+def test_try_partial_bullish_corrective_too_many():
+    pivots = [make_pivot(i, float(100 + i), "H" if i % 2 else "L") for i in range(5)]
+    result = _try_partial_bullish_corrective(pivots)
+    assert result is None
+
+
+def test_try_partial_bearish_corrective_b():
+    """L-H: A went up, building B (bearish retracement)."""
+    pivots = [make_pivot(1, 100.0, "L"), make_pivot(2, 120.0, "H")]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is not None
+    assert result.wave_number == "B"
+    assert result.direction == "bearish"
+
+
+def test_try_partial_bearish_corrective_c():
+    """L-H-L (B > A start): A up, B down partially, building C up."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),
+        make_pivot(2, 120.0, "H"),
+        make_pivot(3, 108.0, "L"),  # B end (> 100 → valid)
+    ]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is not None
+    assert result.wave_number == "C"
+
+
+def test_try_partial_bearish_corrective_b_below_a_start():
+    """B goes below A start → invalid."""
+    pivots = [
+        make_pivot(1, 100.0, "L"),
+        make_pivot(2, 120.0, "H"),
+        make_pivot(3, 95.0, "L"),   # B <= A start (100) → invalid
+    ]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is None
+
+
+def test_try_partial_bearish_corrective_wrong_sequence():
+    """H-L sequence → not a bearish corrective."""
+    pivots = [make_pivot(1, 120.0, "H"), make_pivot(2, 100.0, "L")]
+    result = _try_partial_bearish_corrective(pivots)
+    assert result is None

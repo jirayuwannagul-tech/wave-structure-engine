@@ -24,6 +24,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from analysis.pivot_detector import Pivot
+from analysis.wave_timer import (
+    WaveTimeProjection,
+    measure_impulse_wave_durations,
+    project_wave_time,
+    score_time_confidence,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +56,7 @@ class InProgressWave:
     rule_checks: dict[str, bool] = field(default_factory=dict)
     is_valid: bool = True
     confidence: float = 0.5
+    time_projection: WaveTimeProjection | None = None
 
     @property
     def current_wave_direction(self) -> str:
@@ -92,6 +99,17 @@ _BEARISH_SEQUENCES: dict[int, list[str]] = {
     3: ["H", "L", "H"],
     4: ["H", "L", "H", "L"],
     5: ["H", "L", "H", "L", "H"],
+}
+
+_BULLISH_CORRECTIVE_SEQUENCES: dict[int, list[str]] = {
+    # Bullish ABC: ends at C (bullish rebound expected)
+    2: ["H", "L"],         # Wave A done (down), building Wave B (up)
+    3: ["H", "L", "H"],    # Waves A+B done, building Wave C (down) — expect bounce at C
+}
+
+_BEARISH_CORRECTIVE_SEQUENCES: dict[int, list[str]] = {
+    2: ["L", "H"],         # Wave A done (up), building Wave B (down)
+    3: ["L", "H", "L"],    # Waves A+B done, building Wave C (up) — expect reversal at C
 }
 
 
@@ -310,6 +328,16 @@ def _try_partial_bullish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave
 
     wave_number = _wave_number_from_pivot_count(n)
 
+    durations = measure_impulse_wave_durations(pivots)
+    time_proj = project_wave_time(
+        completed_durations=durations,
+        building_wave=wave_number,
+        current_bar_index=pivots[-1].index,
+        wave_start_index=pivots[-1].index,
+    )
+    time_adj = score_time_confidence(time_proj)
+    final_confidence = round(min(0.95, _confidence(rule_checks, n) + time_adj), 3)
+
     return InProgressWave(
         structure="IMPULSE",
         direction="bullish",
@@ -322,7 +350,8 @@ def _try_partial_bullish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave
         fib_targets=_bullish_fib_targets(pivots),
         rule_checks=rule_checks,
         is_valid=is_valid,
-        confidence=_confidence(rule_checks, n),
+        confidence=final_confidence,
+        time_projection=time_proj,
     )
 
 
@@ -352,6 +381,16 @@ def _try_partial_bearish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave
 
     wave_number = _wave_number_from_pivot_count(n)
 
+    durations = measure_impulse_wave_durations(pivots)
+    time_proj = project_wave_time(
+        completed_durations=durations,
+        building_wave=wave_number,
+        current_bar_index=pivots[-1].index,
+        wave_start_index=pivots[-1].index,
+    )
+    time_adj = score_time_confidence(time_proj)
+    final_confidence = round(min(0.95, _confidence(rule_checks, n) + time_adj), 3)
+
     return InProgressWave(
         structure="IMPULSE",
         direction="bearish",
@@ -364,7 +403,155 @@ def _try_partial_bearish_impulse(pivots: list[Pivot]) -> Optional[InProgressWave
         fib_targets=_bearish_fib_targets(pivots),
         rule_checks=rule_checks,
         is_valid=is_valid,
-        confidence=_confidence(rule_checks, n),
+        confidence=final_confidence,
+        time_projection=time_proj,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Corrective wave helpers
+# ---------------------------------------------------------------------------
+
+
+def _bullish_corrective_targets(pivots: list[Pivot]) -> dict[str, float]:
+    """Fibonacci targets for bullish ABC correction."""
+    n = len(pivots)
+    targets: dict[str, float] = {}
+
+    if n == 2:
+        # Building Wave B: retracement of Wave A (A went down)
+        a_start = pivots[0].price  # H (top of A)
+        a_end = pivots[1].price    # L (bottom of A)
+        a_size = a_start - a_end
+        targets["0.382"] = round(a_end + a_size * 0.382, 2)  # B targets
+        targets["0.500"] = round(a_end + a_size * 0.500, 2)
+        targets["0.618"] = round(a_end + a_size * 0.618, 2)
+        targets["0.786"] = round(a_end + a_size * 0.786, 2)
+
+    elif n == 3:
+        # Building Wave C: extension from Wave B end (C goes DOWN)
+        a_start = pivots[0].price
+        a_end = pivots[1].price
+        b_end = pivots[2].price
+        a_size = a_start - a_end
+        targets["C=A"] = round(b_end - a_size * 1.000, 2)      # C equals A
+        targets["C=1.272A"] = round(b_end - a_size * 1.272, 2) # C = 1.272×A
+        targets["C=1.618A"] = round(b_end - a_size * 1.618, 2) # C = 1.618×A
+
+    return targets
+
+
+def _bearish_corrective_targets(pivots: list[Pivot]) -> dict[str, float]:
+    """Fibonacci targets for bearish ABC correction."""
+    n = len(pivots)
+    targets: dict[str, float] = {}
+
+    if n == 2:
+        # Building Wave B: retracement of Wave A (A went up)
+        a_start = pivots[0].price  # L (bottom of A)
+        a_end = pivots[1].price    # H (top of A)
+        a_size = a_end - a_start
+        targets["0.382"] = round(a_end - a_size * 0.382, 2)
+        targets["0.500"] = round(a_end - a_size * 0.500, 2)
+        targets["0.618"] = round(a_end - a_size * 0.618, 2)
+        targets["0.786"] = round(a_end - a_size * 0.786, 2)
+
+    elif n == 3:
+        # Building Wave C: extension from Wave B end (C goes UP)
+        a_start = pivots[0].price
+        a_end = pivots[1].price
+        b_end = pivots[2].price
+        a_size = a_end - a_start
+        targets["C=A"] = round(b_end + a_size * 1.000, 2)
+        targets["C=1.272A"] = round(b_end + a_size * 1.272, 2)
+        targets["C=1.618A"] = round(b_end + a_size * 1.618, 2)
+
+    return targets
+
+
+def _corrective_wave_number(n: int, direction: str) -> str:
+    """Map pivot count to ABC wave label."""
+    if n == 2:
+        return "B"   # A done, building B
+    return "C"        # A+B done, building C
+
+
+def _try_partial_bullish_corrective(pivots: list[Pivot]) -> Optional[InProgressWave]:
+    """Detect bullish ABC correction in progress (expect bullish bounce at C)."""
+    n = len(pivots)
+    if n < 2 or n > 3:
+        return None
+    if [p.type for p in pivots] != _BULLISH_CORRECTIVE_SEQUENCES[n]:
+        return None
+
+    # Validate basic structure
+    if n >= 2:
+        # A went DOWN: first pivot is H (a_start) > second pivot L (a_end)
+        if pivots[0].price <= pivots[1].price:
+            return None
+    if n == 3:
+        # B went UP: third pivot H above second pivot L
+        if pivots[2].price <= pivots[1].price:
+            return None
+        # B should not exceed A start (B retraces less than 100% of A)
+        if pivots[2].price >= pivots[0].price:
+            return None
+
+    wave_number = _corrective_wave_number(n, "bullish")
+    invalidation = pivots[0].price  # A start — if price exceeds A top, correction is over
+
+    return InProgressWave(
+        structure="CORRECTION",
+        direction="bullish",
+        wave_number=wave_number,
+        completed_waves=n - 1,
+        pivots=list(pivots),
+        last_pivot=pivots[-1],
+        current_wave_start=pivots[-1].price,
+        invalidation=invalidation,
+        fib_targets=_bullish_corrective_targets(pivots),
+        rule_checks={},
+        is_valid=True,
+        confidence=round(0.35 + 0.10 * (n - 1), 3),
+    )
+
+
+def _try_partial_bearish_corrective(pivots: list[Pivot]) -> Optional[InProgressWave]:
+    """Detect bearish ABC correction in progress (expect bearish drop at C)."""
+    n = len(pivots)
+    if n < 2 or n > 3:
+        return None
+    if [p.type for p in pivots] != _BEARISH_CORRECTIVE_SEQUENCES[n]:
+        return None
+
+    if n >= 2:
+        # A went UP: first pivot is L < second pivot H
+        if pivots[0].price >= pivots[1].price:
+            return None
+    if n == 3:
+        # B went DOWN: third pivot L below second pivot H
+        if pivots[2].price >= pivots[1].price:
+            return None
+        # B should not go below A start
+        if pivots[2].price <= pivots[0].price:
+            return None
+
+    wave_number = _corrective_wave_number(n, "bearish")
+    invalidation = pivots[0].price  # A start
+
+    return InProgressWave(
+        structure="CORRECTION",
+        direction="bearish",
+        wave_number=wave_number,
+        completed_waves=n - 1,
+        pivots=list(pivots),
+        last_pivot=pivots[-1],
+        current_wave_start=pivots[-1].price,
+        invalidation=invalidation,
+        fib_targets=_bearish_corrective_targets(pivots),
+        rule_checks={},
+        is_valid=True,
+        confidence=round(0.35 + 0.10 * (n - 1), 3),
     )
 
 
@@ -389,18 +576,27 @@ def detect_inprogress_wave(pivots: list[Pivot]) -> Optional[InProgressWave]:
     if len(pivots) < 2:
         return None
 
+    # Try impulse first (windows 5→2) — impulse is higher priority
     for window_size in range(5, 1, -1):
         if len(pivots) < window_size:
             continue
-
         recent = pivots[-window_size:]
-
         bullish = _try_partial_bullish_impulse(recent)
         bearish = _try_partial_bearish_impulse(recent)
-
         candidates = [c for c in (bullish, bearish) if c is not None]
         if candidates:
-            # Prefer the one with higher confidence; tie-break: more waves done
+            best = max(candidates, key=lambda c: (c.confidence, c.completed_waves))
+            return best
+
+    # If no impulse found, try corrective (windows 3→2)
+    for window_size in range(3, 1, -1):
+        if len(pivots) < window_size:
+            continue
+        recent = pivots[-window_size:]
+        bull_corr = _try_partial_bullish_corrective(recent)
+        bear_corr = _try_partial_bearish_corrective(recent)
+        candidates = [c for c in (bull_corr, bear_corr) if c is not None]
+        if candidates:
             best = max(candidates, key=lambda c: (c.confidence, c.completed_waves))
             return best
 

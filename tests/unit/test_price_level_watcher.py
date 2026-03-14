@@ -27,6 +27,17 @@ def test_check_levels_break_support():
     assert "BREAK 4H Support" in alerts[0]
 
 
+def test_check_levels_near_support():
+    """Price just above support within tolerance → NEAR alert (line 27)."""
+    alerts = check_levels(
+        100.1,
+        [Level("Daily Support", 100.0, "support")],
+        tolerance=0.002,
+    )
+    assert len(alerts) == 1
+    assert "Daily Support" in alerts[0]
+
+
 def test_check_levels_no_hit():
     alerts = check_levels(
         70500,

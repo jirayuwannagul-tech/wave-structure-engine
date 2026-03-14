@@ -34,7 +34,10 @@ def describe_current_leg(position: WavePosition | None) -> str | None:
         return "C"
     if structure == "WXY":
         return "Y"
-    if structure == "TRIANGLE":
+    if structure in {
+        "TRIANGLE", "CONTRACTING_TRIANGLE", "EXPANDING_TRIANGLE",
+        "ASCENDING_BARRIER_TRIANGLE", "DESCENDING_BARRIER_TRIANGLE",
+    }:
         return "E"
     if structure in {"IMPULSE", "ENDING_DIAGONAL", "LEADING_DIAGONAL"}:
         return "5"
@@ -92,9 +95,12 @@ def _build_pattern_position(pattern_type: str, pattern) -> WavePosition:
             confidence="medium",
         )
 
-    if pattern_type == "TRIANGLE":
+    if pattern_type in {
+        "TRIANGLE", "CONTRACTING_TRIANGLE", "EXPANDING_TRIANGLE",
+        "ASCENDING_BARRIER_TRIANGLE", "DESCENDING_BARRIER_TRIANGLE",
+    }:
         return WavePosition(
-            structure="TRIANGLE",
+            structure=pattern_type,
             position="CONSOLIDATION_END",
             bias=direction,
             confidence="medium",

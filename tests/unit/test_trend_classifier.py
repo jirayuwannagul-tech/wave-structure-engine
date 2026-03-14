@@ -62,6 +62,54 @@ def test_classify_market_trend_falls_back_to_recent_close_average():
     assert result.message == "recent close average is rising"
 
 
+def _uptrend_pivots():
+    return [
+        Pivot(index=1, price=100.0, type="L", timestamp=pd.Timestamp("2026-01-01")),
+        Pivot(index=2, price=120.0, type="H", timestamp=pd.Timestamp("2026-01-02")),
+        Pivot(index=3, price=108.0, type="L", timestamp=pd.Timestamp("2026-01-03")),
+        Pivot(index=4, price=130.0, type="H", timestamp=pd.Timestamp("2026-01-04")),
+    ]
+
+
+def _downtrend_pivots():
+    return [
+        Pivot(index=1, price=130.0, type="H", timestamp=pd.Timestamp("2026-01-01")),
+        Pivot(index=2, price=110.0, type="L", timestamp=pd.Timestamp("2026-01-02")),
+        Pivot(index=3, price=122.0, type="H", timestamp=pd.Timestamp("2026-01-03")),
+        Pivot(index=4, price=100.0, type="L", timestamp=pd.Timestamp("2026-01-04")),
+    ]
+
+
+def test_classify_market_trend_bos_down_when_uptrend_breaks_below_last_low():
+    # Uptrend pivots: last_low=108, last_high=130; close=105 < 108 → BROKEN_DOWN
+    df = pd.DataFrame({"close": [90, 100, 115, 125, 105]})
+    result = classify_market_trend(_uptrend_pivots(), df=df)
+
+    assert result.state == "BROKEN_DOWN"
+    assert result.swing_structure == "BOS_DOWN"
+    assert result.source == "dow_theory"
+    assert result.confidence == 0.85
+
+
+def test_classify_market_trend_bos_up_when_downtrend_breaks_above_last_high():
+    # Downtrend pivots: last_high=122, last_low=100; close=125 > 122 → BROKEN_UP
+    df = pd.DataFrame({"close": [130, 115, 120, 105, 125]})
+    result = classify_market_trend(_downtrend_pivots(), df=df)
+
+    assert result.state == "BROKEN_UP"
+    assert result.swing_structure == "BOS_UP"
+    assert result.source == "dow_theory"
+    assert result.confidence == 0.85
+
+
+def test_classify_market_trend_no_bos_when_price_inside_range():
+    # Uptrend pivots: last_low=108, last_high=130; close=115 → still UPTREND
+    df = pd.DataFrame({"close": [90, 100, 115, 125, 115]})
+    result = classify_market_trend(_uptrend_pivots(), df=df)
+
+    assert result.state == "UPTREND"
+
+
 def test_dow_theory_alignment_adjustment_rewards_aligned_direction():
     pivots = [
         Pivot(index=1, price=100.0, type="L", timestamp=pd.Timestamp("2026-01-01")),

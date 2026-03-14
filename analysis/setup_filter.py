@@ -9,6 +9,18 @@ MIN_MAIN_CONFIDENCE = 0.72
 MIN_ALTERNATE_CONFIDENCE = 0.84
 MIN_ALTERNATE_PROBABILITY = 0.52
 
+CORRECTIVE_PATTERNS = {
+    "ABC_CORRECTION",
+    "EXPANDED_FLAT",
+    "RUNNING_FLAT",
+    "WXY",
+    "TRIANGLE",
+    "CONTRACTING_TRIANGLE",
+    "EXPANDING_TRIANGLE",
+    "ASCENDING_BARRIER_TRIANGLE",
+    "DESCENDING_BARRIER_TRIANGLE",
+}
+
 
 @dataclass
 class TradeFilterDecision:
@@ -64,9 +76,9 @@ def _scenario_name(scenario) -> str:
 
 def _trend_aligned(bias: str | None, trend_state: str) -> bool:
     if bias == "BULLISH":
-        return trend_state == "UPTREND"
+        return trend_state in {"UPTREND", "BROKEN_UP"}
     if bias == "BEARISH":
-        return trend_state == "DOWNTREND"
+        return trend_state in {"DOWNTREND", "BROKEN_DOWN"}
     return False
 
 
@@ -80,11 +92,13 @@ def _is_tradeable_regime(analysis: dict) -> bool:
     indicator_context = _indicator_context(analysis)
     atr_ok = bool(indicator_context.get("atr_ok"))
     divergence = str(indicator_context.get("rsi_divergence") or "NONE").upper()
+    macd_div = str(indicator_context.get("macd_divergence") or "NONE").upper()
 
     if trend_state != "SIDEWAY":
         return True
 
-    return atr_ok or divergence != "NONE"
+    volume_ok = bool(indicator_context.get("volume_spike")) or bool(indicator_context.get("volume_divergence"))
+    return atr_ok or divergence != "NONE" or macd_div != "NONE" or volume_ok
 
 
 def _passes_quality_gate(
@@ -92,6 +106,7 @@ def _passes_quality_gate(
     scenario,
     index: int,
     higher_timeframe_bias: str | None,
+    htf_wave_number: str | None = None,
 ) -> tuple[bool, str | None]:
     symbol = str(analysis.get("symbol") or "")
     timeframe = str(analysis.get("timeframe") or "")
@@ -104,6 +119,7 @@ def _passes_quality_gate(
     indicator_validation = bool(indicator_context.get("indicator_validation"))
     atr_ok = bool(indicator_context.get("atr_ok"))
     divergence = str(indicator_context.get("rsi_divergence") or "NONE").upper()
+    macd_divergence = str(indicator_context.get("macd_divergence") or "NONE").upper()
     is_alternate = _is_alternate(scenario, index)
     side = "LONG" if bias == "BULLISH" else "SHORT" if bias == "BEARISH" else None
     pattern_edge = get_pattern_edge(symbol, timeframe, pattern, side)
@@ -127,7 +143,34 @@ def _passes_quality_gate(
             alternate_probability_threshold -= 0.05
 
     if higher_timeframe_bias and bias and bias != higher_timeframe_bias:
-        return False, "counter-trend against 1D context"
+        # Only hard-block 4H against 1D trend, not 1D against weekly
+        if timeframe.upper() in ("4H", "1H", "15M"):
+            return False, "counter-trend against 1D context"
+        # For 1D, soft-block: allow if very high confidence
+        if confidence < 0.85:
+            return False, "1D counter-trend: confidence too low"
+
+    # Wave nesting: if we know the HTF wave number, use it to calibrate confidence
+    if htf_wave_number:
+        # Trading in Wave 3 of higher timeframe: most powerful, lower threshold
+        if htf_wave_number in ("3",):
+            main_confidence_threshold = max(0.60, main_confidence_threshold - 0.06)
+        # Trading in Wave 5: approaching end, be more selective
+        elif htf_wave_number in ("5",):
+            main_confidence_threshold = min(0.90, main_confidence_threshold + 0.04)
+        # Trading in Wave 2 or 4 (correction): need stronger signal to enter
+        elif htf_wave_number in ("2", "4"):
+            main_confidence_threshold = min(0.88, main_confidence_threshold + 0.05)
+        # Trading in corrective C wave: strong entry opportunity
+        elif htf_wave_number == "C":
+            main_confidence_threshold = max(0.62, main_confidence_threshold - 0.04)
+
+    if (
+        timeframe.upper() == "4H"
+        and pattern.upper() in CORRECTIVE_PATTERNS
+        and not (pattern_edge is not None and pattern_edge.positive)
+    ):
+        return False, "4H corrective pattern filtered (IMPULSE only on 4H)"
 
     if is_alternate:
         if confidence < alternate_confidence_threshold:
@@ -144,7 +187,7 @@ def _passes_quality_gate(
 
     if confidence < main_confidence_threshold:
         return False, "main confidence too low"
-    if not atr_ok and divergence == "NONE":
+    if not atr_ok and divergence == "NONE" and macd_divergence == "NONE":
         return False, "main missing atr expansion"
     if not _trend_aligned(bias, trend_state) and not indicator_validation and not atr_ok:
         return False, "main not aligned with trend"
@@ -155,6 +198,7 @@ def _passes_quality_gate(
 def filter_trade_scenarios(
     analysis: dict,
     higher_timeframe_bias: str | None = None,
+    htf_wave_number: str | None = None,
 ) -> tuple[list, TradeFilterDecision]:
     scenarios = list(analysis.get("scenarios") or [])
     notes: list[str] = []
@@ -199,6 +243,7 @@ def filter_trade_scenarios(
             scenario=scenario,
             index=index,
             higher_timeframe_bias=higher_timeframe_bias,
+            htf_wave_number=htf_wave_number,
         )
         if passed:
             filtered.append(scenario)
@@ -218,6 +263,7 @@ def filter_trade_scenarios(
 def apply_trade_filters(
     analysis: dict,
     higher_timeframe_bias: str | None = None,
+    htf_wave_number: str | None = None,
 ) -> dict:
     if not analysis:
         return analysis
@@ -225,6 +271,7 @@ def apply_trade_filters(
     filtered_scenarios, decision = filter_trade_scenarios(
         analysis,
         higher_timeframe_bias=higher_timeframe_bias,
+        htf_wave_number=htf_wave_number,
     )
 
     out = dict(analysis)

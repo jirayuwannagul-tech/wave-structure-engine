@@ -42,6 +42,10 @@ class ImpulsePattern:
     rule_wave3_not_shortest: bool
     rule_wave4_no_overlap_wave1: bool
     is_valid: bool
+    is_wave3_extended: bool = False   # W3 > 1.618 × W1 (extended wave)
+    is_wave5_extended: bool = False   # W5 > W1 × 1.0 (extended wave 5)
+    wave5_truncated: bool = False     # W5 < W3 AND W5 < W1 (truncation)
+    extension_wave: str = ""          # "W3", "W5", or "" (which wave is extended)
 
 
 def _safe_ratio(a: float, b: float) -> float:
@@ -142,6 +146,11 @@ def _build_bullish_impulse(
 
     is_valid = structure_ok and retracement_ok and rule1 and rule2 and rule3
 
+    is_wave3_extended = wave3 > wave1 * 1.618
+    is_wave5_extended = wave5 > wave1 * 1.0 and not is_wave3_extended
+    wave5_truncated = wave5 < wave3 and wave5 < wave1
+    extension_wave = "W3" if is_wave3_extended else ("W5" if is_wave5_extended else "")
+
     return ImpulsePattern(
         p1=p1,
         p2=p2,
@@ -163,6 +172,10 @@ def _build_bullish_impulse(
         rule_wave3_not_shortest=rule2,
         rule_wave4_no_overlap_wave1=rule3,
         is_valid=is_valid,
+        is_wave3_extended=is_wave3_extended,
+        is_wave5_extended=is_wave5_extended,
+        wave5_truncated=wave5_truncated,
+        extension_wave=extension_wave,
     )
 
 
@@ -201,6 +214,11 @@ def _build_bearish_impulse(
 
     is_valid = structure_ok and retracement_ok and rule1 and rule2 and rule3
 
+    is_wave3_extended = wave3 > wave1 * 1.618
+    is_wave5_extended = wave5 > wave1 * 1.0 and not is_wave3_extended
+    wave5_truncated = wave5 < wave3 and wave5 < wave1
+    extension_wave = "W3" if is_wave3_extended else ("W5" if is_wave5_extended else "")
+
     return ImpulsePattern(
         p1=p1,
         p2=p2,
@@ -222,6 +240,10 @@ def _build_bearish_impulse(
         rule_wave3_not_shortest=rule2,
         rule_wave4_no_overlap_wave1=rule3,
         is_valid=is_valid,
+        is_wave3_extended=is_wave3_extended,
+        is_wave5_extended=is_wave5_extended,
+        wave5_truncated=wave5_truncated,
+        extension_wave=extension_wave,
     )
 
 

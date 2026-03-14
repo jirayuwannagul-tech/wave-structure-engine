@@ -16,6 +16,7 @@ class WXYPattern:
     wx_length: float
     xy_length: float
     y_vs_w_ratio: float
+    x_retrace_ratio: float = 1.0   # X/W length ratio — how strong was the connector wave
 
 
 def _safe_ratio(a: float, b: float) -> float:
@@ -41,7 +42,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
 
             ratio = _safe_ratio(xy, wx)
 
-            if y.price > w.price and 0.3 <= ratio <= 1.2:
+            if y.price > w.price and 0.50 <= ratio <= 1.10:
                 return WXYPattern(
                     pattern_type="WXY",
                     direction="bullish",
@@ -51,6 +52,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
                     wx_length=wx,
                     xy_length=xy,
                     y_vs_w_ratio=ratio,
+                    x_retrace_ratio=1.0,
                 )
 
         # bearish WXY : H-L-H
@@ -63,7 +65,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
 
             ratio = _safe_ratio(xy, wx)
 
-            if y.price < w.price and 0.3 <= ratio <= 1.2:
+            if y.price < w.price and 0.50 <= ratio <= 1.10:
                 return WXYPattern(
                     pattern_type="WXY",
                     direction="bearish",
@@ -73,6 +75,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
                     wx_length=wx,
                     xy_length=xy,
                     y_vs_w_ratio=ratio,
+                    x_retrace_ratio=1.0,
                 )
 
     return None

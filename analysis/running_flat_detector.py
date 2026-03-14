@@ -15,6 +15,7 @@ class RunningFlatPattern:
     c: SwingPoint
     ab_length: float
     bc_length: float
+    b_vs_a_ratio: float
     c_vs_a_ratio: float
 
 
@@ -40,9 +41,11 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
             if ab <= 0 or bc <= 0:
                 continue
 
-            c_vs_a_ratio = _safe_ratio(bc, ab)
+            # Running Flat: C < B (bc/ab < 1.0), C fails to reach A origin (c.price > a.price)
+            b_vs_a_ratio = _safe_ratio(bc, ab)
+            c_vs_a_ratio = b_vs_a_ratio
 
-            if c.price > a.price and c_vs_a_ratio < 1.0:
+            if c.price > a.price and 0.0 < c_vs_a_ratio < 1.0:
                 return RunningFlatPattern(
                     pattern_type="running_flat",
                     direction="bullish",
@@ -51,6 +54,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
                     c=c,
                     ab_length=ab,
                     bc_length=bc,
+                    b_vs_a_ratio=b_vs_a_ratio,
                     c_vs_a_ratio=c_vs_a_ratio,
                 )
 
@@ -63,9 +67,11 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
             if ab <= 0 or bc <= 0:
                 continue
 
-            c_vs_a_ratio = _safe_ratio(bc, ab)
+            # Running Flat bearish: C < B (bc/ab < 1.0), C fails to reach A origin
+            b_vs_a_ratio = _safe_ratio(bc, ab)
+            c_vs_a_ratio = b_vs_a_ratio
 
-            if c.price < a.price and c_vs_a_ratio < 1.0:
+            if c.price < a.price and 0.0 < c_vs_a_ratio < 1.0:
                 return RunningFlatPattern(
                     pattern_type="running_flat",
                     direction="bearish",
@@ -74,6 +80,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
                     c=c,
                     ab_length=ab,
                     bc_length=bc,
+                    b_vs_a_ratio=b_vs_a_ratio,
                     c_vs_a_ratio=c_vs_a_ratio,
                 )
 

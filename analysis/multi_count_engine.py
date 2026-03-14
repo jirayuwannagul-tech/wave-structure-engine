@@ -5,23 +5,43 @@ import pandas as pd
 from analysis.diagonal_detector import detect_ending_diagonal
 from analysis.expanded_flat_detector import detect_expanded_flat
 from analysis.flat_detector import detect_flat
-from analysis.indicator_engine import calculate_atr, calculate_ema, calculate_rsi
+from analysis.indicator_engine import (
+    calculate_atr,
+    calculate_ema,
+    calculate_macd,
+    calculate_rsi,
+    check_macd_momentum_turning_bearish,
+    check_macd_momentum_turning_bullish,
+    check_volume_divergence_bearish,
+    check_volume_divergence_bullish,
+    check_volume_spike,
+)
 from analysis.indicator_filter import (
     check_atr_expansion,
     check_bearish_momentum,
     check_bearish_trend_context,
     check_bullish_momentum,
     check_bullish_trend_context,
+    check_long_term_bearish_trend,
+    check_long_term_bullish_trend,
     detect_aligned_rsi_divergence,
     validate_bearish_wave_with_indicators,
     validate_bullish_wave_with_indicators,
+)
+from analysis.macd_divergence import (
+    detect_bearish_macd_divergence,
+    detect_bullish_macd_divergence,
 )
 from analysis.leading_diagonal_detector import detect_leading_diagonal
 from analysis.pattern_labeler import label_patterns
 from analysis.rule_validator import validate_pattern_rules
 from analysis.running_flat_detector import detect_running_flat
 from analysis.swing_builder import build_swings
-from analysis.triangle_detector import detect_contracting_triangle
+from analysis.triangle_detector import (
+    detect_barrier_triangle,
+    detect_contracting_triangle,
+    detect_expanding_triangle,
+)
 from analysis.wave_confidence import (
     compute_wave_confidence,
     score_abc_fibonacci,
@@ -62,6 +82,19 @@ def _prepare_indicator_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if "atr" not in out.columns:
         out["atr"] = calculate_atr(out)
 
+    if "macd" not in out.columns:
+        macd_df = calculate_macd(out)
+        out["macd"] = macd_df["macd"]
+        out["macd_signal"] = macd_df["macd_signal"]
+        out["macd_hist"] = macd_df["macd_hist"]
+
+    if "volume_ma20" not in out.columns and "volume" in out.columns:
+        from analysis.indicator_engine import calculate_volume_ma
+        out["volume_ma20"] = calculate_volume_ma(out)
+
+    if "ema200" not in out.columns:
+        out["ema200"] = calculate_ema(out, 200)
+
     return out
 
 
@@ -81,6 +114,24 @@ def _indicator_adjustment_with_context(
     direction = (direction or "").lower()
     aligned_divergence = detect_aligned_rsi_divergence(direction, df, pivots)
 
+    if direction == "bullish":
+        macd_divergence = detect_bullish_macd_divergence(df, pivots)
+    elif direction == "bearish":
+        macd_divergence = detect_bearish_macd_divergence(df, pivots)
+    else:
+        macd_divergence = None
+
+    volume_spike = check_volume_spike(df) if "volume" in df.columns else False
+    if direction == "bullish":
+        vol_div = check_volume_divergence_bullish(df) if "volume" in df.columns else False
+    elif direction == "bearish":
+        vol_div = check_volume_divergence_bearish(df) if "volume" in df.columns else False
+    else:
+        vol_div = False
+
+    macd_hist_bullish = check_macd_momentum_turning_bullish(df) if "macd_hist" in df.columns else False
+    macd_hist_bearish = check_macd_momentum_turning_bearish(df) if "macd_hist" in df.columns else False
+
     context = {
         "trend_ok": None,
         "momentum_ok": None,
@@ -92,6 +143,16 @@ def _indicator_adjustment_with_context(
             if aligned_divergence
             else "No aligned RSI divergence detected."
         ),
+        "macd_divergence": macd_divergence.state if macd_divergence else "NONE",
+        "macd_divergence_message": (
+            macd_divergence.message
+            if macd_divergence
+            else "No MACD divergence detected."
+        ),
+        "volume_spike": volume_spike,
+        "volume_divergence": vol_div,
+        "macd_hist_turning": macd_hist_bullish if direction == "bullish" else macd_hist_bearish,
+        "long_term_trend_ok": check_long_term_bullish_trend(df) if direction == "bullish" else check_long_term_bearish_trend(df),
     }
 
     if direction == "bullish":
@@ -101,6 +162,17 @@ def _indicator_adjustment_with_context(
         adjustment = 0.08 if context["indicator_validation"] else -0.08
         if aligned_divergence is not None and context["indicator_validation"]:
             adjustment += 0.02
+        if macd_divergence is not None:
+            adjustment += 0.015
+        if volume_spike:
+            adjustment += 0.01
+        if vol_div:
+            adjustment += 0.01
+        if macd_hist_bullish:
+            adjustment += 0.01
+        # Long-term trend alignment bonus
+        if check_long_term_bullish_trend(df):
+            adjustment += 0.01
         return adjustment, context
 
     if direction == "bearish":
@@ -110,6 +182,16 @@ def _indicator_adjustment_with_context(
         adjustment = 0.08 if context["indicator_validation"] else -0.08
         if aligned_divergence is not None and context["indicator_validation"]:
             adjustment += 0.02
+        if macd_divergence is not None:
+            adjustment += 0.015
+        if volume_spike:
+            adjustment += 0.01
+        if vol_div:
+            adjustment += 0.01
+        if macd_hist_bearish:
+            adjustment += 0.01
+        if check_long_term_bearish_trend(df):
+            adjustment += 0.01
         return adjustment, context
 
     return 0.0, context
@@ -149,6 +231,8 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
     expanded_flat = detect_expanded_flat(swings)
     running_flat = detect_running_flat(swings)
     triangle = detect_contracting_triangle(swings)
+    expanding_triangle = detect_expanding_triangle(swings)
+    barrier_triangle = detect_barrier_triangle(swings)
     wxy = detect_wxy(swings)
     ending_diagonal = detect_ending_diagonal(pivots)
     leading_diagonal = detect_leading_diagonal(pivots)
@@ -263,7 +347,7 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
             )
 
     if triangle is not None:
-        rule_result = validate_pattern_rules("TRIANGLE", triangle)
+        rule_result = validate_pattern_rules("CONTRACTING_TRIANGLE", triangle)
         if rule_result.is_valid:
             confidence = compute_wave_confidence(
                 rule_score=score_rule_validation_from_bool(rule_result.is_valid),
@@ -271,7 +355,30 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 structure_score=score_triangle_quality(triangle),
                 momentum_score=0.55,
             )
-            _append_count(counts, "TRIANGLE", triangle, confidence)
+            _append_count(counts, "CONTRACTING_TRIANGLE", triangle, confidence)
+
+    if expanding_triangle is not None:
+        rule_result = validate_pattern_rules("EXPANDING_TRIANGLE", expanding_triangle)
+        if rule_result.is_valid:
+            confidence = compute_wave_confidence(
+                rule_score=score_rule_validation_from_bool(rule_result.is_valid),
+                fib_score=0.60,
+                structure_score=score_triangle_quality(expanding_triangle),
+                momentum_score=0.52,
+            )
+            _append_count(counts, "EXPANDING_TRIANGLE", expanding_triangle, confidence)
+
+    if barrier_triangle is not None:
+        pattern_key = barrier_triangle.pattern_type.upper()
+        rule_result = validate_pattern_rules(pattern_key, barrier_triangle)
+        if rule_result.is_valid:
+            confidence = compute_wave_confidence(
+                rule_score=score_rule_validation_from_bool(rule_result.is_valid),
+                fib_score=0.65,
+                structure_score=score_triangle_quality(barrier_triangle),
+                momentum_score=0.55,
+            )
+            _append_count(counts, pattern_key, barrier_triangle, confidence)
 
     if wxy is not None:
         rule_result = validate_pattern_rules("WXY", wxy)

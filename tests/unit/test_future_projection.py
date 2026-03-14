@@ -116,3 +116,111 @@ def test_project_next_wave_from_triangle():
     assert result.expected_direction == "NEUTRAL"
     assert result.target_1 == 120.0
     assert result.target_2 == 100.0
+
+
+def test_project_next_wave_from_bullish_impulse():
+    position = WavePosition(
+        structure="IMPULSE",
+        position="WAVE_5_COMPLETE",
+        bias="BULLISH",
+        confidence="high",
+    )
+    key_levels = KeyLevels(
+        structure_type="impulse",
+        support=100.0,
+        resistance=150.0,
+        invalidation=80.0,
+        confirmation=150.0,
+        wave_start=80.0,
+        wave_end=150.0,
+    )
+    result = project_next_wave(position, key_levels)
+    assert result.expected_structure == "ABC_CORRECTION"
+    assert result.expected_direction == "DOWN"
+    assert result.target_1 is not None
+    assert result.invalidation == 80.0
+
+
+def test_project_next_wave_from_ending_diagonal_bullish():
+    position = WavePosition(
+        structure="ENDING_DIAGONAL",
+        position="WAVE_5_COMPLETE",
+        bias="BULLISH",
+        confidence="medium",
+    )
+    key_levels = KeyLevels(
+        structure_type="ending_diagonal",
+        support=90.0,
+        resistance=130.0,
+        invalidation=85.0,
+        confirmation=130.0,
+        wave_start=85.0,
+        wave_end=130.0,
+    )
+    result = project_next_wave(position, key_levels)
+    assert result.expected_structure == "ABC_CORRECTION"
+    assert result.expected_direction == "DOWN"
+
+
+def test_project_next_wave_unknown_structure():
+    position = WavePosition(
+        structure="UNKNOWN",
+        position="UNKNOWN",
+        bias="NEUTRAL",
+        confidence="low",
+    )
+    key_levels = KeyLevels(
+        structure_type="unknown",
+        support=None,
+        resistance=None,
+        invalidation=None,
+        confirmation=None,
+        wave_start=None,
+        wave_end=None,
+    )
+    result = project_next_wave(position, key_levels)
+    assert result.expected_structure == "UNKNOWN"
+    assert result.expected_direction == "NEUTRAL"
+    assert result.target_1 is None
+    assert result.message == "structure is currently ambiguous"
+
+
+def test_project_next_wave_flat_bullish_same_as_corrective():
+    position = WavePosition(
+        structure="FLAT",
+        position="WAVE_C_END",
+        bias="BULLISH",
+        confidence="medium",
+    )
+    key_levels = KeyLevels(
+        structure_type="flat",
+        support=95.0,
+        resistance=110.0,
+        invalidation=95.0,
+        confirmation=110.0,
+        wave_start=95.0,
+        wave_end=100.0,
+    )
+    result = project_next_wave(position, key_levels)
+    assert result.expected_structure == "NEW_BULLISH_IMPULSE"
+
+
+def test_project_next_wave_wxy_bearish():
+    position = WavePosition(
+        structure="WXY",
+        position="CORRECTION_COMPLETE",
+        bias="BEARISH",
+        confidence="medium",
+    )
+    key_levels = KeyLevels(
+        structure_type="wxy",
+        support=80.0,
+        resistance=100.0,
+        invalidation=105.0,
+        confirmation=80.0,
+        wave_start=100.0,
+        wave_end=85.0,
+    )
+    result = project_next_wave(position, key_levels)
+    assert result.expected_structure == "NEW_BEARISH_IMPULSE"
+    assert result.expected_direction == "DOWN"

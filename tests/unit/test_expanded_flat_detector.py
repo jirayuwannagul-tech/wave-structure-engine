@@ -1,5 +1,9 @@
-from analysis.expanded_flat_detector import detect_expanded_flat
+from analysis.expanded_flat_detector import _safe_ratio, detect_expanded_flat
 from analysis.swing_builder import SwingPoint
+
+
+def _sw(i, p, t):
+    return SwingPoint(index=i, price=p, type=t, timestamp=f"2026-01-{i:02d}")
 
 
 def test_detect_bullish_expanded_flat():
@@ -46,3 +50,26 @@ def test_no_expanded_flat_when_c_not_expand():
     pattern = detect_expanded_flat(swings)
 
     assert pattern is None
+
+
+def test_safe_ratio_zero_denominator():
+    assert _safe_ratio(5.0, 0.0) == 0.0
+
+
+def test_bullish_expanded_flat_ab_zero_skips():
+    swings = [_sw(1, 100.0, "L"), _sw(2, 100.0, "H"), _sw(3, 95.0, "L")]
+    assert detect_expanded_flat(swings) is None
+
+
+def test_bullish_expanded_flat_bc_zero_skips():
+    swings = [_sw(1, 100.0, "L"), _sw(2, 110.0, "H"), _sw(3, 110.0, "L")]
+    assert detect_expanded_flat(swings) is None
+
+
+def test_bearish_expanded_flat_ab_zero_skips():
+    swings = [_sw(1, 100.0, "H"), _sw(2, 100.0, "L"), _sw(3, 105.0, "H")]
+    assert detect_expanded_flat(swings) is None
+
+
+def test_too_few_swings_returns_none():
+    assert detect_expanded_flat([_sw(1, 100.0, "L")]) is None

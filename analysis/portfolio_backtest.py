@@ -658,6 +658,14 @@ def build_trade_candidates(
             continue
 
         setups_built += 1
+        priority_score = _candidate_priority(
+            symbol=symbol,
+            timeframe=timeframe,
+            pattern=analysis.get("primary_pattern_type"),
+            side=setup.side,
+            confidence=float(analysis.get("confidence") or 0.0),
+            probability=float(analysis.get("probability") or 0.0),
+        )
         lifecycle = simulate_trade_lifecycle(
             future_df,
             setup,

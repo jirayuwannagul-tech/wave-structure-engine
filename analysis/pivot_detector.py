@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 import pandas as pd
@@ -12,6 +12,27 @@ class Pivot:
     price: float
     type: str
     timestamp: pd.Timestamp
+    broken: bool = field(default=False)
+    confirmed: bool = field(default=True)
+
+
+def mark_broken_pivots(pivots: List[Pivot], df: pd.DataFrame) -> List[Pivot]:
+    """Mark each pivot as broken when price has crossed it since it formed.
+
+    A swing high is broken when a later close exceeds its price.
+    A swing low is broken when a later close falls below its price.
+    """
+    closes = df["close"].values
+    for pivot in pivots:
+        if pivot.type == "H":
+            pivot.broken = any(
+                closes[j] > pivot.price for j in range(pivot.index + 1, len(closes))
+            )
+        else:
+            pivot.broken = any(
+                closes[j] < pivot.price for j in range(pivot.index + 1, len(closes))
+            )
+    return pivots
 
 
 def detect_pivots(df: pd.DataFrame, left: int = 2, right: int = 2) -> List[Pivot]:

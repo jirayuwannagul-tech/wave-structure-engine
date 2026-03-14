@@ -14,9 +14,39 @@ def _pattern_bonus(pattern_type: str) -> float:
         "ENDING_DIAGONAL": 0.003,
         "LEADING_DIAGONAL": 0.003,
         "TRIANGLE": -0.01,
+        "CONTRACTING_TRIANGLE": -0.01,
+        "EXPANDING_TRIANGLE": -0.008,
+        "ASCENDING_BARRIER_TRIANGLE": -0.005,
+        "DESCENDING_BARRIER_TRIANGLE": -0.005,
     }
 
     return bonuses.get(pattern_type, 0.0)
+
+
+def _score_alternation_bonus(pattern) -> float:
+    """Alternation guideline: Wave 2 and Wave 4 should alternate in correction form.
+
+    Sharp W2 (retrace > 61.8%) should be followed by flat/sideways W4 (< 38.2%), and vice versa.
+    Returns +0.02 for good alternation, -0.02 for poor alternation, 0.0 if indeterminate.
+    """
+    w2_ratio = getattr(pattern, "wave2_retrace_ratio", None)
+    w4_ratio = getattr(pattern, "wave4_retrace_ratio", None)
+
+    if w2_ratio is None or w4_ratio is None:
+        return 0.0
+
+    w2_sharp = w2_ratio > 0.618
+    w4_sharp = w4_ratio > 0.618
+    w2_flat = w2_ratio < 0.382
+    w4_flat = w4_ratio < 0.382
+
+    if (w2_sharp and w4_flat) or (w2_flat and w4_sharp):
+        return 0.02   # good alternation
+
+    if (w2_sharp and w4_sharp) or (w2_flat and w4_flat):
+        return -0.02  # poor alternation — both corrected the same way
+
+    return 0.0  # indeterminate (both in 0.382-0.618 zone)
 
 
 def _direction_bonus(pattern) -> float:
@@ -29,12 +59,15 @@ def _direction_bonus(pattern) -> float:
 
 
 def _structure_bonus(count: dict) -> float:
-    pattern_type = count.get("type", "")
+    pattern_type = (count.get("type") or "").upper()
     pattern = count.get("pattern")
 
     bonus = 0.0
     bonus += _pattern_bonus(pattern_type)
     bonus += _direction_bonus(pattern)
+
+    if pattern_type == "IMPULSE" and pattern is not None:
+        bonus += _score_alternation_bonus(pattern)
 
     return bonus
 
