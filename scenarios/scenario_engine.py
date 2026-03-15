@@ -237,6 +237,63 @@ def generate_scenarios(
     return scenarios
 
 
+def generate_inprogress_scenarios(inprogress, current_price: float) -> list:
+    """Generate early-entry scenarios from an in-progress wave structure."""
+    if not inprogress or not getattr(inprogress, "is_valid", False):
+        return []
+
+    fib = getattr(inprogress, "fib_targets", {}) or {}
+    invalidation = getattr(inprogress, "invalidation", None)
+    wave_start = getattr(inprogress, "current_wave_start", None)
+    direction = getattr(inprogress, "current_wave_direction", None)
+    wave_number = getattr(inprogress, "wave_number", "?")
+
+    if not fib or invalidation is None or wave_start is None:
+        return []
+
+    fib_values = sorted(fib.values())
+    if not fib_values:
+        return []
+
+    tp1 = fib_values[0]
+    tp2 = fib_values[1] if len(fib_values) > 1 else None
+    tp3 = fib_values[2] if len(fib_values) > 2 else None
+    targets = [t for t in [tp1, tp2, tp3] if t is not None]
+
+    if direction == "bullish":
+        bias = "BULLISH"
+        # Only valid if tp1 is above current price (still room to go)
+        if tp1 <= current_price:
+            return []
+    elif direction == "bearish":
+        bias = "BEARISH"
+        # Only valid if tp1 is below current price
+        if tp1 >= current_price:
+            return []
+    else:
+        return []
+
+    # Use the Scenario dataclass - read the existing Scenario class first to match fields
+    scenarios = []
+    try:
+        s = Scenario(
+            name=f"InProgress Wave {wave_number}",
+            condition=f"Wave {wave_number} building from {wave_start:.2f}",
+            interpretation=f"Early entry: wave {wave_number} in progress, targeting fib levels",
+            target=f"{tp1:.2f}",
+            bias=bias,
+            invalidation=float(invalidation),
+            confirmation=float(wave_start),
+            stop_loss=float(invalidation),
+            targets=[float(t) for t in targets],
+        )
+        scenarios.append(s)
+    except Exception:
+        pass
+
+    return scenarios
+
+
 if __name__ == "__main__":
     import pandas as pd
     from analysis.future_projection import project_next_wave

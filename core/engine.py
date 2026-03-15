@@ -44,7 +44,19 @@ def build_dataframe_analysis(
         scenarios, wave_summary, trend, confidence, probability, report.
         If no pattern is detected, returns a minimal dict with has_pattern=False.
     """
-    pivots = detect_pivots(df)
+    # Add ATR column if not present (needed for swing size filtering)
+    from analysis.indicator_engine import calculate_atr
+    if "atr" not in df.columns:
+        df = df.copy()
+        df["atr"] = calculate_atr(df, period=14)
+
+    # Timeframe-aware pivot detection: faster confirmation for shorter timeframes
+    _PIVOT_RIGHT = {"1W": 2, "1D": 1, "4H": 1, "1H": 1}
+    _PIVOT_ATR_MULT = {"1W": 1.0, "1D": 0.5, "4H": 0.3, "1H": 0.2}
+    tf_upper = timeframe.upper()
+    right_bars = _PIVOT_RIGHT.get(tf_upper, 3)
+    atr_mult = _PIVOT_ATR_MULT.get(tf_upper, 0.0)
+    pivots = detect_pivots(df, right=right_bars, min_swing_atr_mult=atr_mult)
     trend = classify_market_trend(pivots, df=df)
     inprogress = detect_inprogress_wave(pivots)
     wave_sequence = build_wave_sequence(pivots, inprogress=inprogress)
@@ -108,11 +120,30 @@ def build_dataframe_analysis(
     projection = None
 
     if key_levels is not None:
-        projection = project_next_wave(position, key_levels)
+        atr_val = float(df.iloc[-1]["atr"]) if "atr" in df.columns and len(df) > 0 else 0.0
+        projection = project_next_wave(position, key_levels, recent_pivots=pivots, atr=atr_val)
         scenarios = generate_scenarios(position, key_levels, projection)
 
     if current_price is None:
         current_price = float(df.iloc[-1]["close"])
+
+    # Generate early-entry scenarios from in-progress wave detection
+    from scenarios.scenario_engine import generate_inprogress_scenarios as _gen_inprog
+
+    inprogress_scenarios = []
+    if (inprogress and getattr(inprogress, "is_valid", False)
+            and getattr(inprogress, "confidence", 0) >= 0.45):
+        inprogress_scenarios = _gen_inprog(inprogress, current_price or float(df.iloc[-1]["close"]))
+
+    # Merge: add inprogress scenarios that have different bias from existing ones
+    if inprogress_scenarios:
+        if not scenarios:
+            scenarios = inprogress_scenarios
+        else:
+            existing_biases = {getattr(s, "bias", None) for s in scenarios}
+            for s in inprogress_scenarios:
+                if getattr(s, "bias", None) not in existing_biases:
+                    scenarios.append(s)
 
     probability = primary_report.get("probability")
     confidence = primary_report.get("confidence")
@@ -147,6 +178,7 @@ def build_dataframe_analysis(
         "primary_pattern": primary_pattern,
         "position": position,
         "inprogress": inprogress,
+        "inprogress_scenarios": inprogress_scenarios,
         "wave_sequence": wave_sequence,
         "key_levels": key_levels,
         "projection": projection,

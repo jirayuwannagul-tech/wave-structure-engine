@@ -35,11 +35,17 @@ def mark_broken_pivots(pivots: List[Pivot], df: pd.DataFrame) -> List[Pivot]:
     return pivots
 
 
-def detect_pivots(df: pd.DataFrame, left: int = 3, right: int = 3) -> List[Pivot]:
+def detect_pivots(
+    df: pd.DataFrame,
+    left: int = 3,
+    right: int = 3,
+    min_swing_atr_mult: float = 0.0,
+) -> List[Pivot]:
     pivots: List[Pivot] = []
 
     highs = df["high"].values
     lows = df["low"].values
+    atr_vals = df["atr"].values if "atr" in df.columns else None
 
     for i in range(left, len(df) - right):
         is_pivot_high = True
@@ -57,25 +63,33 @@ def detect_pivots(df: pd.DataFrame, left: int = 3, right: int = 3) -> List[Pivot
             if lows[i] >= lows[i + j]:
                 is_pivot_low = False
 
-        if is_pivot_high:
-            pivots.append(
-                Pivot(
-                    index=i,
-                    price=float(highs[i]),
-                    type="H",
-                    timestamp=df.iloc[i]["open_time"],
-                )
-            )
+        # ATR-based minimum swing size filter
+        if min_swing_atr_mult > 0.0 and atr_vals is not None:
+            atr_val = float(atr_vals[i]) if atr_vals[i] > 0 else 0.0
+            if atr_val > 0:
+                if is_pivot_high:
+                    left_low = min(lows[i - j] for j in range(1, left + 1))
+                    if (highs[i] - left_low) < atr_val * min_swing_atr_mult:
+                        is_pivot_high = False
+                if is_pivot_low:
+                    left_high = max(highs[i - j] for j in range(1, left + 1))
+                    if (left_high - lows[i]) < atr_val * min_swing_atr_mult:
+                        is_pivot_low = False
 
+        if is_pivot_high:
+            pivots.append(Pivot(
+                index=i,
+                price=float(highs[i]),
+                type="H",
+                timestamp=df.iloc[i]["open_time"],
+            ))
         if is_pivot_low:
-            pivots.append(
-                Pivot(
-                    index=i,
-                    price=float(lows[i]),
-                    type="L",
-                    timestamp=df.iloc[i]["open_time"],
-                )
-            )
+            pivots.append(Pivot(
+                index=i,
+                price=float(lows[i]),
+                type="L",
+                timestamp=df.iloc[i]["open_time"],
+            ))
 
     return pivots
 

@@ -410,6 +410,17 @@ def _passes_quality_gate(
     if hierarchy is not None and not hierarchy.get("aligned"):
         return False, "child wave not aligned with higher timeframe hierarchy"
 
+    # Minimum RR gate: TP1 reward must be at least equal to SL risk (1:1)
+    scenario_targets = list(getattr(scenario, "targets", []) or [])
+    scenario_sl = getattr(scenario, "stop_loss", None)
+    scenario_confirm = getattr(scenario, "confirmation", None)
+    if scenario_targets and scenario_sl is not None and scenario_confirm is not None:
+        tp1 = float(scenario_targets[0])
+        reward = abs(float(scenario_confirm) - tp1)
+        risk = abs(float(scenario_confirm) - float(scenario_sl))
+        if risk > 0 and reward / risk < 0.8:  # require at least 0.8:1 RR
+            return False, f"RR too low: {reward/risk:.2f} (need >= 0.8)"
+
     # Wave nesting: if we know the HTF wave number, use it to calibrate confidence
     if htf_wave_number:
         # Trading in Wave 3 of higher timeframe: most powerful, lower threshold
@@ -429,22 +440,30 @@ def _passes_quality_gate(
     # IMPULSE: 3.8% WR | EXPANDED_FLAT: 6.1% | RUNNING_FLAT: 6.6%
     # ENDING_DIAGONAL: 4.8% | LEADING_DIAGONAL: 2.8%
     # Keeping only: ABC_CORRECTION (11.9%) and WXY (21.6%)
-    LOW_WR_PATTERNS = {
-        "IMPULSE",
-        "EXPANDED_FLAT",
-        "RUNNING_FLAT",
-        "ENDING_DIAGONAL",
-        "LEADING_DIAGONAL",
-    }
-    if pattern.upper() in LOW_WR_PATTERNS:
-        return False, f"{pattern.upper()} disabled (win rate too low)"
 
+    # Globally disabled patterns (poor quality across all timeframes)
+    GLOBALLY_DISABLED = {"RUNNING_FLAT", "LEADING_DIAGONAL"}
+    if pattern.upper() in GLOBALLY_DISABLED:
+        return False, f"{pattern.upper()} disabled globally (win rate too low)"
+
+    # Disabled on short timeframes (too noisy)
+    SHORT_TF_DISABLED = {"ENDING_DIAGONAL", "EXPANDED_FLAT"}
+    if timeframe.upper() in ("4H", "1H") and pattern.upper() in SHORT_TF_DISABLED:
+        return False, f"{pattern.upper()} disabled on {timeframe.upper()}"
+
+    # On 4H: block weak corrective patterns, allow ABC/WXY when HTF is aligned or edge is positive
+    WEAK_4H_CORRECTIVE = {"TRIANGLE", "FLAT"}
+    if timeframe.upper() == "4H" and pattern.upper() in WEAK_4H_CORRECTIVE:
+        return False, f"4H {pattern.upper()} filtered (weak corrective)"
+
+    # ABC/WXY on 4H: require either positive edge OR HTF context available
     if (
         timeframe.upper() == "4H"
-        and pattern.upper() in CORRECTIVE_PATTERNS
+        and pattern.upper() in {"ABC_CORRECTION", "WXY"}
         and not (pattern_edge is not None and pattern_edge.positive)
+        and not normalized_htf_context
     ):
-        return False, "4H corrective pattern filtered (IMPULSE only on 4H)"
+        return False, "4H corrective requires HTF alignment or positive edge"
 
     if is_alternate:
         if confidence < alternate_confidence_threshold:

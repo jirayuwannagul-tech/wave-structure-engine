@@ -58,7 +58,7 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
         Pivot(index=4, price=130.0, type="H", timestamp=pd.Timestamp("2026-01-04")),
     ]
 
-    monkeypatch.setattr("core.engine.detect_pivots", lambda data: pivots)
+    monkeypatch.setattr("core.engine.detect_pivots", lambda data, **kwargs: pivots)
     monkeypatch.setattr(
         "core.engine.build_wave_sequence",
         lambda pivots, inprogress=None: {
@@ -98,7 +98,7 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
     monkeypatch.setattr("core.engine.extract_pattern_key_levels", lambda pattern_type, pattern: KeyLevelsStub())
     monkeypatch.setattr("core.engine.build_wave_summary", lambda reports: {"current_wave": "ABC_CORRECTION"})
     monkeypatch.setattr("core.engine.detect_wave_position", lambda pattern_type=None, pattern=None, inprogress=None, **kw: PositionStub())
-    monkeypatch.setattr("core.engine.project_next_wave", lambda position, key_levels: ProjectionStub())
+    monkeypatch.setattr("core.engine.project_next_wave", lambda position, key_levels, **kwargs: ProjectionStub())
     monkeypatch.setattr(
         "core.engine.generate_scenarios",
         lambda position, key_levels, projection: [
