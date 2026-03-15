@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from analysis.candle_pattern import score_candle_confirmation
 from analysis.wave_position import describe_current_leg
 
 from storage.experience_store import get_pattern_edge
@@ -488,6 +489,15 @@ def _passes_quality_gate(
     # Phase 4: block sideways market — corrections don't resolve cleanly without trend
     if trend_state in {"SIDEWAY", "SIDEWAYS", "RANGING"}:
         return False, "sideways market blocked"
+
+    # Candle pattern confirmation bonus/penalty
+    candle_pats = analysis.get("candle_patterns") or []
+    if candle_pats:
+        candle_score = score_candle_confirmation(candle_pats, bias or "")
+        if candle_score < 0:  # contradicting pattern - reduce confidence
+            confidence = (confidence or 0) + candle_score
+            if confidence < main_confidence_threshold:
+                return False, "candle pattern contradicts trade direction"
 
     return True, None
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from analysis.candle_pattern import score_candle_confirmation
+
 
 def clamp_score(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
@@ -219,6 +221,8 @@ def compute_wave_confidence(
     pattern_type: str = "",
     entry_price: float | None = None,
     fib_targets: dict[str, float] | None = None,
+    candle_patterns=None,  # optional: list[CandlePattern] for entry confirmation
+    bias: str | None = None,
 ) -> float:
     confidence = (
         rule_score * 0.35
@@ -233,5 +237,10 @@ def compute_wave_confidence(
 
     # Apply Fibonacci confluence bonus when entry aligns with clustered Fib levels
     confidence += score_fib_confluence(entry_price, fib_targets)
+
+    # Add candle pattern bonus to confidence
+    if candle_patterns is not None and bias:
+        candle_score = score_candle_confirmation(candle_patterns, bias)
+        confidence = min(1.0, confidence + candle_score)
 
     return round(clamp_score(confidence), 3)

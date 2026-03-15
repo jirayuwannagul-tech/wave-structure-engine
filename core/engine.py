@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from analysis.candle_pattern import detect_candle_patterns
 from analysis.fibonacci_confluence import build_fib_levels_from_swing, find_confluence_zones
 from analysis.future_projection import project_next_wave
 from analysis.inprogress_detector import detect_inprogress_wave
@@ -59,6 +60,9 @@ def build_dataframe_analysis(
     atr_mult = _PIVOT_ATR_MULT.get(tf_upper, 0.0)
     pivots = detect_pivots(df, right=right_bars, min_swing_atr_mult=atr_mult)
     trend = classify_market_trend(pivots, df=df)
+
+    # Detect candle patterns at entry zone
+    candle_patterns = detect_candle_patterns(df, lookback=3)
     inprogress = detect_inprogress_wave(pivots)
     wave_sequence = build_wave_sequence(pivots, inprogress=inprogress)
     wave_counts = generate_wave_counts(pivots, df=df)
@@ -211,6 +215,7 @@ def build_dataframe_analysis(
         "report": report,
         "higher_timeframe_context": higher_timeframe_context,
         "confluence_zones": confluence_zones,
+        "candle_patterns": candle_patterns,
     }
 
     return apply_trade_filters(
