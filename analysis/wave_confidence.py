@@ -15,23 +15,23 @@ def score_structure_quality(structure: str) -> float:
     if structure == "IMPULSE":
         return 1.0
     if structure == "ABC_CORRECTION":
-        return 0.82
+        return 0.62
     if structure == "EXPANDED_FLAT":
-        return 0.78
+        return 0.58
     if structure == "RUNNING_FLAT":
-        return 0.76
+        return 0.56
     if structure == "FLAT":
-        return 0.72
+        return 0.54
     if structure == "WXY":
-        return 0.74
+        return 0.55
     if structure in ("CONTRACTING_TRIANGLE", "TRIANGLE"):
-        return 0.70
+        return 0.52
     if structure == "EXPANDING_TRIANGLE":
-        return 0.68
+        return 0.50
     if structure in ("ASCENDING_BARRIER_TRIANGLE", "DESCENDING_BARRIER_TRIANGLE"):
-        return 0.72
+        return 0.54
     if structure in ("ENDING_DIAGONAL", "LEADING_DIAGONAL"):
-        return 0.75
+        return 0.72
 
     return 0.50
 

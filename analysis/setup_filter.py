@@ -7,9 +7,9 @@ from analysis.wave_position import describe_current_leg
 from storage.experience_store import get_pattern_edge
 
 
-MIN_MAIN_CONFIDENCE = 0.72
-MIN_ALTERNATE_CONFIDENCE = 0.84
-MIN_ALTERNATE_PROBABILITY = 0.52
+MIN_MAIN_CONFIDENCE = 0.80
+MIN_ALTERNATE_CONFIDENCE = 0.88
+MIN_ALTERNATE_PROBABILITY = 0.55
 
 CORRECTIVE_PATTERNS = {
     "ABC_CORRECTION",
@@ -424,6 +424,9 @@ def _passes_quality_gate(
         # Trading in corrective C wave: strong entry opportunity
         elif htf_wave_number == "C":
             main_confidence_threshold = max(0.62, main_confidence_threshold - 0.04)
+
+    if pattern.upper() == "IMPULSE":
+        return False, "IMPULSE pattern disabled (win rate too low, waiting for correction entry)"
 
     if (
         timeframe.upper() == "4H"

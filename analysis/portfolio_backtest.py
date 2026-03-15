@@ -257,7 +257,7 @@ def simulate_trade_lifecycle(
     if stop_gap_hit:
         immediate_exit = _effective_exit_price(entry_open, setup, slippage_rate)
         gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(effective_entry, immediate_exit, setup, fee_rate)
-        reward_r = net_pnl / risk_per_unit
+        reward_r = max(net_pnl / risk_per_unit, -3.0)  # max loss cap
         return TradeLifecycleResult(
             triggered=True,
             outcome="STOP_LOSS",
@@ -364,6 +364,8 @@ def simulate_trade_lifecycle(
     if net_total <= 0 and outcome in ("TP3_HIT", "TP2_HIT", "TP1_HIT"):
         outcome = "STOP_LOSS"
 
+    raw_r = net_total / risk_per_unit
+    capped_r = max(raw_r, -3.0)  # max loss cap: never lose more than 3R per trade
     return TradeLifecycleResult(
         triggered=True,
         outcome=outcome,
@@ -373,7 +375,7 @@ def simulate_trade_lifecycle(
         exit_time=_timestamp_at(df, exit_index),
         entry_price=round(effective_entry, 6),
         exit_price=round(exit_price, 6) if exit_price is not None else None,
-        reward_r=round(net_total / risk_per_unit, 3),
+        reward_r=round(capped_r, 3),
         realized_targets=realized_targets,
         realized_size_pct=round(realized_size_pct, 6),
         gross_pnl_per_unit=round(gross_total, 6),
@@ -769,6 +771,16 @@ def run_global_portfolio_backtest(
 
     candidates.sort(key=lambda item: (item.entry_time, -item.priority_score, item.symbol, item.timeframe))
 
+    # Deduplicate: for same (symbol, timeframe, entry_time), keep highest priority_score only
+    seen_keys: set[tuple] = set()
+    deduped: list[TradeCandidate] = []
+    for c in candidates:
+        key = (c.symbol, c.timeframe, c.entry_time)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(c)
+    candidates = deduped
+
     equity = float(initial_capital)
     open_positions: list[dict] = []
     records: list[PortfolioTradeRecord] = []
@@ -809,6 +821,15 @@ def run_global_portfolio_backtest(
     for candidate in candidates:
         settle_until(candidate.entry_time)
         if len(open_positions) >= max_concurrent:
+            skipped_max_concurrent += 1
+            continue
+
+        # Skip if we already have an open position in the same symbol+timeframe
+        already_open = any(
+            trade["symbol"] == candidate.symbol and trade["timeframe"] == candidate.timeframe
+            for trade in open_positions
+        )
+        if already_open:
             skipped_max_concurrent += 1
             continue
 

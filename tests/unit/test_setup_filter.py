@@ -273,7 +273,7 @@ def test_apply_trade_filters_relaxes_threshold_for_positive_pattern_edge(tmp_pat
     )
 
     analysis = _analysis_with(
-        confidence=0.68,
+        confidence=0.74,
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
 
@@ -516,7 +516,7 @@ def test_passes_quality_gate_negative_non4h_raises_threshold(tmp_path, monkeypat
         {
             "version": 1,
             "patterns": {
-                "BTCUSDT|1D|IMPULSE|LONG": {
+                "BTCUSDT|1D|ABC_CORRECTION|LONG": {
                     "sample_count": 4,
                     "win_count": 1,
                     "loss_count": 3,
@@ -530,7 +530,7 @@ def test_passes_quality_gate_negative_non4h_raises_threshold(tmp_path, monkeypat
 
     analysis_base = _analysis_with(
         timeframe="1D",
-        confidence=0.75,   # > 0.72 baseline, but < 0.72+0.06=0.78 raised threshold
+        confidence=0.75,   # > 0.80 baseline? no — 0.75 < 0.80 so blocked by confidence alone
         probability=0.60,
         trend_state="UPTREND",
         indicator_validation=True,
@@ -538,7 +538,7 @@ def test_passes_quality_gate_negative_non4h_raises_threshold(tmp_path, monkeypat
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
     analysis_base = dict(analysis_base)
-    analysis_base["primary_pattern_type"] = "IMPULSE"
+    analysis_base["primary_pattern_type"] = "ABC_CORRECTION"
 
     passed, note = _passes_quality_gate(
         analysis=analysis_base,
@@ -546,7 +546,7 @@ def test_passes_quality_gate_negative_non4h_raises_threshold(tmp_path, monkeypat
         index=0,
         higher_timeframe_bias=None,
     )
-    # With raised threshold (0.72+0.06=0.78), confidence 0.75 should fail
+    # With raised threshold (0.80+0.06=0.86), confidence 0.75 should fail
     assert passed is False
     assert note == "main confidence too low"
 
@@ -554,10 +554,10 @@ def test_passes_quality_gate_negative_non4h_raises_threshold(tmp_path, monkeypat
 # ── HTF wave number thresholds (lines 162-166) ────────────────────────────────
 
 def _impulse_analysis(**kwargs):
-    """Helper returning a 1D IMPULSE analysis (bypasses 4H corrective filter)."""
+    """Helper returning a 1D ABC_CORRECTION analysis (bypasses 4H corrective filter)."""
     base = _analysis_with(timeframe="1D", **kwargs)
     base = dict(base)
-    base["primary_pattern_type"] = "IMPULSE"
+    base["primary_pattern_type"] = "ABC_CORRECTION"
     return base
 
 
@@ -598,7 +598,7 @@ def test_htf_waveC_lowers_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
     clear_experience_store_cache()
     analysis = _impulse_analysis(
-        confidence=0.69,   # < 0.72 default, but > 0.72-0.04=0.68 lowered threshold
+        confidence=0.77,   # < 0.80 default, but > 0.80-0.04=0.76 lowered threshold
         probability=0.60,
         trend_state="UPTREND",
         indicator_validation=True,
@@ -614,7 +614,7 @@ def test_htf_waveC_lowers_threshold(tmp_path, monkeypatch):
 def _alternate_analysis(*, confidence=0.90, probability=0.55,
                         trend_state="UPTREND", indicator_validation=True,
                         atr_ok=True, rsi_divergence="NONE"):
-    """1D IMPULSE analysis with an alternate scenario (bypasses 4H filter)."""
+    """1D ABC_CORRECTION analysis with an alternate scenario (bypasses 4H filter)."""
     base = _analysis_with(
         timeframe="1D",
         confidence=confidence,
@@ -626,7 +626,7 @@ def _alternate_analysis(*, confidence=0.90, probability=0.55,
         scenarios=[SimpleNamespace(name="Alternate Bullish", bias="BULLISH")],
     )
     base = dict(base)
-    base["primary_pattern_type"] = "IMPULSE"
+    base["primary_pattern_type"] = "ABC_CORRECTION"
     return base
 
 
@@ -719,7 +719,7 @@ def test_main_missing_atr_expansion(tmp_path, monkeypatch):
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
     analysis = dict(analysis)
-    analysis["primary_pattern_type"] = "IMPULSE"
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
 
     passed, note = _passes_quality_gate(
         analysis=analysis,
@@ -747,7 +747,7 @@ def test_main_not_aligned_with_trend(tmp_path, monkeypatch):
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
     analysis = dict(analysis)
-    analysis["primary_pattern_type"] = "IMPULSE"
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
 
     passed, note = _passes_quality_gate(
         analysis=analysis,
@@ -971,7 +971,7 @@ def test_alternate_passes_quality_gate(tmp_path, monkeypatch):
     clear_experience_store_cache()
 
     analysis = _analysis_with(
-        timeframe="4H",
+        timeframe="1D",
         confidence=0.90,
         probability=0.56,
         trend_state="UPTREND",
@@ -984,7 +984,7 @@ def test_alternate_passes_quality_gate(tmp_path, monkeypatch):
         ],
     )
     analysis = dict(analysis)
-    analysis["primary_pattern_type"] = "IMPULSE"
+    analysis["primary_pattern_type"] = "ABC_CORRECTION"
 
     passed, note = _passes_quality_gate(
         analysis=analysis,

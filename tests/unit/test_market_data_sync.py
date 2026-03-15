@@ -50,7 +50,7 @@ def test_sync_market_data_backfills_csv_and_db(tmp_path, monkeypatch):
 def test_sync_recent_market_data_merges_into_existing_csv_and_db(tmp_path, monkeypatch):
     repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
     path = tmp_path / "ETHUSDT_4h.csv"
-    _sample_df("2026-01-01", 2, "4H").to_csv(path, index=False)
+    _sample_df("2026-01-01", 2, "4h").to_csv(path, index=False)
 
     monkeypatch.setattr(
         "services.market_data_sync._dataset_path",
@@ -58,7 +58,7 @@ def test_sync_recent_market_data_merges_into_existing_csv_and_db(tmp_path, monke
     )
     monkeypatch.setattr(
         "services.market_data_sync._fetch_recent_history",
-        lambda symbol, timeframe, lookback_candles=3: _sample_df("2026-01-01 04:00:00+00:00", 2, "4H"),
+        lambda symbol, timeframe, lookback_candles=3: _sample_df("2026-01-01 04:00:00+00:00", 2, "4h"),
     )
 
     summary = sync_recent_market_data(

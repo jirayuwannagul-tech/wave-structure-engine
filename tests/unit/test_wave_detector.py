@@ -40,7 +40,7 @@ def test_detect_bearish_impulse_with_truncated_wave5_when_wave5_is_still_large()
     pivots = [
         Pivot(index=1, price=100, type="H", timestamp="2026-01-01"),
         Pivot(index=2, price=90, type="L", timestamp="2026-01-02"),
-        Pivot(index=3, price=98, type="H", timestamp="2026-01-03"),
+        Pivot(index=3, price=97, type="H", timestamp="2026-01-03"),  # w2 retrace=7/10=0.70
         Pivot(index=4, price=60, type="L", timestamp="2026-01-04"),
         Pivot(index=5, price=80, type="H", timestamp="2026-01-05"),
         Pivot(index=6, price=68, type="L", timestamp="2026-01-06"),

@@ -134,6 +134,8 @@ def _build_bullish_impulse(
     rule3 = p5.price > p2.price
 
     structure_ok = _is_bullish_impulse_structure(p1, p2, p3, p4, p5, p6)
+    w2_retrace = _safe_ratio(wave2, wave1)
+    w4_retrace = _safe_ratio(wave4, wave3)
     retracement_ok = (
         wave1 > 0
         and wave2 > 0
@@ -142,6 +144,9 @@ def _build_bullish_impulse(
         and wave5 > 0
         and wave2 < wave1
         and wave4 < wave3
+        and 0.236 <= w2_retrace <= 0.990
+        and 0.236 <= w4_retrace <= 0.618
+        and wave3 >= wave1 * 0.618
     )
 
     is_valid = structure_ok and retracement_ok and rule1 and rule2 and rule3
@@ -202,6 +207,8 @@ def _build_bearish_impulse(
         and p4.price < p2.price
         and wave5_completion_ok
     )
+    w2_retrace = _safe_ratio(wave2, wave1)
+    w4_retrace = _safe_ratio(wave4, wave3)
     retracement_ok = (
         wave1 > 0
         and wave2 > 0
@@ -210,6 +217,9 @@ def _build_bearish_impulse(
         and wave5 > 0
         and wave2 < wave1
         and wave4 < wave3
+        and 0.236 <= w2_retrace <= 0.990
+        and 0.236 <= w4_retrace <= 0.618
+        and wave3 >= wave1 * 0.618
     )
 
     is_valid = structure_ok and retracement_ok and rule1 and rule2 and rule3

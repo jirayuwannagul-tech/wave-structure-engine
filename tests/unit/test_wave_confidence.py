@@ -49,42 +49,42 @@ def test_structure_impulse():
 
 
 def test_structure_abc():
-    assert score_structure_quality("ABC_CORRECTION") == 0.82
+    assert score_structure_quality("ABC_CORRECTION") == 0.62
 
 
 def test_structure_expanded_flat():
-    assert score_structure_quality("EXPANDED_FLAT") == 0.78
+    assert score_structure_quality("EXPANDED_FLAT") == 0.58
 
 
 def test_structure_running_flat():
-    assert score_structure_quality("RUNNING_FLAT") == 0.76
+    assert score_structure_quality("RUNNING_FLAT") == 0.56
 
 
 def test_structure_flat():
-    assert score_structure_quality("FLAT") == 0.72
+    assert score_structure_quality("FLAT") == 0.54
 
 
 def test_structure_wxy():
-    assert score_structure_quality("WXY") == 0.74
+    assert score_structure_quality("WXY") == 0.55
 
 
 def test_structure_contracting_triangle():
-    assert score_structure_quality("CONTRACTING_TRIANGLE") == 0.70
-    assert score_structure_quality("TRIANGLE") == 0.70
+    assert score_structure_quality("CONTRACTING_TRIANGLE") == 0.52
+    assert score_structure_quality("TRIANGLE") == 0.52
 
 
 def test_structure_expanding_triangle():
-    assert score_structure_quality("EXPANDING_TRIANGLE") == 0.68
+    assert score_structure_quality("EXPANDING_TRIANGLE") == 0.50
 
 
 def test_structure_barrier_triangles():
-    assert score_structure_quality("ASCENDING_BARRIER_TRIANGLE") == 0.72
-    assert score_structure_quality("DESCENDING_BARRIER_TRIANGLE") == 0.72
+    assert score_structure_quality("ASCENDING_BARRIER_TRIANGLE") == 0.54
+    assert score_structure_quality("DESCENDING_BARRIER_TRIANGLE") == 0.54
 
 
 def test_structure_diagonals():
-    assert score_structure_quality("ENDING_DIAGONAL") == 0.75
-    assert score_structure_quality("LEADING_DIAGONAL") == 0.75
+    assert score_structure_quality("ENDING_DIAGONAL") == 0.72
+    assert score_structure_quality("LEADING_DIAGONAL") == 0.72
 
 
 def test_structure_unknown():
