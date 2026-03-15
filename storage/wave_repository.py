@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import traceback
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -143,12 +144,20 @@ class WaveRepository:
         self._last_affected_signal_ids: list[int] = []
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         path = Path(self.db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _initialize(self) -> None:
         with self._connect() as conn:

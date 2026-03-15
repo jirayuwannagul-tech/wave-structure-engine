@@ -10,7 +10,7 @@ def drop_unclosed_candle(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    now = pd.Timestamp.utcnow()
+    now = pd.Timestamp.now("UTC")
 
     last_close = pd.to_datetime(df.iloc[-1]["close_time"])
 
