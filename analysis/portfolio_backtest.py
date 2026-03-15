@@ -456,9 +456,13 @@ def run_portfolio_backtest(
     parent_timeframe_csv_path: str | None = None,
     parent_timeframe_min_window: int | None = None,
 ) -> dict:
+    from analysis.indicator_engine import calculate_atr as _calc_atr
+
     df = pd.read_csv(csv_path).copy()
     if "open_time" in df.columns:
         df["open_time"] = pd.to_datetime(df["open_time"], utc=True, errors="coerce")
+    if "atr" not in df.columns:
+        df["atr"] = _calc_atr(df, period=14)
 
     higher_timeframe_df = None
     if higher_timeframe_csv_path:
@@ -469,6 +473,8 @@ def run_portfolio_backtest(
                 utc=True,
                 errors="coerce",
             )
+        if "atr" not in higher_timeframe_df.columns:
+            higher_timeframe_df["atr"] = _calc_atr(higher_timeframe_df, period=14)
 
     parent_timeframe_df = None
     if parent_timeframe_csv_path:
@@ -479,6 +485,8 @@ def run_portfolio_backtest(
                 utc=True,
                 errors="coerce",
             )
+        if "atr" not in parent_timeframe_df.columns:
+            parent_timeframe_df["atr"] = _calc_atr(parent_timeframe_df, period=14)
 
     total_windows = 0
     analyzed_cases = 0
@@ -520,6 +528,58 @@ def run_portfolio_backtest(
             htf_wave_number=htf_wave_number,
             higher_timeframe_context=higher_timeframe_context,
         )
+
+        # ── Hierarchical wave count injection (1D only) ────────────────────
+        # When the pattern detector finds nothing OR filters all scenarios,
+        # try the hierarchical counter (Primary 1W + Intermediate 1D).
+        # This enables entries at every wave: 1,2,3,4,5,A,B,C — not just
+        # at pattern completion points detected by the single-TF detector.
+        if (
+            higher_timeframe_df is not None
+            and higher_timeframe_min_window is not None
+            and timeframe.upper() == "1D"
+        ):
+            cutoff_time = (
+                sample_df.iloc[-1]["open_time"]
+                if "open_time" in sample_df.columns
+                else None
+            )
+            if cutoff_time is not None and not (analysis.get("scenarios") or []):
+                weekly_sample = higher_timeframe_df[
+                    higher_timeframe_df["open_time"] <= cutoff_time
+                ].copy()
+                if len(weekly_sample) >= 20:
+                    from analysis.hierarchical_wave_counter import (
+                        build_hierarchical_count_from_dfs,
+                    )
+                    hier_count = build_hierarchical_count_from_dfs(
+                        symbol=symbol,
+                        primary_df=weekly_sample,
+                        intermediate_df=sample_df,
+                        current_price=float(sample_df.iloc[-1]["close"]),
+                    )
+                    htf_aligned = (
+                        higher_timeframe_bias is None
+                        or hier_count.trade_bias == higher_timeframe_bias
+                    )
+                    if (
+                        htf_aligned
+                        and hier_count.scenarios
+                        and hier_count.hierarchical_confidence >= 0.30
+                        and hier_count.is_consistent
+                    ):
+                        active_pos = hier_count.intermediate or hier_count.primary
+                        wave_label = (
+                            f"{active_pos.structure}_W{active_pos.wave_number}"
+                            if active_pos
+                            else "HIERARCHICAL"
+                        )
+                        analysis = dict(analysis)
+                        analysis["scenarios"] = hier_count.scenarios
+                        analysis["has_pattern"] = True
+                        analysis["primary_pattern_type"] = wave_label
+                        analysis["hierarchical_count"] = hier_count
+
         if not analysis.get("has_pattern"):
             continue
 
@@ -615,9 +675,13 @@ def build_trade_candidates(
     parent_timeframe_csv_path: str | None = None,
     parent_timeframe_min_window: int | None = None,
 ) -> dict:
+    from analysis.indicator_engine import calculate_atr as _calc_atr
+
     df = pd.read_csv(csv_path).copy()
     if "open_time" in df.columns:
         df["open_time"] = pd.to_datetime(df["open_time"], utc=True, errors="coerce")
+    if "atr" not in df.columns:
+        df["atr"] = _calc_atr(df, period=14)
 
     higher_timeframe_df = None
     if higher_timeframe_csv_path:
@@ -628,6 +692,8 @@ def build_trade_candidates(
                 utc=True,
                 errors="coerce",
             )
+        if "atr" not in higher_timeframe_df.columns:
+            higher_timeframe_df["atr"] = _calc_atr(higher_timeframe_df, period=14)
 
     parent_timeframe_df = None
     if parent_timeframe_csv_path:
@@ -638,11 +704,16 @@ def build_trade_candidates(
                 utc=True,
                 errors="coerce",
             )
+        if "atr" not in parent_timeframe_df.columns:
+            parent_timeframe_df["atr"] = _calc_atr(parent_timeframe_df, period=14)
 
     total_windows = 0
     analyzed_cases = 0
     setups_built = 0
     candidates: list[TradeCandidate] = []
+    # Deduplication: track the last wave fingerprint entered per (symbol, timeframe).
+    # Prevents re-entering the same wave instance on consecutive bars.
+    hier_wave_seen: dict[str, str] = {}
 
     for end_idx in range(min_window, len(df) - 1, step):
         total_windows += 1
@@ -676,6 +747,63 @@ def build_trade_candidates(
             htf_wave_number=htf_wave_number,
             higher_timeframe_context=higher_timeframe_context,
         )
+
+        # ── Hierarchical wave count injection (1D only) ────────────────────
+        if (
+            higher_timeframe_df is not None
+            and higher_timeframe_min_window is not None
+            and timeframe.upper() == "1D"
+        ):
+            cutoff_time = (
+                sample_df.iloc[-1]["open_time"]
+                if "open_time" in sample_df.columns
+                else None
+            )
+            if cutoff_time is not None and not (analysis.get("scenarios") or []):
+                weekly_sample = higher_timeframe_df[
+                    higher_timeframe_df["open_time"] <= cutoff_time
+                ].copy()
+                if len(weekly_sample) >= 20:
+                    from analysis.hierarchical_wave_counter import (
+                        build_hierarchical_count_from_dfs,
+                    )
+                    hier_count = build_hierarchical_count_from_dfs(
+                        symbol=symbol,
+                        primary_df=weekly_sample,
+                        intermediate_df=sample_df,
+                        current_price=float(sample_df.iloc[-1]["close"]),
+                    )
+                    htf_aligned = (
+                        higher_timeframe_bias is None
+                        or hier_count.trade_bias == higher_timeframe_bias
+                    )
+                    # Deduplicate: skip if this exact wave instance was already entered
+                    dedup_key = f"{symbol}:{timeframe.upper()}"
+                    already_entered = (
+                        hier_wave_seen.get(dedup_key) == hier_count.wave_fingerprint
+                        and bool(hier_count.wave_fingerprint)
+                    )
+                    if (
+                        htf_aligned
+                        and hier_count.scenarios
+                        and hier_count.hierarchical_confidence >= 0.30
+                        and hier_count.is_consistent
+                        and not already_entered
+                    ):
+                        active_pos = hier_count.intermediate or hier_count.primary
+                        wave_label = (
+                            f"{active_pos.structure}_W{active_pos.wave_number}"
+                            if active_pos
+                            else "HIERARCHICAL"
+                        )
+                        analysis = dict(analysis)
+                        analysis["scenarios"] = hier_count.scenarios
+                        analysis["has_pattern"] = True
+                        analysis["primary_pattern_type"] = wave_label
+                        analysis["hierarchical_count"] = hier_count
+                        analysis["_hier_fingerprint"] = hier_count.wave_fingerprint
+                        analysis["_hier_dedup_key"] = dedup_key
+
         if not analysis.get("has_pattern"):
             continue
 
@@ -690,6 +818,13 @@ def build_trade_candidates(
             continue
 
         setups_built += 1
+
+        # Record the wave fingerprint so we don't re-enter the same wave
+        hier_fp = analysis.get("_hier_fingerprint")
+        hier_dk = analysis.get("_hier_dedup_key")
+        if hier_fp and hier_dk:
+            hier_wave_seen[hier_dk] = hier_fp
+
         priority_score = _candidate_priority(
             symbol=symbol,
             timeframe=timeframe,
