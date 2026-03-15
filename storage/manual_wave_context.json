@@ -3,10 +3,42 @@
   "contexts": {
     "BTCUSDT|1W": {
       "bias": "BEARISH",
-      "wave_number": "5",
-      "structure": "IMPULSE",
-      "position": "WAVE_5_COMPLETE",
-      "note": "Seeded weekly master count: 2025 peak treated as completed weekly wave 5; lower timeframes should be evaluated in a bearish corrective context.",
+      "wave_number": "A",
+      "structure": "ABC_CORRECTION",
+      "position": "WAVE_A_IN_PROGRESS",
+      "note": "BTC completed 5-wave impulse cycle (W1:2018low→2019, W2:2019→2020low, W3:2020low→Nov2021 $69k, W4:Nov2021→Nov2022 $15k, W5:Nov2022→Jan2025 $109k). Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH aligned with corrective structure.",
+      "source": "manual"
+    },
+    "ETHUSDT|1W": {
+      "bias": "BEARISH",
+      "wave_number": "A",
+      "structure": "ABC_CORRECTION",
+      "position": "WAVE_A_IN_PROGRESS",
+      "note": "ETH completed 5-wave impulse cycle alongside BTC. W5 peak ~$4,100 in late 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "source": "manual"
+    },
+    "BNBUSDT|1W": {
+      "bias": "BEARISH",
+      "wave_number": "A",
+      "structure": "ABC_CORRECTION",
+      "position": "WAVE_A_IN_PROGRESS",
+      "note": "BNB completed 5-wave impulse cycle. W5 peak ~$720 in late 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "source": "manual"
+    },
+    "SOLUSDT|1W": {
+      "bias": "BEARISH",
+      "wave_number": "A",
+      "structure": "ABC_CORRECTION",
+      "position": "WAVE_A_IN_PROGRESS",
+      "note": "SOL completed 5-wave impulse cycle. W5 peak ~$295 in Jan 2025. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "source": "manual"
+    },
+    "DOGEUSDT|1W": {
+      "bias": "BEARISH",
+      "wave_number": "A",
+      "structure": "ABC_CORRECTION",
+      "position": "WAVE_A_IN_PROGRESS",
+      "note": "DOGE completed 5-wave impulse cycle. W5 peak ~$0.48 in Dec 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
       "source": "manual"
     }
   }

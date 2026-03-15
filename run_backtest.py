@@ -24,6 +24,7 @@ for symbol in SYMBOLS:
         continue
 
     # 1D analysis with 1W higher context
+    # 1W now has 448 rows (2017-2026), use min_window=100 for solid wave detection
     datasets.append({
         "symbol": symbol,
         "timeframe": "1d",
@@ -31,7 +32,7 @@ for symbol in SYMBOLS:
         "min_window": 100,
         "step": 3,
         "higher_timeframe_csv_path": str(csv_1w) if csv_1w.exists() else None,
-        "higher_timeframe_min_window": 30 if csv_1w.exists() else None,
+        "higher_timeframe_min_window": 100 if csv_1w.exists() else None,
     })
 
     # 4H analysis with 1D as higher, 1W as parent
@@ -45,7 +46,7 @@ for symbol in SYMBOLS:
             "higher_timeframe_csv_path": str(csv_1d) if csv_1d.exists() else None,
             "higher_timeframe_min_window": 100 if csv_1d.exists() else None,
             "parent_timeframe_csv_path": str(csv_1w) if csv_1w.exists() else None,
-            "parent_timeframe_min_window": 30 if csv_1w.exists() else None,
+            "parent_timeframe_min_window": 100 if csv_1w.exists() else None,
         })
 
 print(f"Running backtest on {len(datasets)} dataset(s)...")

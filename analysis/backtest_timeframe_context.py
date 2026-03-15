@@ -75,21 +75,39 @@ def _resolve_weekly_context(
     weekly_df: pd.DataFrame | None,
     weekly_min_window: int | None,
 ) -> dict | None:
+    # Run auto-analysis on the actual 1W data to detect current wave position
+    auto_context: dict | None = None
+    if weekly_df is not None and weekly_min_window is not None and cutoff_time is not None:
+        weekly_sample_df = weekly_df[weekly_df["open_time"] <= cutoff_time].copy()
+        if len(weekly_sample_df) >= weekly_min_window:
+            weekly_analysis = build_dataframe_analysis(
+                symbol=symbol,
+                timeframe="1W",
+                df=weekly_sample_df,
+                current_price=float(weekly_sample_df.iloc[-1]["close"]),
+            )
+            auto_context = build_higher_timeframe_context(weekly_analysis)
+
+    # Manual context = big-picture direction set by human analyst (authoritative)
     manual_context = get_manual_wave_context(symbol, "1W")
-    if manual_context is not None:
-        return serialize_manual_wave_context(manual_context)
+    if manual_context is None:
+        return auto_context
 
-    if weekly_df is None or weekly_min_window is None or cutoff_time is None:
-        return None
+    manual_dict = serialize_manual_wave_context(manual_context)
 
-    weekly_sample_df = weekly_df[weekly_df["open_time"] <= cutoff_time].copy()
-    if len(weekly_sample_df) < weekly_min_window:
-        return None
+    # Merge: manual context overrides big-picture bias/structure,
+    # auto-analysis fills in the current sub-wave position from real data
+    if auto_context:
+        merged = dict(auto_context)
+        merged["bias"] = manual_dict.get("bias") or auto_context.get("bias")
+        merged["structure"] = manual_dict.get("structure") or auto_context.get("structure")
+        merged["manual_bias"] = manual_dict.get("bias")
+        merged["manual_position"] = manual_dict.get("position")
+        merged["manual_wave_number"] = manual_dict.get("wave_number")
+        # Use auto-detected wave_number (current sub-wave) if available,
+        # fall back to manual wave_number
+        if not merged.get("wave_number"):
+            merged["wave_number"] = manual_dict.get("wave_number")
+        return merged
 
-    weekly_analysis = build_dataframe_analysis(
-        symbol=symbol,
-        timeframe="1W",
-        df=weekly_sample_df,
-        current_price=float(weekly_sample_df.iloc[-1]["close"]),
-    )
-    return build_higher_timeframe_context(weekly_analysis)
+    return manual_dict

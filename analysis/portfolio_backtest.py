@@ -513,9 +513,11 @@ def run_portfolio_backtest(
         if not allow_analysis:
             continue
 
+        htf_wave_number = str((higher_timeframe_context or {}).get("wave_number") or "").upper() or None
         analysis = apply_trade_filters(
             analysis,
             higher_timeframe_bias=higher_timeframe_bias,
+            htf_wave_number=htf_wave_number,
             higher_timeframe_context=higher_timeframe_context,
         )
         if not analysis.get("has_pattern"):
@@ -667,9 +669,11 @@ def build_trade_candidates(
         if not allow_analysis:
             continue
 
+        htf_wave_number = str((higher_timeframe_context or {}).get("wave_number") or "").upper() or None
         analysis = apply_trade_filters(
             analysis,
             higher_timeframe_bias=higher_timeframe_bias,
+            htf_wave_number=htf_wave_number,
             higher_timeframe_context=higher_timeframe_context,
         )
         if not analysis.get("has_pattern"):
