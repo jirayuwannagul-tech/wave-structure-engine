@@ -393,12 +393,10 @@ def _passes_quality_gate(
             alternate_probability_threshold -= 0.05
 
     if higher_timeframe_bias and bias and bias != higher_timeframe_bias:
-        # Only hard-block 4H against 1D trend, not 1D against weekly
-        if timeframe.upper() in ("4H", "1H", "15M"):
-            return False, "counter-trend against 1D context"
-        # For 1D, soft-block: allow if very high confidence
-        if confidence < 0.85:
-            return False, "1D counter-trend: confidence too low"
+        # Hard-block all lower timeframes against their respective higher timeframe trend.
+        # EW principle: corrections in a bull market are Wave 2/4 setups for LONG,
+        # not for shorting. Trading counter-trend to the weekly has very low win rate.
+        return False, "counter-trend against higher timeframe bias"
 
     structure_ok, structure_note = _passes_structure_gate(
         analysis=analysis,
@@ -481,7 +479,20 @@ def _passes_quality_gate(
 
     if confidence < main_confidence_threshold:
         return False, "main confidence too low"
-    if not atr_ok and divergence == "NONE" and macd_divergence == "NONE":
+
+    # Count how many confirmation signals are present
+    confirmation_count = sum([
+        atr_ok,
+        divergence != "NONE",
+        macd_divergence != "NONE",
+    ])
+
+    # 1D patterns require 2+ confirmation signals to reduce false breakouts.
+    # Daily timeframe setups have low win rate without strong momentum+divergence alignment.
+    if timeframe.upper() == "1D":
+        if confirmation_count < 2:
+            return False, "1D: requires 2+ confirmation signals (atr/rsi_div/macd_div)"
+    elif confirmation_count < 1:
         return False, "main missing atr expansion"
     # Phase 4: require trend alignment always — no exceptions for indicator/atr
     if not _trend_aligned(bias, trend_state):

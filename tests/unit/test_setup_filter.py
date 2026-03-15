@@ -66,7 +66,7 @@ def test_apply_trade_filters_blocks_countertrend_4h_setup():
     filtered = apply_trade_filters(analysis, higher_timeframe_bias="BEARISH")
 
     assert filtered["scenarios"] == []
-    assert "counter-trend against 1D context" in filtered["trade_filter"]["notes"]
+    assert "counter-trend against higher timeframe bias" in filtered["trade_filter"]["notes"]
 
 
 def test_build_higher_timeframe_context_extracts_structure_and_position():
@@ -141,7 +141,7 @@ def test_apply_trade_filters_blocks_countertrend_impulse_against_higher_timefram
     )
 
     assert filtered["scenarios"] == []
-    assert "counter-trend against 1D context" in filtered["trade_filter"]["notes"]
+    assert "counter-trend against higher timeframe bias" in filtered["trade_filter"]["notes"]
 
 
 def test_derive_wave_hierarchy_marks_same_bias_corrective_as_a_or_c():
@@ -434,7 +434,8 @@ def test_1d_countertrend_impulse_blocked_by_weekly_structure_even_when_confident
     )
 
     assert filtered["scenarios"] == []
-    assert any("higher timeframe structure" in n for n in filtered["trade_filter"]["notes"])
+    # Blocked by counter-trend rule (before structure gate is reached)
+    assert any("counter-trend" in n for n in filtered["trade_filter"]["notes"])
 
 
 # ── apply_trade_filters with None analysis ────────────────────────────────────
@@ -603,6 +604,7 @@ def test_htf_waveC_lowers_threshold(tmp_path, monkeypatch):
         trend_state="UPTREND",
         indicator_validation=True,
         atr_ok=True,
+        rsi_divergence="BULLISH",  # provides 2nd confirmation for 1D requirement
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
     filtered = apply_trade_filters(analysis, htf_wave_number="C")
@@ -728,21 +730,22 @@ def test_main_missing_atr_expansion(tmp_path, monkeypatch):
         higher_timeframe_bias=None,
     )
     assert passed is False
-    assert note == "main missing atr expansion"
+    # 1D ABC with 0 signals now hits the 2-signal gate before the old ATR check
+    assert note == "1D: requires 2+ confirmation signals (atr/rsi_div/macd_div)"
 
 
 def test_main_not_aligned_with_trend(tmp_path, monkeypatch):
     """BULLISH in DOWNTREND with no indicator_validation, no atr, but with divergence → blocked by trend."""
     monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
     clear_experience_store_cache()
-    # Use rsi_divergence so the atr check doesn't fire first
+    # Use rsi_divergence + atr_ok to satisfy the 2-signal 1D gate so trend check fires
     analysis = _analysis_with(
         timeframe="1D",
         confidence=0.80,
         probability=0.60,
         trend_state="DOWNTREND",
         indicator_validation=False,
-        atr_ok=False,
+        atr_ok=True,
         rsi_divergence="BULLISH_RSI_DIVERGENCE",
         scenarios=[SimpleNamespace(name="Main Bullish", bias="BULLISH")],
     )
@@ -927,16 +930,13 @@ def test_derive_wave_hierarchy_impulse_phase_same_bias_impulse_child(tmp_path, m
 # ── line 411: hierarchy not aligned ───────────────────────────────────────────
 
 def test_quality_gate_hierarchy_not_aligned(tmp_path, monkeypatch):
-    """hierarchy.aligned=False → blocked (line 411).
-    Uses 1D with counter-trend ABC correction: structure gate passes but hierarchy fails."""
+    """Counter-trend 1D trade against weekly → hard-blocked before hierarchy check."""
     monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(tmp_path / "empty.json"))
     clear_experience_store_cache()
 
     analysis = _analysis_with(
         timeframe="1D",
-        confidence=0.88,   # > 0.85 (passes counter-trend 1D soft-block)
-                           # >= 0.88 (passes structure gate IMPULSE threshold)
-                           # < 0.90  (fails COUNTERTREND_BOUNCE aligned check)
+        confidence=0.88,
         probability=0.60,
         trend_state="UPTREND",
         indicator_validation=True,
@@ -953,14 +953,15 @@ def test_quality_gate_hierarchy_not_aligned(tmp_path, monkeypatch):
         higher_timeframe_bias="BULLISH",
         higher_timeframe_context={
             "bias": "BULLISH",
-            "wave_number": "3",  # IMPULSE phase → structure gate threshold=0.88
+            "wave_number": "3",
             "position": "",
             "structure": "IMPULSE",
             "timeframe": "1D",
         },
     )
     assert passed is False
-    assert note == "child wave not aligned with higher timeframe hierarchy"
+    # Counter-trend hard block fires first (before hierarchy check)
+    assert note == "counter-trend against higher timeframe bias"
 
 
 # ── line 446: alternate scenario passes (return True, None) ───────────────────

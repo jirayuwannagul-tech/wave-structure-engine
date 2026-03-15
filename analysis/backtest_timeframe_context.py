@@ -22,6 +22,19 @@ def resolve_backtest_higher_timeframe_context(
     if "open_time" in sample_df.columns and len(sample_df):
         cutoff_time = sample_df.iloc[-1]["open_time"]
 
+    if timeframe_upper == "1D":
+        # For 1D analysis, the 1W data is the "higher_timeframe" (one level up).
+        # parent_timeframe is not used for 1D, so we pull weekly context from
+        # higher_timeframe_df directly.
+        weekly_context = _resolve_weekly_context(
+            symbol=symbol,
+            cutoff_time=cutoff_time,
+            weekly_df=higher_timeframe_df,
+            weekly_min_window=higher_timeframe_min_window,
+        )
+        weekly_bias = str((weekly_context or {}).get("bias") or "").upper() or None
+        return weekly_bias, weekly_context, True
+
     weekly_context = _resolve_weekly_context(
         symbol=symbol,
         cutoff_time=cutoff_time,
@@ -29,9 +42,6 @@ def resolve_backtest_higher_timeframe_context(
         weekly_min_window=parent_timeframe_min_window,
     )
     weekly_bias = str((weekly_context or {}).get("bias") or "").upper() or None
-
-    if timeframe_upper == "1D":
-        return weekly_bias, weekly_context, True
 
     if (
         timeframe_upper != "4H"
@@ -88,26 +98,14 @@ def _resolve_weekly_context(
             )
             auto_context = build_higher_timeframe_context(weekly_analysis)
 
-    # Manual context = big-picture direction set by human analyst (authoritative)
-    manual_context = get_manual_wave_context(symbol, "1W")
-    if manual_context is None:
+    # Backtest mode: historical weekly data is available → use ONLY auto-analysis.
+    # Manual context reflects the *current* analyst view (e.g. 2025 BEARISH) and must
+    # NOT override historical context during a backtest over past data (e.g. 2024 bull run).
+    if auto_context is not None:
         return auto_context
 
-    manual_dict = serialize_manual_wave_context(manual_context)
-
-    # Merge: manual context overrides big-picture bias/structure,
-    # auto-analysis fills in the current sub-wave position from real data
-    if auto_context:
-        merged = dict(auto_context)
-        merged["bias"] = manual_dict.get("bias") or auto_context.get("bias")
-        merged["structure"] = manual_dict.get("structure") or auto_context.get("structure")
-        merged["manual_bias"] = manual_dict.get("bias")
-        merged["manual_position"] = manual_dict.get("position")
-        merged["manual_wave_number"] = manual_dict.get("wave_number")
-        # Use auto-detected wave_number (current sub-wave) if available,
-        # fall back to manual wave_number
-        if not merged.get("wave_number"):
-            merged["wave_number"] = manual_dict.get("wave_number")
-        return merged
-
-    return manual_dict
+    # Live mode (no historical weekly data) → fall back to manual analyst context.
+    manual_context = get_manual_wave_context(symbol, "1W")
+    if manual_context is None:
+        return None
+    return serialize_manual_wave_context(manual_context)

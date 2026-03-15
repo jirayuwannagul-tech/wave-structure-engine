@@ -170,8 +170,8 @@ def test_resolve_backtest_1d_with_weekly_df_no_manual_context(monkeypatch):
         symbol="BTCUSDT",
         timeframe="1D",
         sample_df=sample_df,
-        parent_timeframe_df=weekly_df,
-        parent_timeframe_min_window=5,
+        higher_timeframe_df=weekly_df,
+        higher_timeframe_min_window=5,
     )
 
     assert bias == "BEARISH"
