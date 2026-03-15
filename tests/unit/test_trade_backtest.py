@@ -35,7 +35,7 @@ def test_build_trade_setup_from_bullish_scenario():
 def test_simulate_trade_hits_tp1_for_long():
     df = pd.DataFrame(
         [
-            {"open": 99.0, "high": 100.5, "low": 98.5, "close": 100.0},
+            {"open": 99.0, "high": 100.7, "low": 98.5, "close": 100.6},
             {"open": 100.0, "high": 111.0, "low": 99.5, "close": 110.0},
             {"open": 110.0, "high": 112.0, "low": 108.0, "close": 111.0},
         ]
@@ -63,7 +63,7 @@ def test_simulate_trade_hits_tp1_for_long():
 def test_simulate_trade_hits_stop_loss_for_short():
     df = pd.DataFrame(
         [
-            {"open": 100.0, "high": 101.0, "low": 94.0, "close": 95.0},
+            {"open": 100.0, "high": 101.0, "low": 94.0, "close": 94.5},
             {"open": 95.0, "high": 101.0, "low": 94.5, "close": 100.5},
             {"open": 100.5, "high": 102.0, "low": 99.0, "close": 101.0},
         ]
@@ -114,7 +114,7 @@ def test_simulate_trade_returns_no_trigger_when_confirmation_never_breaks():
 def test_simulate_trade_applies_fee_and_slippage_to_reward():
     df = pd.DataFrame(
         [
-            {"open": 99.0, "high": 100.5, "low": 98.5, "close": 100.0},
+            {"open": 99.0, "high": 100.7, "low": 98.5, "close": 100.6},
             {"open": 100.0, "high": 111.0, "low": 99.5, "close": 110.0},
             {"open": 110.0, "high": 112.0, "low": 108.0, "close": 111.0},
         ]
@@ -146,7 +146,7 @@ def test_simulate_trade_applies_fee_and_slippage_to_reward():
 def test_simulate_trade_enters_on_next_candle_open():
     df = pd.DataFrame(
         [
-            {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+            {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.6},
             {"open": 103.0, "high": 111.0, "low": 102.0, "close": 110.0},
             {"open": 110.0, "high": 112.0, "low": 108.0, "close": 111.0},
         ]
@@ -169,7 +169,7 @@ def test_simulate_trade_enters_on_next_candle_open():
 def test_simulate_trade_stops_out_if_entry_candle_gaps_beyond_stop():
     df = pd.DataFrame(
         [
-            {"open": 98.0, "high": 101.0, "low": 97.0, "close": 100.0},
+            {"open": 98.0, "high": 101.0, "low": 97.0, "close": 100.6},
             {"open": 94.0, "high": 96.0, "low": 93.0, "close": 95.0},
             {"open": 95.0, "high": 97.0, "low": 94.0, "close": 96.0},
         ]

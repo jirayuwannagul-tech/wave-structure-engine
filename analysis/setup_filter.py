@@ -425,8 +425,19 @@ def _passes_quality_gate(
         elif htf_wave_number == "C":
             main_confidence_threshold = max(0.62, main_confidence_threshold - 0.04)
 
-    if pattern.upper() == "IMPULSE":
-        return False, "IMPULSE pattern disabled (win rate too low, waiting for correction entry)"
+    # Patterns disabled due to low win rate in backtesting
+    # IMPULSE: 3.8% WR | EXPANDED_FLAT: 6.1% | RUNNING_FLAT: 6.6%
+    # ENDING_DIAGONAL: 4.8% | LEADING_DIAGONAL: 2.8%
+    # Keeping only: ABC_CORRECTION (11.9%) and WXY (21.6%)
+    LOW_WR_PATTERNS = {
+        "IMPULSE",
+        "EXPANDED_FLAT",
+        "RUNNING_FLAT",
+        "ENDING_DIAGONAL",
+        "LEADING_DIAGONAL",
+    }
+    if pattern.upper() in LOW_WR_PATTERNS:
+        return False, f"{pattern.upper()} disabled (win rate too low)"
 
     if (
         timeframe.upper() == "4H"
@@ -452,8 +463,12 @@ def _passes_quality_gate(
         return False, "main confidence too low"
     if not atr_ok and divergence == "NONE" and macd_divergence == "NONE":
         return False, "main missing atr expansion"
-    if not _trend_aligned(bias, trend_state) and not indicator_validation and not atr_ok:
+    # Phase 4: require trend alignment always — no exceptions for indicator/atr
+    if not _trend_aligned(bias, trend_state):
         return False, "main not aligned with trend"
+    # Phase 4: block sideways market — corrections don't resolve cleanly without trend
+    if trend_state in {"SIDEWAY", "SIDEWAYS", "RANGING"}:
+        return False, "sideways market blocked"
 
     return True, None
 

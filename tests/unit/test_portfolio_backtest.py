@@ -7,7 +7,7 @@ from analysis.trade_backtest import TradeSetup
 def test_simulate_trade_lifecycle_hits_all_targets_in_order():
     df = pd.DataFrame(
         [
-            {"open_time": "2026-01-01", "open": 99.0, "high": 100.5, "low": 98.5, "close": 100.0},
+            {"open_time": "2026-01-01", "open": 99.0, "high": 100.7, "low": 98.5, "close": 100.6},
             {"open_time": "2026-01-02", "open": 100.0, "high": 131.0, "low": 99.5, "close": 130.0},
             {"open_time": "2026-01-03", "open": 130.0, "high": 132.0, "low": 128.0, "close": 131.0},
         ]
@@ -34,7 +34,7 @@ def test_simulate_trade_lifecycle_hits_all_targets_in_order():
 def test_simulate_trade_lifecycle_partial_targets_then_stop():
     df = pd.DataFrame(
         [
-            {"open_time": "2026-01-01", "open": 99.0, "high": 100.5, "low": 98.5, "close": 100.0},
+            {"open_time": "2026-01-01", "open": 99.0, "high": 100.7, "low": 98.5, "close": 100.6},
             {"open_time": "2026-01-02", "open": 100.0, "high": 111.0, "low": 99.5, "close": 110.0},
             {"open_time": "2026-01-03", "open": 109.0, "high": 109.5, "low": 94.0, "close": 95.0},
         ]

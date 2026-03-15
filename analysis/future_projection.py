@@ -41,9 +41,10 @@ def project_next_wave(position: WavePosition, key_levels: KeyLevels) -> FuturePr
             key_levels.confirmation or 0.0,
             key_levels.confirmation or 0.0,
         )
-        t1 = extension.levels.get(1.0, key_levels.confirmation)
-        t2 = extension.levels.get(1.272, key_levels.confirmation)
-        t3 = extension.levels.get(1.618, key_levels.confirmation)
+        # Phase 3: TP1 at 0.618x (easier hit, boosts WR), TP2 at 1.0x, TP3 at 1.272x
+        t1 = extension.levels.get(0.618, key_levels.confirmation)
+        t2 = extension.levels.get(1.0, key_levels.confirmation)
+        t3 = extension.levels.get(1.272, key_levels.confirmation)
 
         return FutureProjection(
             expected_structure="NEW_BULLISH_IMPULSE",
@@ -63,9 +64,10 @@ def project_next_wave(position: WavePosition, key_levels: KeyLevels) -> FuturePr
             key_levels.confirmation or 0.0,
             key_levels.confirmation or 0.0,
         )
-        t1 = extension.levels.get(1.0, key_levels.support)
-        t2 = extension.levels.get(1.272, key_levels.support)
-        t3 = extension.levels.get(1.618, key_levels.support)
+        # Phase 3: TP1 at 0.618x (easier hit, boosts WR), TP2 at 1.0x, TP3 at 1.272x
+        t1 = extension.levels.get(0.618, key_levels.support)
+        t2 = extension.levels.get(1.0, key_levels.support)
+        t3 = extension.levels.get(1.272, key_levels.support)
 
         return FutureProjection(
             expected_structure="NEW_BEARISH_IMPULSE",

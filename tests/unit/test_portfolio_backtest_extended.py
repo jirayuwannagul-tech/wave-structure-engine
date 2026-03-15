@@ -176,7 +176,7 @@ def test_simulate_trade_lifecycle_no_trigger():
 def test_simulate_trade_lifecycle_risk_per_unit_zero():
     """Entry == stop_loss → INVALID (risk = 0)."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.0, 100.0),  # triggers entry at 100
+        ("2026-01-01", 100.0, 100.7, 99.0, 100.6),  # triggers entry at 100
         ("2026-01-02", 100.0, 102.0, 99.5, 101.0),
     )
     # entry == stop == 100.0, so effective risk = 0
@@ -189,7 +189,7 @@ def test_simulate_trade_lifecycle_risk_per_unit_zero():
 def test_simulate_trade_lifecycle_stop_gap_hit():
     """When next candle opens below stop for LONG → immediate STOP_LOSS."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # triggers LONG at 100
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers LONG at 100
         ("2026-01-02", 89.0, 90.0, 88.0, 89.0),    # opens below stop (90)
     )
     setup = _long_setup(entry=100.0, stop=90.0, tp1=115.0)
@@ -201,7 +201,7 @@ def test_simulate_trade_lifecycle_stop_gap_hit():
 def test_simulate_trade_lifecycle_open_trade():
     """When trade is triggered but neither stop nor target is ever hit → OPEN."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # triggers LONG
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers LONG
         ("2026-01-02", 100.0, 105.0, 98.0, 103.0),  # within range: high < 115, low > 90
         ("2026-01-03", 103.0, 108.0, 99.0, 106.0),  # still within range
     )
@@ -215,7 +215,7 @@ def test_simulate_trade_lifecycle_open_trade():
 def test_simulate_trade_lifecycle_stop_and_target_same_candle():
     """When both stop and target are hit in same candle (gap), prioritizes stop."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # triggers
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers
         ("2026-01-02", 100.0, 116.0, 89.0, 95.0),   # high >= 115 AND low <= 90
     )
     setup = _long_setup(entry=100.0, stop=90.0, tp1=115.0, tp2=125.0, tp3=135.0)
@@ -228,7 +228,7 @@ def test_simulate_trade_lifecycle_stop_and_target_same_candle():
 def test_simulate_trade_lifecycle_partial_stopped_via_stop_only():
     """Stop hit without prior partial target → plain STOP_LOSS (else branch)."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # triggers
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers
         ("2026-01-02", 100.0, 112.0, 100.0, 105.0),  # high=112 < 115 → no TP1
         ("2026-01-03", 105.0, 106.0, 89.0, 92.0),    # low = 89 <= 90 → STOP
     )
@@ -242,7 +242,7 @@ def test_simulate_trade_lifecycle_partial_stopped_via_stop_only():
 def test_simulate_trade_lifecycle_tp1_hit_outcome():
     """When only TP1 is hit and trade completes → realized_targets=['TP1'], remaining=0.6."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # triggers
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers
         ("2026-01-02", 100.0, 116.0, 100.5, 115.0),  # TP1 hit (high 116 >= 115)
     )
     # Only TP1 defined → trade closes when TP1 is hit (remaining goes to 0)
@@ -255,7 +255,7 @@ def test_simulate_trade_lifecycle_tp1_hit_outcome():
 def test_simulate_trade_lifecycle_partial_stopped_after_tp1():
     """TP1 hit, then stop hit → PARTIAL_STOPPED."""
     df = _make_df(
-        ("2026-01-01", 100.0, 100.5, 99.5, 100.0),   # triggers
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),   # triggers
         ("2026-01-02", 100.0, 116.0, 100.5, 115.0),   # TP1 hit (high 116 >= 115)
         ("2026-01-03", 114.0, 115.0, 88.0, 90.0),     # stop hit (low 88 <= 90)
     )

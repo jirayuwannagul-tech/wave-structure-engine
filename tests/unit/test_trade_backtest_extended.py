@@ -167,7 +167,7 @@ def test_simulate_no_trigger():
 def test_simulate_risk_zero_returns_invalid():
     """Entry price == stop_loss → risk=0 → INVALID."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 100.0, 102.0, 99.5, 101.0),
     )
     setup = TradeSetup(side="LONG", entry_price=100.0, stop_loss=100.0, take_profit_1=115.0)
@@ -178,7 +178,7 @@ def test_simulate_risk_zero_returns_invalid():
 def test_simulate_stop_gap_at_open():
     """Entry candle's open is below stop for LONG → immediate STOP_LOSS."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 89.0, 90.0, 88.0, 89.0),      # open below stop
     )
     setup = _long(entry=100.0, stop=90.0)
@@ -190,7 +190,7 @@ def test_simulate_stop_gap_at_open():
 def test_simulate_target_gap_at_open():
     """Entry candle's open is above TP1 for LONG → immediate TP1 hit (gap = 0 reward_r)."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 116.0, 120.0, 115.0, 118.0),  # open above TP1=115
     )
     setup = _long(entry=100.0, stop=90.0, tp1=115.0)
@@ -203,7 +203,7 @@ def test_simulate_target_gap_at_open():
 def test_simulate_stop_and_target_same_candle():
     """Both stop and target hit in same candle → STOP_LOSS (conservative)."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 100.0, 116.0, 88.0, 102.0),  # high>=115 AND low<=90
     )
     setup = _long(entry=100.0, stop=90.0, tp1=115.0)
@@ -215,7 +215,7 @@ def test_simulate_stop_and_target_same_candle():
 def test_simulate_open_trade():
     """No stop or target hit → OPEN."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 100.0, 105.0, 98.0, 103.0),  # safe range
         _candle("2026-01-03", 103.0, 108.0, 99.0, 106.0),  # still safe
     )
@@ -241,7 +241,7 @@ def test_simulate_trigger_at_last_candle_no_entry():
 def test_simulate_short_stop_loss():
     """SHORT trade hits stop → STOP_LOSS."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger (low <= 100)
+        _candle("2026-01-01", 100.0, 100.0, 99.3, 99.4),  # trigger (close <= 100*0.994)
         _candle("2026-01-02", 100.0, 112.0, 99.5, 111.0),  # high >= 110 → stop
     )
     setup = _short(entry=100.0, stop=110.0, tp1=85.0)
@@ -253,7 +253,7 @@ def test_simulate_short_stop_loss():
 def test_simulate_short_tp_hit():
     """SHORT trade hits TP1."""
     df = _df(
-        _candle("2026-01-01", 100.0, 100.5, 99.5, 100.0),  # trigger
+        _candle("2026-01-01", 100.0, 100.0, 99.3, 99.4),  # trigger (close <= 100*0.994)
         _candle("2026-01-02", 100.0, 102.0, 84.0, 85.0),   # low <= 85 → TP1
     )
     setup = _short(entry=100.0, stop=110.0, tp1=85.0)
