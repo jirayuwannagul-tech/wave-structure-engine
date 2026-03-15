@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from analysis.fibonacci_confluence import build_fib_levels_from_swing, find_confluence_zones
 from analysis.future_projection import project_next_wave
 from analysis.inprogress_detector import detect_inprogress_wave
 from analysis.key_levels import extract_pattern_key_levels
@@ -116,13 +117,32 @@ def build_dataframe_analysis(
             position.position = current_leg_position or getattr(position, "position", None)
             position.structure = current_leg_structure or getattr(position, "structure", None)
 
+    # Build Fibonacci confluence zones from recent significant swings
+    confluence_zones = []
+    if len(pivots) >= 4:
+        fib_levels_list = []
+        for i in range(max(0, len(pivots) - 4), len(pivots) - 1):
+            p_start = pivots[i]
+            p_end = pivots[i + 1]
+            levels = build_fib_levels_from_swing(
+                f"swing_{i}",
+                float(p_start.price),
+                float(p_end.price),
+            )
+            if levels:
+                fib_levels_list.append(levels)
+        if fib_levels_list:
+            # Flatten list-of-lists into a single list of level dicts
+            all_levels = [lvl for swing_levels in fib_levels_list for lvl in swing_levels]
+            confluence_zones = find_confluence_zones(all_levels)
+
     scenarios = []
     projection = None
 
     if key_levels is not None:
         atr_val = float(df.iloc[-1]["atr"]) if "atr" in df.columns and len(df) > 0 else 0.0
         projection = project_next_wave(position, key_levels, recent_pivots=pivots, atr=atr_val)
-        scenarios = generate_scenarios(position, key_levels, projection)
+        scenarios = generate_scenarios(position, key_levels, projection, confluence_zones=confluence_zones)
 
     if current_price is None:
         current_price = float(df.iloc[-1]["close"])
@@ -190,6 +210,7 @@ def build_dataframe_analysis(
         "indicator_context": indicator_context,
         "report": report,
         "higher_timeframe_context": higher_timeframe_context,
+        "confluence_zones": confluence_zones,
     }
 
     return apply_trade_filters(

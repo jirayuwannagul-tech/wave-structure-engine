@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List
 
+from analysis.fibonacci_confluence import score_entry_vs_confluence
 from analysis.future_projection import FutureProjection
 from analysis.key_levels import KeyLevels
 from analysis.wave_position import WavePosition
@@ -66,6 +67,35 @@ def _build_alternate_targets(
     return [round(target, 4) for target in raw_targets]
 
 
+def _refine_entry_with_confluence(
+    confirmation: float,
+    bias: str,
+    confluence_zones: list,
+    tolerance: float = 0.015,
+) -> float:
+    """Find the best confluence zone near the confirmation level for entry.
+
+    Looks for a confluence zone within *tolerance* of the raw confirmation price.
+    If a qualifying zone is found (strength >= 0.3), its center price is used as
+    the refined entry instead of the original fixed level.
+    """
+    if not confluence_zones or not confirmation:
+        return confirmation
+
+    best_zone = None
+    best_score = 0.0
+    for zone in confluence_zones:
+        zone_price = zone.center
+        dist = abs(zone_price - confirmation) / confirmation
+        if dist <= tolerance and zone.strength > best_score:
+            best_zone = zone
+            best_score = zone.strength
+
+    if best_zone and best_score >= 0.3:
+        return best_zone.center
+    return confirmation
+
+
 CORRECTIVE_STRUCTURES = {
     "ABC_CORRECTION",
     "FLAT",
@@ -83,37 +113,45 @@ def generate_scenarios(
     position: WavePosition,
     key_levels: KeyLevels,
     projection: FutureProjection,
+    confluence_zones: list | None = None,
 ) -> List[Scenario]:
     scenarios: List[Scenario] = []
     targets = _build_targets(projection)
+    _czones = confluence_zones or []
 
     if position.structure in CORRECTIVE_STRUCTURES and position.bias == "BULLISH":
+        main_confirmation = _refine_entry_with_confluence(
+            projection.confirmation, "BULLISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Main Bullish",
-                condition=f"price breaks above {projection.confirmation}",
+                condition=f"price breaks above {main_confirmation}",
                 interpretation="correction likely finished",
                 target=f"move toward {projection.target_1} then {projection.target_2}",
                 bias="BULLISH",
                 invalidation=projection.invalidation,
-                confirmation=projection.confirmation,
+                confirmation=main_confirmation,
                 stop_loss=projection.stop_loss,
                 targets=targets,
             )
         )
+        alt_confirmation = _refine_entry_with_confluence(
+            key_levels.c_level, "BEARISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Alternate Bearish",
-                condition=f"price stays below {key_levels.c_level}",
+                condition=f"price stays below {alt_confirmation}",
                 interpretation="bullish count weakens, correction may continue",
                 target="look for lower low structure",
                 bias="BEARISH",
                 invalidation=projection.confirmation,
-                confirmation=key_levels.c_level,
+                confirmation=alt_confirmation,
                 stop_loss=projection.confirmation,
                 targets=_build_alternate_targets(
                     "BEARISH",
-                    key_levels.c_level,
+                    alt_confirmation,
                     projection.confirmation,
                 ),
             )
@@ -121,32 +159,38 @@ def generate_scenarios(
         return scenarios
 
     if position.structure in CORRECTIVE_STRUCTURES and position.bias == "BEARISH":
+        main_confirmation = _refine_entry_with_confluence(
+            projection.confirmation, "BEARISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Main Bearish",
-                condition=f"price breaks below {projection.confirmation}",
+                condition=f"price breaks below {main_confirmation}",
                 interpretation="correction likely finished",
                 target=f"move toward {projection.target_1} then {projection.target_2}",
                 bias="BEARISH",
                 invalidation=projection.invalidation,
-                confirmation=projection.confirmation,
+                confirmation=main_confirmation,
                 stop_loss=projection.stop_loss,
                 targets=targets,
             )
         )
+        alt_confirmation = _refine_entry_with_confluence(
+            key_levels.c_level, "BULLISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Alternate Bullish",
-                condition=f"price breaks above {key_levels.c_level}",
+                condition=f"price breaks above {alt_confirmation}",
                 interpretation="bearish count weakens, upside continuation possible",
                 target="look for higher high structure",
                 bias="BULLISH",
                 invalidation=projection.confirmation,
-                confirmation=key_levels.c_level,
+                confirmation=alt_confirmation,
                 stop_loss=projection.confirmation,
                 targets=_build_alternate_targets(
                     "BULLISH",
-                    key_levels.c_level,
+                    alt_confirmation,
                     projection.confirmation,
                 ),
             )
@@ -154,6 +198,9 @@ def generate_scenarios(
         return scenarios
 
     if position.structure in TREND_STRUCTURES and position.bias == "BULLISH":
+        trend_confirmation = _refine_entry_with_confluence(
+            projection.confirmation, "BEARISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Main Corrective Pullback",
@@ -162,7 +209,7 @@ def generate_scenarios(
                 target=f"pullback toward {projection.target_1} then {projection.target_2}",
                 bias="BEARISH",
                 invalidation=projection.invalidation,
-                confirmation=projection.confirmation,
+                confirmation=trend_confirmation,
                 stop_loss=projection.stop_loss,
                 targets=targets,
             )
@@ -170,6 +217,9 @@ def generate_scenarios(
         return scenarios
 
     if position.structure in TREND_STRUCTURES and position.bias == "BEARISH":
+        trend_confirmation = _refine_entry_with_confluence(
+            projection.confirmation, "BULLISH", _czones
+        )
         scenarios.append(
             Scenario(
                 name="Main Corrective Rebound",
@@ -178,7 +228,7 @@ def generate_scenarios(
                 target=f"rebound toward {projection.target_1} then {projection.target_2}",
                 bias="BULLISH",
                 invalidation=projection.invalidation,
-                confirmation=projection.confirmation,
+                confirmation=trend_confirmation,
                 stop_loss=projection.stop_loss,
                 targets=targets,
             )
@@ -193,15 +243,22 @@ def generate_scenarios(
         bullish_target = round((key_levels.resistance or 0.0) + (range_size * 0.618), 2)
         bearish_target = round((key_levels.support or 0.0) - (range_size * 0.618), 2)
 
+        bull_confirmation = _refine_entry_with_confluence(
+            key_levels.resistance, "BULLISH", _czones
+        )
+        bear_confirmation = _refine_entry_with_confluence(
+            key_levels.support, "BEARISH", _czones
+        )
+
         scenarios.append(
             Scenario(
                 name="Bullish Breakout",
-                condition=f"price breaks above {key_levels.resistance}",
+                condition=f"price breaks above {bull_confirmation}",
                 interpretation="triangle resolves upward",
                 target=f"move toward {bullish_target}",
                 bias="BULLISH",
                 invalidation=key_levels.support,
-                confirmation=key_levels.resistance,
+                confirmation=bull_confirmation,
                 stop_loss=key_levels.support,
                 targets=[bullish_target],
             )
@@ -209,12 +266,12 @@ def generate_scenarios(
         scenarios.append(
             Scenario(
                 name="Bearish Breakdown",
-                condition=f"price breaks below {key_levels.support}",
+                condition=f"price breaks below {bear_confirmation}",
                 interpretation="triangle resolves downward",
                 target=f"move toward {bearish_target}",
                 bias="BEARISH",
                 invalidation=key_levels.resistance,
-                confirmation=key_levels.support,
+                confirmation=bear_confirmation,
                 stop_loss=key_levels.resistance,
                 targets=[bearish_target],
             )

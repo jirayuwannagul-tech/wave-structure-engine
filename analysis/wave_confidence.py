@@ -217,6 +217,8 @@ def compute_wave_confidence(
     momentum_score: float,
     pattern=None,          # optional: pass impulse pattern for alternation scoring
     pattern_type: str = "",
+    entry_price: float | None = None,
+    fib_targets: dict[str, float] | None = None,
 ) -> float:
     confidence = (
         rule_score * 0.35
@@ -228,5 +230,8 @@ def compute_wave_confidence(
     # Apply alternation guideline adjustment for impulse patterns
     if pattern_type.upper() == "IMPULSE" and pattern is not None:
         confidence += score_alternation(pattern)
+
+    # Apply Fibonacci confluence bonus when entry aligns with clustered Fib levels
+    confidence += score_fib_confluence(entry_price, fib_targets)
 
     return round(clamp_score(confidence), 3)

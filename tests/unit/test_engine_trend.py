@@ -101,7 +101,7 @@ def test_build_dataframe_analysis_includes_trend_classification(monkeypatch):
     monkeypatch.setattr("core.engine.project_next_wave", lambda position, key_levels, **kwargs: ProjectionStub())
     monkeypatch.setattr(
         "core.engine.generate_scenarios",
-        lambda position, key_levels, projection: [
+        lambda position, key_levels, projection, **kwargs: [
             Scenario(
                 name="Main Bullish",
                 condition="test",

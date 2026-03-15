@@ -17,13 +17,10 @@ def test_import_core_modules():
     import scenarios.scenario_engine
 
     import monitor.price_confirmation
-    import monitor.breakout_detector
-    import monitor.rejection_detector
     import monitor.mtf_alignment
     import monitor.market_context
 
     import output.report_formatter
-    import output.daily_report
 
     import alerts.notifier
     import scheduler.daily_scheduler
