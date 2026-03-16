@@ -109,6 +109,76 @@ TREND_STRUCTURES = {
     "LEADING_DIAGONAL",
 }
 
+
+def _ensure_sl_direction(bias: str, entry: float, sl: float, key_levels: "KeyLevels") -> float:
+    """Return a geometrically valid SL for the given bias.
+
+    If the provided SL is already on the correct side it is returned unchanged.
+    Otherwise a replacement is derived from key_levels (resistance / support)
+    or a fixed percentage buffer.
+    """
+    if bias == "BULLISH" and sl < entry:
+        return sl  # already correct — below entry for LONG
+    if bias == "BEARISH" and sl > entry:
+        return sl  # already correct — above entry for SHORT
+
+    if bias == "BULLISH":
+        # Need SL *below* entry
+        alt = getattr(key_levels, "support", None)
+        if alt is not None:
+            try:
+                alt_f = float(alt)
+                if alt_f < entry:
+                    return round(alt_f * 0.995, 6)
+            except (TypeError, ValueError):
+                pass
+        return round(entry * 0.97, 6)
+
+    # BEARISH — need SL *above* entry
+    alt = getattr(key_levels, "resistance", None)
+    if alt is not None:
+        try:
+            alt_f = float(alt)
+            if alt_f > entry:
+                return round(alt_f * 1.005, 6)
+        except (TypeError, ValueError):
+            pass
+    return round(entry * 1.03, 6)
+
+
+def _filter_targets(bias: str, entry: float, targets: list[float]) -> list[float]:
+    """Keep only targets that are on the correct side of entry."""
+    if bias == "BULLISH":
+        return [t for t in targets if t > entry]
+    if bias == "BEARISH":
+        return [t for t in targets if t < entry]
+    return targets
+
+
+def _sanitize_scenarios(scenarios: list, key_levels: "KeyLevels") -> list:
+    """Final safety pass: fix SL direction and filter wrong-side targets.
+
+    Ensures every returned scenario is geometrically valid:
+    - BULLISH: SL < entry, targets > entry
+    - BEARISH: SL > entry, targets < entry
+    Scenarios where no valid targets remain are dropped.
+    """
+    valid = []
+    for sc in scenarios:
+        if sc.confirmation is None or sc.stop_loss is None:
+            continue
+        try:
+            entry = float(sc.confirmation)
+        except (TypeError, ValueError):
+            continue
+        bias = str(sc.bias).upper()
+        sc.stop_loss = _ensure_sl_direction(bias, entry, float(sc.stop_loss or 0), key_levels)
+        sc.targets = _filter_targets(bias, entry, sc.targets or [])
+        if sc.targets:
+            valid.append(sc)
+    return valid
+
+
 def generate_scenarios(
     position: WavePosition,
     key_levels: KeyLevels,
@@ -156,7 +226,7 @@ def generate_scenarios(
                 ),
             )
         )
-        return scenarios
+        return _sanitize_scenarios(scenarios, key_levels)
 
     if position.structure in CORRECTIVE_STRUCTURES and position.bias == "BEARISH":
         main_confirmation = _refine_entry_with_confluence(
@@ -195,45 +265,53 @@ def generate_scenarios(
                 ),
             )
         )
-        return scenarios
+        return _sanitize_scenarios(scenarios, key_levels)
 
     if position.structure in TREND_STRUCTURES and position.bias == "BULLISH":
         trend_confirmation = _refine_entry_with_confluence(
             projection.confirmation, "BEARISH", _czones
         )
-        scenarios.append(
-            Scenario(
-                name="Main Corrective Pullback",
-                condition=f"price fails below/around {key_levels.confirmation}",
-                interpretation="completed bullish impulse may enter correction",
-                target=f"pullback toward {projection.target_1} then {projection.target_2}",
-                bias="BEARISH",
-                invalidation=projection.invalidation,
-                confirmation=trend_confirmation,
-                stop_loss=projection.stop_loss,
-                targets=targets,
+        entry_val = float(trend_confirmation) if trend_confirmation else 0.0
+        pullback_sl = _ensure_sl_direction("BEARISH", entry_val, projection.stop_loss or 0.0, key_levels)
+        pullback_targets = _filter_targets("BEARISH", entry_val, targets)
+        if pullback_targets:
+            scenarios.append(
+                Scenario(
+                    name="Main Corrective Pullback",
+                    condition=f"price fails below/around {key_levels.confirmation}",
+                    interpretation="completed bullish impulse may enter correction",
+                    target=f"pullback toward {pullback_targets[0]}",
+                    bias="BEARISH",
+                    invalidation=projection.invalidation,
+                    confirmation=trend_confirmation,
+                    stop_loss=pullback_sl,
+                    targets=pullback_targets,
+                )
             )
-        )
-        return scenarios
+        return _sanitize_scenarios(scenarios, key_levels)
 
     if position.structure in TREND_STRUCTURES and position.bias == "BEARISH":
         trend_confirmation = _refine_entry_with_confluence(
             projection.confirmation, "BULLISH", _czones
         )
-        scenarios.append(
-            Scenario(
-                name="Main Corrective Rebound",
-                condition=f"price rebounds from/above {key_levels.support}",
-                interpretation="completed bearish impulse may enter correction",
-                target=f"rebound toward {projection.target_1} then {projection.target_2}",
-                bias="BULLISH",
-                invalidation=projection.invalidation,
-                confirmation=trend_confirmation,
-                stop_loss=projection.stop_loss,
-                targets=targets,
+        entry_val = float(trend_confirmation) if trend_confirmation else 0.0
+        rebound_sl = _ensure_sl_direction("BULLISH", entry_val, projection.stop_loss or 0.0, key_levels)
+        rebound_targets = _filter_targets("BULLISH", entry_val, targets)
+        if rebound_targets:
+            scenarios.append(
+                Scenario(
+                    name="Main Corrective Rebound",
+                    condition=f"price rebounds from/above {key_levels.support}",
+                    interpretation="completed bearish impulse may enter correction",
+                    target=f"rebound toward {rebound_targets[0]}",
+                    bias="BULLISH",
+                    invalidation=projection.invalidation,
+                    confirmation=trend_confirmation,
+                    stop_loss=rebound_sl,
+                    targets=rebound_targets,
+                )
             )
-        )
-        return scenarios
+        return _sanitize_scenarios(scenarios, key_levels)
 
     if position.structure == "TRIANGLE":
         range_size = 0.0
@@ -276,7 +354,7 @@ def generate_scenarios(
                 targets=[bearish_target],
             )
         )
-        return scenarios
+        return _sanitize_scenarios(scenarios, key_levels)
 
     scenarios.append(
         Scenario(
@@ -291,7 +369,7 @@ def generate_scenarios(
             targets=[],
         )
     )
-    return scenarios
+    return _sanitize_scenarios(scenarios, key_levels)
 
 
 def generate_inprogress_scenarios(inprogress, current_price: float) -> list:
