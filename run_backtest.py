@@ -18,13 +18,15 @@ for symbol in SYMBOLS:
     csv_1d = DATA_DIR / f"{symbol}_1d.csv"
     csv_1w = DATA_DIR / f"{symbol}_1w.csv"
     csv_4h = DATA_DIR / f"{symbol}_4h.csv"
+    csv_1h = DATA_DIR / f"{symbol}_1h.csv"
 
     if not csv_1d.exists():
         print(f"[SKIP] {symbol}: 1D data not found")
         continue
 
     # 1D analysis with 1W higher context
-    # 1W now has 448 rows (2017-2026), use min_window=100 for solid wave detection
+    # minor_timeframe = 4H (for Minor degree sub-wave context)
+    # sub_minor = 1H (for assessing where 4H is within its waves)
     datasets.append({
         "symbol": symbol,
         "timeframe": "1d",
@@ -33,9 +35,13 @@ for symbol in SYMBOLS:
         "step": 3,
         "higher_timeframe_csv_path": str(csv_1w) if csv_1w.exists() else None,
         "higher_timeframe_min_window": 100 if csv_1w.exists() else None,
+        "minor_timeframe_csv_path": str(csv_4h) if csv_4h.exists() else None,
+        "minor_timeframe_min_window": 50 if csv_4h.exists() else None,
+        "sub_minor_csv_path": str(csv_1h) if csv_1h.exists() else None,
+        "sub_minor_min_window": 50 if csv_1h.exists() else None,
     })
 
-    # 4H analysis with 1D as higher, 1W as parent
+    # 4H analysis with 1D as higher, 1W as parent, 1H as sub_minor context
     if csv_4h.exists():
         datasets.append({
             "symbol": symbol,
@@ -47,6 +53,8 @@ for symbol in SYMBOLS:
             "higher_timeframe_min_window": 100 if csv_1d.exists() else None,
             "parent_timeframe_csv_path": str(csv_1w) if csv_1w.exists() else None,
             "parent_timeframe_min_window": 100 if csv_1w.exists() else None,
+            "sub_minor_csv_path": str(csv_1h) if csv_1h.exists() else None,
+            "sub_minor_min_window": 50 if csv_1h.exists() else None,
         })
 
 print(f"Running backtest on {len(datasets)} dataset(s)...")

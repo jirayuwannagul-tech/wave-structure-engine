@@ -674,8 +674,20 @@ def build_trade_candidates(
     higher_timeframe_min_window: int | None = None,
     parent_timeframe_csv_path: str | None = None,
     parent_timeframe_min_window: int | None = None,
+    minor_timeframe_csv_path: str | None = None,
+    minor_timeframe_min_window: int | None = None,
+    sub_minor_csv_path: str | None = None,
+    sub_minor_min_window: int | None = None,
 ) -> dict:
     from analysis.indicator_engine import calculate_atr as _calc_atr
+
+    def _load_tf_df(path: str) -> pd.DataFrame:
+        d = pd.read_csv(path).copy()
+        if "open_time" in d.columns:
+            d["open_time"] = pd.to_datetime(d["open_time"], utc=True, errors="coerce")
+        if "atr" not in d.columns:
+            d["atr"] = _calc_atr(d, period=14)
+        return d
 
     df = pd.read_csv(csv_path).copy()
     if "open_time" in df.columns:
@@ -683,29 +695,10 @@ def build_trade_candidates(
     if "atr" not in df.columns:
         df["atr"] = _calc_atr(df, period=14)
 
-    higher_timeframe_df = None
-    if higher_timeframe_csv_path:
-        higher_timeframe_df = pd.read_csv(higher_timeframe_csv_path).copy()
-        if "open_time" in higher_timeframe_df.columns:
-            higher_timeframe_df["open_time"] = pd.to_datetime(
-                higher_timeframe_df["open_time"],
-                utc=True,
-                errors="coerce",
-            )
-        if "atr" not in higher_timeframe_df.columns:
-            higher_timeframe_df["atr"] = _calc_atr(higher_timeframe_df, period=14)
-
-    parent_timeframe_df = None
-    if parent_timeframe_csv_path:
-        parent_timeframe_df = pd.read_csv(parent_timeframe_csv_path).copy()
-        if "open_time" in parent_timeframe_df.columns:
-            parent_timeframe_df["open_time"] = pd.to_datetime(
-                parent_timeframe_df["open_time"],
-                utc=True,
-                errors="coerce",
-            )
-        if "atr" not in parent_timeframe_df.columns:
-            parent_timeframe_df["atr"] = _calc_atr(parent_timeframe_df, period=14)
+    higher_timeframe_df = _load_tf_df(higher_timeframe_csv_path) if higher_timeframe_csv_path else None
+    parent_timeframe_df = _load_tf_df(parent_timeframe_csv_path) if parent_timeframe_csv_path else None
+    minor_timeframe_df = _load_tf_df(minor_timeframe_csv_path) if minor_timeframe_csv_path else None
+    sub_minor_df = _load_tf_df(sub_minor_csv_path) if sub_minor_csv_path else None
 
     total_windows = 0
     analyzed_cases = 0
@@ -767,10 +760,39 @@ def build_trade_candidates(
                     from analysis.hierarchical_wave_counter import (
                         build_hierarchical_count_from_dfs,
                     )
+                    # Slice minor (4H) and sub_minor (1H) up to cutoff.
+                    # Limit to last N bars — pivot detection only needs recent history.
+                    _MINOR_MAX_BARS = 300     # ~75 days of 4H
+                    _SUB_MINOR_MAX_BARS = 500  # ~3 weeks of 1H
+                    minor_sample = None
+                    if (
+                        minor_timeframe_df is not None
+                        and minor_timeframe_min_window is not None
+                    ):
+                        _ms = minor_timeframe_df[
+                            minor_timeframe_df["open_time"] <= cutoff_time
+                        ]
+                        if len(_ms) >= minor_timeframe_min_window:
+                            minor_sample = _ms.iloc[-_MINOR_MAX_BARS:].copy()
+
+                    sub_minor_sample = None
+                    if (
+                        sub_minor_df is not None
+                        and sub_minor_min_window is not None
+                        and minor_sample is not None
+                    ):
+                        _ss = sub_minor_df[
+                            sub_minor_df["open_time"] <= cutoff_time
+                        ]
+                        if len(_ss) >= sub_minor_min_window:
+                            sub_minor_sample = _ss.iloc[-_SUB_MINOR_MAX_BARS:].copy()
+
                     hier_count = build_hierarchical_count_from_dfs(
                         symbol=symbol,
                         primary_df=weekly_sample,
                         intermediate_df=sample_df,
+                        minor_df=minor_sample,
+                        sub_minor_df=sub_minor_sample,
                         current_price=float(sample_df.iloc[-1]["close"]),
                     )
                     htf_aligned = (
@@ -900,6 +922,10 @@ def run_global_portfolio_backtest(
             higher_timeframe_min_window=item.get("higher_timeframe_min_window"),
             parent_timeframe_csv_path=item.get("parent_timeframe_csv_path"),
             parent_timeframe_min_window=item.get("parent_timeframe_min_window"),
+            minor_timeframe_csv_path=item.get("minor_timeframe_csv_path"),
+            minor_timeframe_min_window=item.get("minor_timeframe_min_window"),
+            sub_minor_csv_path=item.get("sub_minor_csv_path"),
+            sub_minor_min_window=item.get("sub_minor_min_window"),
         )
         key = _candidate_key(item["symbol"], item["timeframe"])
         candidate_summaries[key] = result["summary"]

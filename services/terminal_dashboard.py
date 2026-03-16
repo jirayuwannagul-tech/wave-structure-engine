@@ -119,14 +119,17 @@ def _build_signals(runtimes: list) -> list[dict[str, Any]]:
                 stop_loss = scenario_stop
                 targets = scenario_targets
             else:
-                bias = summary_bias or scenario_bias
-                entry = summary_entry if summary_entry is not None else scenario_entry
-                stop_loss = summary_stop if summary_stop is not None else scenario_stop
-                targets = summary_targets or scenario_targets
+                # No valid signal shape — skip this timeframe entirely
+                continue
 
             if not targets:
                 targets = _fallback_targets(bias, entry, stop_loss)
             tp1 = targets[0] if len(targets) >= 1 else None
+
+            # Final sanity check before appending
+            if not _is_valid_signal_shape(bias, entry, stop_loss, tp1):
+                continue
+
             signals.append(
                 {
                     "symbol": runtime.symbol,

@@ -1,9 +1,10 @@
 """Hierarchical Elliott Wave Counter.
 
 Counts waves across multiple degrees:
-  - Primary degree  (1W timeframe)
+  - Primary degree    (1W timeframe)
   - Intermediate degree (1D timeframe)
-  - Minor degree (4H timeframe)
+  - Minor degree      (4H timeframe)
+  - Sub-minor degree  (1H timeframe) — assessment only, not entry
 
 Uses inprogress_detector at each degree and nests the results into a
 unified HierarchicalCount, then generates trade scenarios based on the
@@ -59,6 +60,7 @@ class HierarchicalCount:
     primary: DegreePosition | None = None      # 1W
     intermediate: DegreePosition | None = None # 1D
     minor: DegreePosition | None = None        # 4H
+    sub_minor: DegreePosition | None = None    # 1H (assessment only)
 
     trade_bias: str | None = None          # "BULLISH" or "BEARISH"
     entry_wave_desc: str | None = None     # human-readable entry rationale
@@ -173,6 +175,10 @@ def _check_consistency(
 # ---------------------------------------------------------------------------
 
 
+_MAX_STOP_PCT = 0.12   # reject if stop is more than 12% from entry
+_MAX_TARGET_MULT = 5.0  # reject Fibonacci targets further than 5x risk
+
+
 def _build_exit_targets(
     bias: str,
     entry: float,
@@ -181,21 +187,35 @@ def _build_exit_targets(
     structure: str,
     wave_number: str,
 ) -> list[float]:
-    """Build exit targets from Fibonacci data or R-multiples."""
+    """Build exit targets from Fibonacci data or R-multiples.
+
+    Rejects targets that are:
+    - Negative or zero (impossible price)
+    - Further than _MAX_TARGET_MULT × risk from entry (likely bad Fib data)
+    Always falls back to R-multiples if Fibonacci data is unusable.
+    """
     risk = abs(entry - stop)
     if risk <= 0:
         risk = entry * 0.02  # fallback 2%
+
+    max_target_dist = risk * _MAX_TARGET_MULT
+
+    def _valid_bullish(v: float) -> bool:
+        return v > entry and v > 0 and (v - entry) <= max_target_dist
+
+    def _valid_bearish(v: float) -> bool:
+        return v < entry and v > 0 and (entry - v) <= max_target_dist
 
     # Try to use Fibonacci targets from the wave data
     if bias == "BULLISH":
         candidates = []
         for key in ("1.618", "2.618", "1.000", "w1_equal", "0.618xW1W3", "1.272xW1", "C=A", "C=1.272A", "C=1.618A"):
             v = fib_targets.get(key)
-            if v is not None and float(v) > entry:
+            if v is not None and _valid_bullish(float(v)):
                 candidates.append(float(v))
         if len(candidates) >= 2:
             candidates.sort()
-            return candidates[:3]
+            return [round(t, 6) for t in candidates[:3]]
         # Fallback: R-multiples
         return [
             round(entry + risk * 1.0, 6),
@@ -206,11 +226,11 @@ def _build_exit_targets(
         candidates = []
         for key in ("1.618", "2.618", "1.000", "w1_equal", "0.618xW1W3", "1.272xW1", "C=A", "C=1.272A", "C=1.618A"):
             v = fib_targets.get(key)
-            if v is not None and float(v) < entry:
+            if v is not None and _valid_bearish(float(v)):
                 candidates.append(float(v))
         if len(candidates) >= 2:
             candidates.sort(reverse=True)
-            return candidates[:3]
+            return [round(t, 6) for t in candidates[:3]]
         return [
             round(entry - risk * 1.0, 6),
             round(entry - risk * 1.618, 6),
@@ -289,19 +309,22 @@ def _scenarios_from_position(pos: DegreePosition, current_price: float) -> list[
     elif structure == "IMPULSE" and wn == "3":
         if direction == "bullish":
             bias = "BULLISH"
-            # Momentum entry: use current price as confirmation
             entry = current_price
-            # Stop below Wave 2 end (start of current wave)
-            stop = float(pos.current_wave_start) * 0.99 if pos.current_wave_start else round(current_price * 0.95, 6)
-            stop = min(stop, float(invalidation)) if invalidation else stop
+            # Stop: 5% below entry (ATR-independent tight stop for momentum)
+            stop = round(current_price * 0.95, 6)
+            if invalidation and float(invalidation) < stop:
+                stop = float(invalidation)
         else:
             bias = "BEARISH"
             entry = current_price
-            stop = float(pos.current_wave_start) * 1.01 if pos.current_wave_start else round(current_price * 1.05, 6)
-            stop = max(stop, float(invalidation)) if invalidation else stop
+            # Stop: 5% above entry
+            stop = round(current_price * 1.05, 6)
+            if invalidation and float(invalidation) > stop:
+                stop = float(invalidation)
 
         risk = abs(entry - stop)
-        if risk < entry * 0.005:
+        # Hard reject: stop too far from entry
+        if risk > entry * _MAX_STOP_PCT or risk < entry * 0.005:
             return []
 
         targets = _build_exit_targets(bias, entry, stop, fib, structure, wn)
@@ -330,14 +353,18 @@ def _scenarios_from_position(pos: DegreePosition, current_price: float) -> list[
         if direction == "bullish":
             bias = "BULLISH"
             entry = current_price
-            stop = float(pos.current_wave_start) * 0.99 if pos.current_wave_start else round(current_price * 0.96, 6)
+            stop = round(current_price * 0.95, 6)
+            if invalidation and float(invalidation) < stop:
+                stop = float(invalidation)
         else:
             bias = "BEARISH"
             entry = current_price
-            stop = float(pos.current_wave_start) * 1.01 if pos.current_wave_start else round(current_price * 1.04, 6)
+            stop = round(current_price * 1.05, 6)
+            if invalidation and float(invalidation) > stop:
+                stop = float(invalidation)
 
         risk = abs(entry - stop)
-        if risk < entry * 0.005:
+        if risk > entry * _MAX_STOP_PCT or risk < entry * 0.005:
             return []
 
         targets = _build_exit_targets(bias, entry, stop, fib, structure, wn)
@@ -476,6 +503,7 @@ def build_hierarchical_count(
     primary_pivots: list[Pivot],
     intermediate_pivots: list[Pivot],
     minor_pivots: list[Pivot] | None = None,
+    sub_minor_pivots: list[Pivot] | None = None,
     current_price: float | None = None,
     as_of: object = None,
 ) -> HierarchicalCount:
@@ -486,6 +514,7 @@ def build_hierarchical_count(
         primary_pivots: Pivots from the weekly (Primary degree) data.
         intermediate_pivots: Pivots from the daily (Intermediate degree) data.
         minor_pivots: Pivots from 4H (Minor degree), optional.
+        sub_minor_pivots: Pivots from 1H (Sub-minor degree), optional. Assessment only.
         current_price: Most recent close price.
         as_of: Timestamp (for reference / logging).
 
@@ -515,8 +544,21 @@ def build_hierarchical_count(
             parent_wn = intermediate_pos.wave_number if intermediate_pos else None
             minor_pos = _ip_to_degree(minor_ip, "Minor", "4H", parent_wn)
 
-    # ---- Consistency check ----
+    # ---- Sub-minor degree (1H) — assessment only, not used for entry ----
+    sub_minor_pos: DegreePosition | None = None
+    if sub_minor_pivots and len(sub_minor_pivots) >= 2:
+        sub_minor_ip = detect_inprogress_wave(sub_minor_pivots)
+        if sub_minor_ip and sub_minor_ip.is_valid:
+            parent_wn = minor_pos.wave_number if minor_pos else None
+            sub_minor_pos = _ip_to_degree(sub_minor_ip, "Sub-minor", "1H", parent_wn)
+
+    # ---- Consistency check (Primary → Intermediate, Minor → Sub-minor) ----
     is_consistent, consistency_note = _check_consistency(primary_pos, intermediate_pos)
+    if is_consistent and minor_pos is not None and sub_minor_pos is not None:
+        minor_consistent, minor_note = _check_consistency(minor_pos, sub_minor_pos)
+        if not minor_consistent:
+            # Sub-minor inconsistency lowers confidence but doesn't block trade
+            consistency_note = f"Sub-minor note: {minor_note}"
 
     # ---- Trade signal: use intermediate first (most actionable) ----
     active = intermediate_pos or primary_pos
@@ -582,6 +624,7 @@ def build_hierarchical_count(
         primary=primary_pos,
         intermediate=intermediate_pos,
         minor=minor_pos,
+        sub_minor=sub_minor_pos,
         trade_bias=trade_bias,
         entry_wave_desc=entry_wave_desc,
         hierarchical_confidence=hier_confidence,
@@ -602,6 +645,7 @@ def build_hierarchical_count_from_dfs(
     primary_df: pd.DataFrame,
     intermediate_df: pd.DataFrame,
     minor_df: pd.DataFrame | None = None,
+    sub_minor_df: pd.DataFrame | None = None,
     current_price: float | None = None,
 ) -> HierarchicalCount:
     """Build hierarchical count from DataFrames (handles ATR/pivot calculation).
@@ -611,6 +655,9 @@ def build_hierarchical_count_from_dfs(
         primary_df: Weekly DataFrame, already filtered to backtest cutoff.
         intermediate_df: Daily DataFrame, already filtered to backtest cutoff.
         minor_df: 4H DataFrame, already filtered to backtest cutoff, optional.
+        sub_minor_df: 1H DataFrame, already filtered to backtest cutoff, optional.
+                      Used for assessing where the Minor (4H) wave is in its sub-waves.
+                      NOT used for entry signals.
         current_price: Latest close price.
 
     Returns:
@@ -636,6 +683,11 @@ def build_hierarchical_count_from_dfs(
         minor_df = _add_atr(minor_df)
         minor_pivots = detect_pivots(minor_df, right=1, min_swing_atr_mult=0.3)
 
+    sub_minor_pivots: list[Pivot] | None = None
+    if sub_minor_df is not None and len(sub_minor_df) >= 10:
+        sub_minor_df = _add_atr(sub_minor_df)
+        sub_minor_pivots = detect_pivots(sub_minor_df, right=1, min_swing_atr_mult=0.2)
+
     if current_price is None and len(intermediate_df) > 0:
         current_price = float(intermediate_df.iloc[-1]["close"])
 
@@ -648,6 +700,7 @@ def build_hierarchical_count_from_dfs(
         primary_pivots=primary_pivots,
         intermediate_pivots=intermediate_pivots,
         minor_pivots=minor_pivots,
+        sub_minor_pivots=sub_minor_pivots,
         current_price=current_price,
         as_of=as_of,
     )

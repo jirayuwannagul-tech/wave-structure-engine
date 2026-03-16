@@ -233,6 +233,59 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
                 higher_timeframe_context=daily_context,
             )
             analysis_4h["higher_timeframe_context"] = daily_context
+
+            # ── Hierarchical wave count injection (1D) ────────────────────
+            # Disabled in live until stop/target validation is solid.
+            # Re-enable by setting env HIER_LIVE=1
+            _hier_live_enabled = os.getenv("HIER_LIVE", "0").strip() == "1"
+            if _hier_live_enabled and not (analysis_1d.get("scenarios") or []):
+                try:
+                    from pathlib import Path
+                    import pandas as pd
+                    from analysis.hierarchical_wave_counter import build_hierarchical_count_from_dfs
+                    from analysis.setup_filter import apply_trade_filters
+
+                    csv_1w = Path(f"data/{symbol}_1w.csv")
+                    csv_1d = Path(f"data/{symbol}_1d.csv")
+                    if csv_1w.exists() and csv_1d.exists():
+                        from analysis.indicator_engine import calculate_atr as _atr
+                        df_1w = pd.read_csv(csv_1w)
+                        df_1d = pd.read_csv(csv_1d)
+                        for _df in (df_1w, df_1d):
+                            if "open_time" in _df.columns:
+                                _df["open_time"] = pd.to_datetime(_df["open_time"], utc=True, errors="coerce")
+                            if "atr" not in _df.columns:
+                                _df["atr"] = _atr(_df, period=14)
+                        current_price_live = float(df_1d.iloc[-1]["close"])
+                        hier = build_hierarchical_count_from_dfs(
+                            symbol=symbol,
+                            primary_df=df_1w,
+                            intermediate_df=df_1d,
+                            current_price=current_price_live,
+                        )
+                        htf_aligned = (
+                            weekly_bias is None
+                            or hier.trade_bias == str(weekly_bias).upper()
+                        )
+                        if (
+                            htf_aligned
+                            and hier.scenarios
+                            and hier.hierarchical_confidence >= 0.30
+                            and hier.is_consistent
+                        ):
+                            active_pos = hier.intermediate or hier.primary
+                            wave_label = (
+                                f"{active_pos.structure}_W{active_pos.wave_number}"
+                                if active_pos else "HIERARCHICAL"
+                            )
+                            analysis_1d = dict(analysis_1d)
+                            analysis_1d["scenarios"] = hier.scenarios
+                            analysis_1d["has_pattern"] = True
+                            analysis_1d["primary_pattern_type"] = wave_label
+                            analysis_1d["_hier_count"] = hier
+                except Exception as _hier_exc:
+                    print(f"[orchestrator] hierarchical injection failed: {_hier_exc}")
+
             analyses = [analysis_1d, analysis_4h]
             return _build_runtime(symbol, analyses)
         except Exception as exc:
