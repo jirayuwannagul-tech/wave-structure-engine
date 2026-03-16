@@ -167,7 +167,13 @@ def extract_pattern_key_levels(pattern_type: str, pattern) -> KeyLevels | None:
     if pattern_type == "WXY":
         return extract_wxy_key_levels(pattern)
 
-    if pattern_type == "TRIANGLE":
+    if pattern_type in {
+        "TRIANGLE",
+        "CONTRACTING_TRIANGLE",
+        "EXPANDING_TRIANGLE",
+        "ASCENDING_BARRIER_TRIANGLE",
+        "DESCENDING_BARRIER_TRIANGLE",
+    }:
         return extract_triangle_key_levels(pattern)
 
     if pattern_type in {"ENDING_DIAGONAL", "LEADING_DIAGONAL"}:

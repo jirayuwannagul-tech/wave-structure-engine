@@ -240,7 +240,12 @@ def derive_wave_hierarchy(
         current_leg.get("label")
         or getattr(position, "wave_number", None)
         or last_completed_leg.get("label")
-        or (describe_current_leg(position) if getattr(position, "wave_number", None) is not None or getattr(position, "structure", None) is not None else None)
+        or (
+            describe_current_leg(position)
+            if getattr(position, "wave_number", None) is not None
+            or getattr(position, "structure", None) is not None
+            else None
+        )
         or str((analysis.get("wave_summary") or {}).get("current_wave") or "").upper()
         or None
     )
@@ -249,9 +254,17 @@ def derive_wave_hierarchy(
     parent_phase = _higher_timeframe_phase(normalized_htf_context)
     confidence = float(analysis.get("confidence") or 0.0)
 
-    indicator_support = bool(indicator_context.get("indicator_validation")) or bool(indicator_context.get("atr_ok"))
-    indicator_support = indicator_support or str(indicator_context.get("rsi_divergence") or "NONE").upper() != "NONE"
-    indicator_support = indicator_support or str(indicator_context.get("macd_divergence") or "NONE").upper() != "NONE"
+    indicator_support = bool(indicator_context.get("indicator_validation")) or bool(
+        indicator_context.get("atr_ok")
+    )
+    indicator_support = (
+        indicator_support
+        or str(indicator_context.get("rsi_divergence") or "NONE").upper() != "NONE"
+    )
+    indicator_support = (
+        indicator_support
+        or str(indicator_context.get("macd_divergence") or "NONE").upper() != "NONE"
+    )
 
     role = "UNCLASSIFIED"
     aligned = True
@@ -335,7 +348,9 @@ def _is_tradeable_regime(analysis: dict) -> bool:
     if trend_state != "SIDEWAY":
         return True
 
-    volume_ok = bool(indicator_context.get("volume_spike")) or bool(indicator_context.get("volume_divergence"))
+    volume_ok = bool(indicator_context.get("volume_spike")) or bool(
+        indicator_context.get("volume_divergence")
+    )
     return atr_ok or divergence != "NONE" or macd_div != "NONE" or volume_ok
 
 
@@ -393,9 +408,6 @@ def _passes_quality_gate(
             alternate_probability_threshold -= 0.05
 
     if higher_timeframe_bias and bias and bias != higher_timeframe_bias:
-        # Hard-block all lower timeframes against their respective higher timeframe trend.
-        # EW principle: corrections in a bull market are Wave 2/4 setups for LONG,
-        # not for shorting. Trading counter-trend to the weekly has very low win rate.
         return False, "counter-trend against higher timeframe bias"
 
     structure_ok, structure_note = _passes_structure_gate(
@@ -409,7 +421,6 @@ def _passes_quality_gate(
     if hierarchy is not None and not hierarchy.get("aligned"):
         return False, "child wave not aligned with higher timeframe hierarchy"
 
-    # Minimum RR gate: TP1 reward must be at least equal to SL risk (1:1)
     scenario_targets = list(getattr(scenario, "targets", []) or [])
     scenario_sl = getattr(scenario, "stop_loss", None)
     scenario_confirm = getattr(scenario, "confirmation", None)
@@ -417,45 +428,31 @@ def _passes_quality_gate(
         tp1 = float(scenario_targets[0])
         reward = abs(float(scenario_confirm) - tp1)
         risk = abs(float(scenario_confirm) - float(scenario_sl))
-        if risk > 0 and reward / risk < 0.8:  # require at least 0.8:1 RR
+        if risk > 0 and reward / risk < 0.8:
             return False, f"RR too low: {reward/risk:.2f} (need >= 0.8)"
 
-    # Wave nesting: if we know the HTF wave number, use it to calibrate confidence
     if htf_wave_number:
-        # Trading in Wave 3 of higher timeframe: most powerful, lower threshold
         if htf_wave_number in ("3",):
             main_confidence_threshold = max(0.60, main_confidence_threshold - 0.06)
-        # Trading in Wave 5: approaching end, be more selective
         elif htf_wave_number in ("5",):
             main_confidence_threshold = min(0.90, main_confidence_threshold + 0.04)
-        # Trading in Wave 2 or 4 (correction): need stronger signal to enter
         elif htf_wave_number in ("2", "4"):
             main_confidence_threshold = min(0.88, main_confidence_threshold + 0.05)
-        # Trading in corrective C wave: strong entry opportunity
         elif htf_wave_number == "C":
             main_confidence_threshold = max(0.62, main_confidence_threshold - 0.04)
 
-    # Patterns disabled due to low win rate in backtesting
-    # IMPULSE: 3.8% WR | EXPANDED_FLAT: 6.1% | RUNNING_FLAT: 6.6%
-    # ENDING_DIAGONAL: 4.8% | LEADING_DIAGONAL: 2.8%
-    # Keeping only: ABC_CORRECTION (11.9%) and WXY (21.6%)
-
-    # Globally disabled patterns (poor quality across all timeframes)
     GLOBALLY_DISABLED = {"RUNNING_FLAT", "LEADING_DIAGONAL"}
     if pattern.upper() in GLOBALLY_DISABLED:
         return False, f"{pattern.upper()} disabled globally (win rate too low)"
 
-    # Disabled on short timeframes (too noisy)
     SHORT_TF_DISABLED = {"ENDING_DIAGONAL", "EXPANDED_FLAT"}
     if timeframe.upper() in ("4H", "1H") and pattern.upper() in SHORT_TF_DISABLED:
         return False, f"{pattern.upper()} disabled on {timeframe.upper()}"
 
-    # On 4H: block weak corrective patterns, allow ABC/WXY when HTF is aligned or edge is positive
     WEAK_4H_CORRECTIVE = {"TRIANGLE", "FLAT"}
     if timeframe.upper() == "4H" and pattern.upper() in WEAK_4H_CORRECTIVE:
         return False, f"4H {pattern.upper()} filtered (weak corrective)"
 
-    # ABC/WXY on 4H: require either positive edge OR HTF context available
     if (
         timeframe.upper() == "4H"
         and pattern.upper() in {"ABC_CORRECTION", "WXY"}
@@ -480,32 +477,27 @@ def _passes_quality_gate(
     if confidence < main_confidence_threshold:
         return False, "main confidence too low"
 
-    # Count how many confirmation signals are present
     confirmation_count = sum([
         atr_ok,
         divergence != "NONE",
         macd_divergence != "NONE",
     ])
 
-    # 1D patterns require 2+ confirmation signals to reduce false breakouts.
-    # Daily timeframe setups have low win rate without strong momentum+divergence alignment.
     if timeframe.upper() == "1D":
         if confirmation_count < 2:
             return False, "1D: requires 2+ confirmation signals (atr/rsi_div/macd_div)"
     elif confirmation_count < 1:
         return False, "main missing atr expansion"
-    # Phase 4: require trend alignment always — no exceptions for indicator/atr
+
     if not _trend_aligned(bias, trend_state):
         return False, "main not aligned with trend"
-    # Phase 4: block sideways market — corrections don't resolve cleanly without trend
     if trend_state in {"SIDEWAY", "SIDEWAYS", "RANGING"}:
         return False, "sideways market blocked"
 
-    # Candle pattern confirmation bonus/penalty
     candle_pats = analysis.get("candle_patterns") or []
     if candle_pats:
         candle_score = score_candle_confirmation(candle_pats, bias or "")
-        if candle_score < 0:  # contradicting pattern - reduce confidence
+        if candle_score < 0:
             confidence = (confidence or 0) + candle_score
             if confidence < main_confidence_threshold:
                 return False, "candle pattern contradicts trade direction"

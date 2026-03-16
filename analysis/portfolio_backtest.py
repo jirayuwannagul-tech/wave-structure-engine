@@ -579,6 +579,13 @@ def run_portfolio_backtest(
                         analysis["has_pattern"] = True
                         analysis["primary_pattern_type"] = wave_label
                         analysis["hierarchical_count"] = hier_count
+                        # Re-run quality filter so hierarchical scenarios obey the same rules
+                        analysis = apply_trade_filters(
+                            analysis,
+                            higher_timeframe_bias=higher_timeframe_bias,
+                            htf_wave_number=htf_wave_number,
+                            higher_timeframe_context=higher_timeframe_context,
+                        )
 
         if not analysis.get("has_pattern"):
             continue
@@ -825,6 +832,13 @@ def build_trade_candidates(
                         analysis["hierarchical_count"] = hier_count
                         analysis["_hier_fingerprint"] = hier_count.wave_fingerprint
                         analysis["_hier_dedup_key"] = dedup_key
+                        # Re-run quality filter so hierarchical scenarios obey the same rules
+                        analysis = apply_trade_filters(
+                            analysis,
+                            higher_timeframe_bias=higher_timeframe_bias,
+                            htf_wave_number=htf_wave_number,
+                            higher_timeframe_context=higher_timeframe_context,
+                        )
 
         if not analysis.get("has_pattern"):
             continue

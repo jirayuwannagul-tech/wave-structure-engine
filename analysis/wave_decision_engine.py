@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 
-DEFAULT_AMBIGUITY_THRESHOLD = 0.01
+DEFAULT_AMBIGUITY_THRESHOLD = 0.04
 PATTERN_AMBIGUITY_THRESHOLDS = {
-    "IMPULSE": 0.01,
-    "ABC_CORRECTION": 0.01,
-    "EXPANDED_FLAT": 0.01,
-    "RUNNING_FLAT": 0.01,
-    "WXY": 0.01,
+    "IMPULSE": 0.05,           # impulse vs corrective: require 5pp gap
+    "ABC_CORRECTION": 0.04,
+    "EXPANDED_FLAT": 0.04,
+    "RUNNING_FLAT": 0.04,
+    "WXY": 0.04,
 }
+
+# EW principle: impulse patterns describe the primary trend;
+# prefer them over corrective alternatives when the margin is tight
+_IMPULSE_LIKE = {"IMPULSE", "LEADING_DIAGONAL", "ENDING_DIAGONAL"}
+_TIGHT_MARGIN = 0.03
 PATTERN_MIN_CONFIDENCE = {
     "IMPULSE": 0.80,
     "ABC_CORRECTION": 0.78,
@@ -19,18 +24,33 @@ PATTERN_MIN_CONFIDENCE = {
 
 def choose_primary_and_alternate(pattern_reports: list[dict]) -> dict:
     if not pattern_reports:
-        return {
-            "primary": None,
-            "alternate": None,
-        }
+        return {"primary": None, "alternate": None}
 
-    primary = pattern_reports[0]
-    alternate = pattern_reports[1] if len(pattern_reports) > 1 else None
+    if len(pattern_reports) == 1:
+        return {"primary": pattern_reports[0], "alternate": None}
 
-    return {
-        "primary": primary,
-        "alternate": alternate,
-    }
+    first  = pattern_reports[0]
+    second = pattern_reports[1]
+
+    first_prob  = float(first.get("probability") or 0.0)
+    second_prob = float(second.get("probability") or 0.0)
+    margin = first_prob - second_prob
+
+    # EW principle: when margin is tight and rank-2 is an indicator-confirmed
+    # impulse while rank-1 is corrective, prefer the impulse as primary.
+    first_type  = (first.get("pattern_type") or first.get("type") or "").upper()
+    second_type = (second.get("pattern_type") or second.get("type") or "").upper()
+
+    if (
+        0 < margin < _TIGHT_MARGIN
+        and first_type not in _IMPULSE_LIKE
+        and second_type in _IMPULSE_LIKE
+    ):
+        impulse_ctx = second.get("indicator_context") or {}
+        if bool(impulse_ctx.get("indicator_validation")):
+            first, second = second, first
+
+    return {"primary": first, "alternate": second}
 
 
 def _score_margin(primary: dict | None, alternate: dict | None) -> float:

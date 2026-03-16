@@ -2,43 +2,43 @@
   "version": 1,
   "contexts": {
     "BTCUSDT|1W": {
-      "bias": "BEARISH",
-      "wave_number": "A",
+      "bias": "BULLISH",
+      "wave_number": "B",
       "structure": "ABC_CORRECTION",
-      "position": "WAVE_A_IN_PROGRESS",
-      "note": "BTC completed 5-wave impulse cycle (W1:2018low→2019, W2:2019→2020low, W3:2020low→Nov2021 $69k, W4:Nov2021→Nov2022 $15k, W5:Nov2022→Jan2025 $109k). Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH aligned with corrective structure.",
+      "position": "WAVE_B_IN_PROGRESS",
+      "note": "BTC completed 5-wave impulse (W5 peak $109k Jan 2025). Wave A bottomed ~$60,000 (Feb 2 2026). Now in Wave B rebound (bullish). Wave B typically retraces 50-61.8% of Wave A. Target $84k-$90k range. Expect Wave C (bearish) after Wave B completes.",
       "source": "manual"
     },
     "ETHUSDT|1W": {
-      "bias": "BEARISH",
-      "wave_number": "A",
+      "bias": "BULLISH",
+      "wave_number": "B",
       "structure": "ABC_CORRECTION",
-      "position": "WAVE_A_IN_PROGRESS",
-      "note": "ETH completed 5-wave impulse cycle alongside BTC. W5 peak ~$4,100 in late 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "position": "WAVE_B_IN_PROGRESS",
+      "note": "ETH completed 5-wave impulse (W5 peak ~$4,100 late 2024). Wave A bottomed ~$1,748 (Feb 2026). Now in Wave B rebound (bullish). Wave B typically retraces 50-61.8% of Wave A. Target $2,700-$2,900 range. Expect Wave C (bearish) after Wave B completes.",
       "source": "manual"
     },
     "BNBUSDT|1W": {
-      "bias": "BEARISH",
-      "wave_number": "A",
+      "bias": "BULLISH",
+      "wave_number": "B",
       "structure": "ABC_CORRECTION",
-      "position": "WAVE_A_IN_PROGRESS",
-      "note": "BNB completed 5-wave impulse cycle. W5 peak ~$720 in late 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "position": "WAVE_B_IN_PROGRESS",
+      "note": "BNB completed 5-wave impulse (W5 peak ~$720 late 2024). Wave A bottomed ~$601 (Feb 2026). Now in Wave B rebound (bullish). Wave B typically retraces 50-61.8% of Wave A. Target $660-$690 range. Expect Wave C (bearish) after Wave B completes.",
       "source": "manual"
     },
     "SOLUSDT|1W": {
-      "bias": "BEARISH",
-      "wave_number": "A",
+      "bias": "BULLISH",
+      "wave_number": "B",
       "structure": "ABC_CORRECTION",
-      "position": "WAVE_A_IN_PROGRESS",
-      "note": "SOL completed 5-wave impulse cycle. W5 peak ~$295 in Jan 2025. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "position": "WAVE_B_IN_PROGRESS",
+      "note": "SOL completed 5-wave impulse (W5 peak ~$295 Jan 2025). Wave A bottomed ~$67.5 (Feb 2026). Now in Wave B rebound (bullish). Wave B typically retraces 50-61.8% of Wave A. Target $130-$150 range. Expect Wave C (bearish) after Wave B completes.",
       "source": "manual"
     },
     "DOGEUSDT|1W": {
-      "bias": "BEARISH",
-      "wave_number": "A",
+      "bias": "BULLISH",
+      "wave_number": "B",
       "structure": "ABC_CORRECTION",
-      "position": "WAVE_A_IN_PROGRESS",
-      "note": "DOGE completed 5-wave impulse cycle. W5 peak ~$0.48 in Dec 2024. Now in Wave A of major ABC correction. Lower timeframes should trade BEARISH.",
+      "position": "WAVE_B_IN_PROGRESS",
+      "note": "DOGE completed 5-wave impulse (W5 peak ~$0.48 Dec 2024). Wave A bottomed ~$0.08 (Feb 2026). Now in Wave B rebound (bullish). Wave B typically retraces 50-61.8% of Wave A. Target $0.16-$0.20 range. Expect Wave C (bearish) after Wave B completes.",
       "source": "manual"
     }
   }

@@ -160,7 +160,16 @@ def _section_elliott_rules(
             label = rule_labels.get(key, key)
             lines.append(f"  {_check(passed)} {label}")
     else:
-        lines.append("  — No rule validation data available")
+        _corrective_types = {
+            "ABC_CORRECTION", "FLAT", "EXPANDED_FLAT", "RUNNING_FLAT",
+            "WXY", "TRIANGLE", "CONTRACTING_TRIANGLE", "EXPANDING_TRIANGLE",
+            "ASCENDING_BARRIER_TRIANGLE", "DESCENDING_BARRIER_TRIANGLE",
+        }
+        pt = (pattern_type or "").upper()
+        if pt in _corrective_types:
+            lines.append("  ℹ Corrective pattern — impulse rules (W2/W3/W4) do not apply")
+        else:
+            lines.append("  — No rule validation data available")
 
     return lines
 

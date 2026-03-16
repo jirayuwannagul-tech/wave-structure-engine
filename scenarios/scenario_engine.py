@@ -313,13 +313,17 @@ def generate_scenarios(
             )
         return _sanitize_scenarios(scenarios, key_levels)
 
-    if position.structure == "TRIANGLE":
+    _ALL_TRIANGLE_VARIANTS = {
+        "TRIANGLE", "CONTRACTING_TRIANGLE", "EXPANDING_TRIANGLE",
+        "ASCENDING_BARRIER_TRIANGLE", "DESCENDING_BARRIER_TRIANGLE",
+    }
+    if position.structure in _ALL_TRIANGLE_VARIANTS:
         range_size = 0.0
         if key_levels.support is not None and key_levels.resistance is not None:
             range_size = key_levels.resistance - key_levels.support
 
-        bullish_target = round((key_levels.resistance or 0.0) + (range_size * 0.618), 2)
-        bearish_target = round((key_levels.support or 0.0) - (range_size * 0.618), 2)
+        bullish_target = round((key_levels.resistance or 0.0) + (range_size * 1.0), 2)
+        bearish_target = round((key_levels.support or 0.0) - (range_size * 1.0), 2)
 
         bull_confirmation = _refine_entry_with_confluence(
             key_levels.resistance, "BULLISH", _czones
@@ -328,30 +332,80 @@ def generate_scenarios(
             key_levels.support, "BEARISH", _czones
         )
 
+        # EW principle: barrier triangles have directional bias
+        # Ascending barrier (rising support, flat resistance) → bullish continuation
+        # Descending barrier (flat support, falling resistance) → bearish continuation
+        _struct = (position.structure or "").upper()
+        _add_bull = _struct not in {"DESCENDING_BARRIER_TRIANGLE"}
+        _add_bear = _struct not in {"ASCENDING_BARRIER_TRIANGLE"}
+
+        if _add_bull:
+            scenarios.append(
+                Scenario(
+                    name="Bullish Breakout",
+                    condition=f"price breaks above {bull_confirmation}",
+                    interpretation="triangle resolves upward",
+                    target=f"move toward {bullish_target}",
+                    bias="BULLISH",
+                    invalidation=key_levels.support,
+                    confirmation=bull_confirmation,
+                    stop_loss=key_levels.support,
+                    targets=[bullish_target],
+                )
+            )
+        if _add_bear:
+            scenarios.append(
+                Scenario(
+                    name="Bearish Breakdown",
+                    condition=f"price breaks below {bear_confirmation}",
+                    interpretation="triangle resolves downward",
+                    target=f"move toward {bearish_target}",
+                    bias="BEARISH",
+                    invalidation=key_levels.resistance,
+                    confirmation=bear_confirmation,
+                    stop_loss=key_levels.resistance,
+                    targets=[bearish_target],
+                )
+            )
+        return _sanitize_scenarios(scenarios, key_levels)
+
+    # Corrective or trend structures with NEUTRAL/unknown bias:
+    # generate breakout scenarios from key_levels support/resistance
+    if (
+        position.structure in CORRECTIVE_STRUCTURES | TREND_STRUCTURES
+        and position.bias not in {"BULLISH", "BEARISH"}
+        and key_levels.support is not None
+        and key_levels.resistance is not None
+    ):
+        range_size = key_levels.resistance - key_levels.support
+        bull_target = round(key_levels.resistance + range_size * 0.618, 6)
+        bear_target = round(key_levels.support - range_size * 0.618, 6)
+        bull_conf = _refine_entry_with_confluence(key_levels.resistance, "BULLISH", _czones)
+        bear_conf = _refine_entry_with_confluence(key_levels.support, "BEARISH", _czones)
         scenarios.append(
             Scenario(
                 name="Bullish Breakout",
-                condition=f"price breaks above {bull_confirmation}",
-                interpretation="triangle resolves upward",
-                target=f"move toward {bullish_target}",
+                condition=f"price closes above {bull_conf}",
+                interpretation="structure resolves upward",
+                target=f"move toward {bull_target}",
                 bias="BULLISH",
                 invalidation=key_levels.support,
-                confirmation=bull_confirmation,
+                confirmation=bull_conf,
                 stop_loss=key_levels.support,
-                targets=[bullish_target],
+                targets=[bull_target],
             )
         )
         scenarios.append(
             Scenario(
                 name="Bearish Breakdown",
-                condition=f"price breaks below {bear_confirmation}",
-                interpretation="triangle resolves downward",
-                target=f"move toward {bearish_target}",
+                condition=f"price closes below {bear_conf}",
+                interpretation="structure resolves downward",
+                target=f"move toward {bear_target}",
                 bias="BEARISH",
                 invalidation=key_levels.resistance,
-                confirmation=bear_confirmation,
+                confirmation=bear_conf,
                 stop_loss=key_levels.resistance,
-                targets=[bearish_target],
+                targets=[bear_target],
             )
         )
         return _sanitize_scenarios(scenarios, key_levels)

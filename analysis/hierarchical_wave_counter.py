@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from analysis.inprogress_detector import InProgressWave, detect_inprogress_wave
-from analysis.pivot_detector import Pivot, detect_pivots
+from analysis.pivot_detector import Pivot, compress_pivots, detect_pivots
 from scenarios.scenario_engine import Scenario
 
 
@@ -522,24 +522,44 @@ def build_hierarchical_count(
         HierarchicalCount with nested wave positions and trade scenarios.
     """
     # ---- Primary degree (1W) ----
-    primary_ip = detect_inprogress_wave(primary_pivots) if len(primary_pivots) >= 2 else None
+    # Compress weekly pivots to strictly alternating H/L so that major degree
+    # turning points (e.g. 2020 low → 2021 high → 2022 low → 2025 high) can be
+    # matched by the impulse detector regardless of intermediate minor pivots.
+    # Scan the entire compressed history so the Primary degree count is found
+    # even when its anchor is far back in time.
     primary_pos: DegreePosition | None = None
-    if primary_ip and primary_ip.is_valid:
-        primary_pos = _ip_to_degree(primary_ip, "Primary", "1W")
+    if len(primary_pivots) >= 2:
+        compressed_primary = compress_pivots(primary_pivots)
+        primary_ip = detect_inprogress_wave(
+            compressed_primary,
+            search_window=len(compressed_primary),  # scan full history
+        )
+        if primary_ip and primary_ip.is_valid:
+            primary_pos = _ip_to_degree(primary_ip, "Primary", "1W")
 
     # ---- Intermediate degree (1D) ----
-    intermediate_ip = (
-        detect_inprogress_wave(intermediate_pivots) if len(intermediate_pivots) >= 2 else None
-    )
+    # Use last 80 compressed pivots — covers ~6-9 months of daily data which is
+    # enough to capture the intermediate degree pattern without going back to
+    # multi-year history.
     intermediate_pos: DegreePosition | None = None
-    if intermediate_ip and intermediate_ip.is_valid:
-        parent_wn = primary_pos.wave_number if primary_pos else None
-        intermediate_pos = _ip_to_degree(intermediate_ip, "Intermediate", "1D", parent_wn)
+    if len(intermediate_pivots) >= 2:
+        compressed_intermediate = compress_pivots(intermediate_pivots)
+        intermediate_ip = detect_inprogress_wave(
+            compressed_intermediate,
+            search_window=80,
+        )
+        if intermediate_ip and intermediate_ip.is_valid:
+            parent_wn = primary_pos.wave_number if primary_pos else None
+            intermediate_pos = _ip_to_degree(intermediate_ip, "Intermediate", "1D", parent_wn)
 
     # ---- Minor degree (4H) ----
     minor_pos: DegreePosition | None = None
     if minor_pivots and len(minor_pivots) >= 2:
-        minor_ip = detect_inprogress_wave(minor_pivots)
+        compressed_minor = compress_pivots(minor_pivots)
+        minor_ip = detect_inprogress_wave(
+            compressed_minor,
+            search_window=50,
+        )
         if minor_ip and minor_ip.is_valid:
             parent_wn = intermediate_pos.wave_number if intermediate_pos else None
             minor_pos = _ip_to_degree(minor_ip, "Minor", "4H", parent_wn)
@@ -547,7 +567,11 @@ def build_hierarchical_count(
     # ---- Sub-minor degree (1H) — assessment only, not used for entry ----
     sub_minor_pos: DegreePosition | None = None
     if sub_minor_pivots and len(sub_minor_pivots) >= 2:
-        sub_minor_ip = detect_inprogress_wave(sub_minor_pivots)
+        compressed_sub = compress_pivots(sub_minor_pivots)
+        sub_minor_ip = detect_inprogress_wave(
+            compressed_sub,
+            search_window=30,
+        )
         if sub_minor_ip and sub_minor_ip.is_valid:
             parent_wn = minor_pos.wave_number if minor_pos else None
             sub_minor_pos = _ip_to_degree(sub_minor_ip, "Sub-minor", "1H", parent_wn)
@@ -674,8 +698,11 @@ def build_hierarchical_count_from_dfs(
     primary_df = _add_atr(primary_df)
     intermediate_df = _add_atr(intermediate_df)
 
-    # Timeframe-appropriate pivot parameters
-    primary_pivots = detect_pivots(primary_df, right=2, min_swing_atr_mult=1.0)
+    # Timeframe-appropriate pivot parameters.
+    # Primary degree (1W) uses atr_mult=2.0 to capture the full 5-wave cycle
+    # including W3, W4, W5, and the subsequent correction pivots, while still
+    # filtering out minor intra-cycle noise.
+    primary_pivots = detect_pivots(primary_df, right=2, min_swing_atr_mult=2.0)
     intermediate_pivots = detect_pivots(intermediate_df, right=1, min_swing_atr_mult=0.5)
 
     minor_pivots: list[Pivot] | None = None
