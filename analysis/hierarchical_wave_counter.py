@@ -77,6 +77,26 @@ class HierarchicalCount:
     wave_fingerprint: str = ""
 
 
+@dataclass(frozen=True)
+class _PrimaryCandidate:
+    """Weekly primary-degree candidate built from a suffix of compressed pivots.
+
+    The weekly series can contain pivots from multiple macro cycles. Running the
+    in-progress detector on the entire history tends to over-promote older
+    sub-cycles into the current primary count. We therefore evaluate multiple
+    suffixes and rank the resulting candidates by how likely they are to
+    represent the active cycle:
+      - recent anchor      → current cycle, not stale historical context
+      - large price span   → primary degree, not a tiny sub-wave
+      - high maturity      → prefer finished W5 / WA-B only when the cycle is
+                             truly advanced
+    """
+
+    position: DegreePosition
+    anchor_index: int
+    span: float
+
+
 # ---------------------------------------------------------------------------
 # Direction inference
 # ---------------------------------------------------------------------------
@@ -498,6 +518,105 @@ def _ip_to_degree(
     )
 
 
+def _find_pivot_index(pivots: list[Pivot], target: Pivot) -> int:
+    for idx, pivot in enumerate(pivots):
+        if (
+            pivot.index == target.index
+            and pivot.type == target.type
+            and pivot.price == target.price
+        ):
+            return idx
+    return 0
+
+
+def _enumerate_primary_candidates(compressed_primary: list[Pivot]) -> list[_PrimaryCandidate]:
+    """Build weekly primary candidates from every suffix of the pivot stream.
+
+    A single full-history run over weekly pivots often stitches together pivots
+    from a previous cycle and the current cycle. Enumerating suffixes lets the
+    detector propose multiple valid primary counts rooted at different structural
+    anchors; the ranking step can then pick the active cycle.
+    """
+    candidates: list[_PrimaryCandidate] = []
+    seen: set[tuple[int, str, str, str, int]] = set()
+
+    for start in range(len(compressed_primary) - 1):
+        suffix = compressed_primary[start:]
+        if len(suffix) < 2:
+            continue
+        ip = detect_inprogress_wave(suffix, search_window=len(suffix))
+        if ip is None or not ip.is_valid:
+            continue
+
+        anchor_index = _find_pivot_index(compressed_primary, ip.pivots[0])
+        dedupe_key = (
+            anchor_index,
+            ip.structure,
+            ip.direction,
+            ip.wave_number,
+            ip.completed_waves,
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        span = max(p.price for p in ip.pivots) - min(p.price for p in ip.pivots)
+        candidates.append(
+            _PrimaryCandidate(
+                position=_ip_to_degree(ip, "Primary", "1W"),
+                anchor_index=anchor_index,
+                span=span,
+            )
+        )
+
+    return candidates
+
+
+def _score_primary_candidate(
+    candidate: _PrimaryCandidate,
+    pivot_count: int,
+    max_span: float,
+) -> float:
+    """Score a weekly candidate by current-cycle relevance.
+
+    The active primary cycle should not only be large; it should also be rooted
+    in a relatively recent structural anchor. A stale, gigantic span from an
+    old cycle is less relevant than a slightly smaller but much newer current
+    cycle. Maturity is included as a softer tiebreaker so finished W5/WA-B
+    counts win only when the anchor and span also make sense.
+    """
+    recency_score = candidate.anchor_index / max(1, pivot_count)
+    span_score = candidate.span / max(1.0, max_span)
+    maturity_score = candidate.position.completed_waves / 6.0
+    return (13.0 * recency_score) + (10.0 * span_score) + (7.0 * maturity_score)
+
+
+def _select_primary_position(primary_pivots: list[Pivot]) -> DegreePosition | None:
+    if len(primary_pivots) < 2:
+        return None
+
+    compressed_primary = compress_pivots(primary_pivots)
+    if len(compressed_primary) < 2:
+        return None
+
+    candidates = _enumerate_primary_candidates(compressed_primary)
+    if not candidates:
+        return None
+
+    max_span = max(candidate.span for candidate in candidates)
+    pivot_count = len(compressed_primary)
+    best = max(
+        candidates,
+        key=lambda candidate: (
+            _score_primary_candidate(candidate, pivot_count, max_span),
+            candidate.anchor_index,
+            candidate.span,
+            candidate.position.completed_waves,
+        ),
+    )
+    return best.position
+
+
 def build_hierarchical_count(
     symbol: str,
     primary_pivots: list[Pivot],
@@ -522,20 +641,12 @@ def build_hierarchical_count(
         HierarchicalCount with nested wave positions and trade scenarios.
     """
     # ---- Primary degree (1W) ----
-    # Compress weekly pivots to strictly alternating H/L so that major degree
-    # turning points (e.g. 2020 low → 2021 high → 2022 low → 2025 high) can be
-    # matched by the impulse detector regardless of intermediate minor pivots.
-    # Scan the entire compressed history so the Primary degree count is found
-    # even when its anchor is far back in time.
-    primary_pos: DegreePosition | None = None
-    if len(primary_pivots) >= 2:
-        compressed_primary = compress_pivots(primary_pivots)
-        primary_ip = detect_inprogress_wave(
-            compressed_primary,
-            search_window=len(compressed_primary),  # scan full history
-        )
-        if primary_ip and primary_ip.is_valid:
-            primary_pos = _ip_to_degree(primary_ip, "Primary", "1W")
+    # Weekly primary selection is current-cycle aware. We still need a
+    # primary-degree span, but we do not want the detector to stitch an older
+    # completed cycle into the active one simply because it has the largest
+    # historical span. Instead we score suffix-based candidates and keep the
+    # one that is both structurally large and rooted in the latest cycle.
+    primary_pos = _select_primary_position(primary_pivots)
 
     # ---- Intermediate degree (1D) ----
     # Use last 80 compressed pivots — covers ~6-9 months of daily data which is
