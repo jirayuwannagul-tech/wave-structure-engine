@@ -1,4 +1,158 @@
 {
+  "pairs": {
+    "ADAUSDT|1D": {
+      "avg_r": -0.256,
+      "loss_count": 7,
+      "sample_count": 12,
+      "total_r": -3.072,
+      "win_count": 5,
+      "win_rate": 0.417
+    },
+    "ADAUSDT|4H": {
+      "avg_r": -0.027,
+      "loss_count": 102,
+      "sample_count": 176,
+      "total_r": -4.752,
+      "win_count": 74,
+      "win_rate": 0.42
+    },
+    "AVAXUSDT|1D": {
+      "avg_r": -0.03,
+      "loss_count": 9,
+      "sample_count": 15,
+      "total_r": -0.45,
+      "win_count": 6,
+      "win_rate": 0.4
+    },
+    "AVAXUSDT|4H": {
+      "avg_r": -0.082,
+      "loss_count": 62,
+      "sample_count": 106,
+      "total_r": -8.692,
+      "win_count": 44,
+      "win_rate": 0.415
+    },
+    "BNBUSDT|1D": {
+      "avg_r": 0.216,
+      "loss_count": 0,
+      "sample_count": 1,
+      "total_r": 0.216,
+      "win_count": 1,
+      "win_rate": 1.0
+    },
+    "BNBUSDT|4H": {
+      "avg_r": -0.009,
+      "loss_count": 15,
+      "sample_count": 28,
+      "total_r": -0.252,
+      "win_count": 13,
+      "win_rate": 0.464
+    },
+    "BTCUSDT|1D": {
+      "avg_r": 0.386,
+      "loss_count": 0,
+      "sample_count": 2,
+      "total_r": 0.772,
+      "win_count": 2,
+      "win_rate": 1.0
+    },
+    "BTCUSDT|4H": {
+      "avg_r": 0.137,
+      "loss_count": 8,
+      "sample_count": 24,
+      "total_r": 3.288,
+      "win_count": 16,
+      "win_rate": 0.667
+    },
+    "DOGEUSDT|4H": {
+      "avg_r": 0.291,
+      "loss_count": 14,
+      "sample_count": 30,
+      "total_r": 8.73,
+      "win_count": 16,
+      "win_rate": 0.533
+    },
+    "ETHUSDT|1D": {
+      "avg_r": 2.86,
+      "loss_count": 0,
+      "sample_count": 1,
+      "total_r": 2.86,
+      "win_count": 1,
+      "win_rate": 1.0
+    },
+    "ETHUSDT|4H": {
+      "avg_r": 0.252,
+      "loss_count": 11,
+      "sample_count": 19,
+      "total_r": 4.788,
+      "win_count": 8,
+      "win_rate": 0.421
+    },
+    "LINKUSDT|1D": {
+      "avg_r": -0.073,
+      "loss_count": 11,
+      "sample_count": 21,
+      "total_r": -1.533,
+      "win_count": 10,
+      "win_rate": 0.476
+    },
+    "LINKUSDT|4H": {
+      "avg_r": -0.01,
+      "loss_count": 75,
+      "sample_count": 139,
+      "total_r": -1.39,
+      "win_count": 64,
+      "win_rate": 0.46
+    },
+    "LTCUSDT|1D": {
+      "avg_r": 0.22,
+      "loss_count": 2,
+      "sample_count": 15,
+      "total_r": 3.3,
+      "win_count": 13,
+      "win_rate": 0.867
+    },
+    "LTCUSDT|4H": {
+      "avg_r": -0.028,
+      "loss_count": 110,
+      "sample_count": 191,
+      "total_r": -5.348,
+      "win_count": 81,
+      "win_rate": 0.424
+    },
+    "SOLUSDT|1D": {
+      "avg_r": 0.1,
+      "loss_count": 1,
+      "sample_count": 2,
+      "total_r": 0.2,
+      "win_count": 1,
+      "win_rate": 0.5
+    },
+    "SOLUSDT|4H": {
+      "avg_r": -0.063,
+      "loss_count": 11,
+      "sample_count": 24,
+      "total_r": -1.512,
+      "win_count": 13,
+      "win_rate": 0.542
+    },
+    "XRPUSDT|1D": {
+      "avg_r": -0.12,
+      "loss_count": 9,
+      "sample_count": 17,
+      "total_r": -2.04,
+      "win_count": 8,
+      "win_rate": 0.471
+    },
+    "XRPUSDT|4H": {
+      "avg_r": 0.108,
+      "loss_count": 74,
+      "sample_count": 142,
+      "total_r": 15.336,
+      "win_count": 68,
+      "win_rate": 0.479
+    }
+  },
   "patterns": {
     "BNBUSDT|1D|ABC_CORRECTION|LONG": {
       "avg_r": 0.076,
@@ -3507,5 +3661,5 @@
       "win_rate": 0.333
     }
   },
-  "version": 2
+  "version": 3
 }

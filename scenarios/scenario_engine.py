@@ -7,7 +7,7 @@ from analysis.fibonacci_confluence import score_entry_vs_confluence
 from analysis.future_projection import FutureProjection
 from analysis.key_levels import KeyLevels
 from analysis.wave_position import WavePosition
-from storage.experience_store import get_pattern_edge, get_scenario_edge
+from storage.experience_store import get_pair_edge, get_pattern_edge, get_scenario_edge
 
 
 @dataclass
@@ -292,6 +292,24 @@ def _edge_is_prunable_negative(edge, *, min_samples: int, max_avg_r: float = -0.
     )
 
 
+def _pair_edge_is_prunable(edge, *, timeframe: str) -> bool:
+    return bool(
+        edge is not None
+        and timeframe.upper() == "4H"
+        and int(edge.sample_count) >= 50
+        and float(edge.avg_r) <= -0.02
+        and float(edge.win_rate) <= 0.46
+    )
+
+
+def _pair_edge_is_positive(edge) -> bool:
+    return bool(
+        edge is not None
+        and int(edge.sample_count) >= 8
+        and (float(edge.avg_r) >= 0.03 or float(edge.win_rate) >= 0.54)
+    )
+
+
 def prioritize_scenarios(
     *,
     symbol: str,
@@ -311,17 +329,20 @@ def prioritize_scenarios(
         side = "LONG" if (scenario.bias or "").upper() == "BULLISH" else "SHORT"
         scenario_edge = get_scenario_edge(symbol, timeframe, structure, scenario_name, side)
         pattern_edge = get_pattern_edge(symbol, timeframe, structure, side)
+        pair_edge = get_pair_edge(symbol, timeframe)
         expected_rr = _scenario_expected_rr(scenario)
         projection_score = _scenario_projection_alignment_score(scenario, projection)
         confluence_score = _scenario_confluence_score(scenario, confluence_zones)
         scenario_edge_score = _experience_edge_score(scenario_edge, scale=1.0)
         pattern_edge_score = _experience_edge_score(pattern_edge, scale=0.45)
+        pair_edge_score = _experience_edge_score(pair_edge, scale=0.7)
         score = (
             (expected_rr * 0.35)
             + (projection_score * 0.7)
             + (confluence_score * 0.5)
             + scenario_edge_score
             + pattern_edge_score
+            + pair_edge_score
             + _scenario_primary_preference_score(scenario_name)
             + _scenario_micro_risk_penalty(scenario)
         )
@@ -335,10 +356,13 @@ def prioritize_scenarios(
                 "scenario": scenario,
                 "scenario_edge": scenario_edge,
                 "pattern_edge": pattern_edge,
+                "pair_edge": pair_edge,
                 "scenario_positive": _edge_is_positive_candidate(scenario_edge, min_samples=2, min_avg_r=0.02),
                 "pattern_positive": _edge_is_positive_candidate(pattern_edge, min_samples=4, min_avg_r=0.05),
+                "pair_positive": _pair_edge_is_positive(pair_edge),
                 "scenario_prunable": _edge_is_prunable_negative(scenario_edge, min_samples=3, max_avg_r=-0.08),
                 "pattern_prunable": _edge_is_prunable_negative(pattern_edge, min_samples=5, max_avg_r=-0.08),
+                "pair_prunable": _pair_edge_is_prunable(pair_edge, timeframe=timeframe),
             }
         )
 
@@ -358,6 +382,11 @@ def prioritize_scenarios(
         and (
             item["scenario_positive"]
             or (item["pattern_positive"] and not item["scenario_prunable"])
+            or (
+                item["pair_positive"]
+                and not item["scenario_prunable"]
+                and not item["pattern_prunable"]
+            )
         )
     ]
     if positive_ranked:
@@ -368,13 +397,22 @@ def prioritize_scenarios(
         if not item["severe_negative"]
         and not item["scenario_prunable"]
         and not item["pattern_prunable"]
+        and not (
+            item["pair_prunable"]
+            and not item["scenario_positive"]
+            and not item["pattern_positive"]
+        )
     ]
     if neutral_ranked:
         return [item["scenario"] for item in neutral_ranked]
 
     historical_ranked = [
         item for item in ranked
-        if _edge_has_history(item["scenario_edge"], 3) or _edge_has_history(item["pattern_edge"], 4)
+        if (
+            _edge_has_history(item["scenario_edge"], 3)
+            or _edge_has_history(item["pattern_edge"], 4)
+            or _edge_has_history(item["pair_edge"], 12)
+        )
     ]
     if historical_ranked:
         # We have enough evidence to know these variants are consistently weak.

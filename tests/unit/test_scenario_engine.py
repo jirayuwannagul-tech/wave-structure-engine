@@ -253,6 +253,7 @@ def test_prioritize_scenarios_prefers_positive_scenario_edge(monkeypatch):
         negative = False
         severe_negative = False
 
+    monkeypatch.setattr("scenarios.scenario_engine.get_pair_edge", lambda *args, **kwargs: None)
     monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "scenarios.scenario_engine.get_scenario_edge",
@@ -305,6 +306,7 @@ def test_prioritize_scenarios_skips_trade_when_only_negative_history_exists(monk
         negative = True
         severe_negative = True
 
+    monkeypatch.setattr("scenarios.scenario_engine.get_pair_edge", lambda *args, **kwargs: None)
     monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
     monkeypatch.setattr("scenarios.scenario_engine.get_scenario_edge", lambda *args, **kwargs: Edge())
 
@@ -341,3 +343,77 @@ def test_prioritize_scenarios_skips_trade_when_only_negative_history_exists(monk
     )
 
     assert prioritized == []
+
+
+def test_prioritize_scenarios_skips_pair_with_negative_pair_edge(monkeypatch):
+    class Edge:
+        sample_count = 80
+        win_rate = 0.42
+        avg_r = -0.08
+        positive = False
+        negative = False
+        severe_negative = False
+
+    monkeypatch.setattr("scenarios.scenario_engine.get_pair_edge", lambda *args, **kwargs: Edge())
+    monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
+    monkeypatch.setattr("scenarios.scenario_engine.get_scenario_edge", lambda *args, **kwargs: None)
+
+    scenarios = [
+        Scenario(
+            name="Main Bearish",
+            condition="price breaks below 32.0",
+            interpretation="downside continuation",
+            target="28.0",
+            bias="BEARISH",
+            invalidation=35.0,
+            confirmation=32.0,
+            stop_loss=35.0,
+            targets=[30.0, 28.0, 26.0],
+        )
+    ]
+
+    prioritized = prioritize_scenarios(
+        symbol="AVAXUSDT",
+        timeframe="4H",
+        structure="RUNNING_FLAT",
+        projection=None,
+        scenarios=scenarios,
+    )
+
+    assert prioritized == []
+
+
+def test_prioritize_scenarios_does_not_pair_prune_1d_history(monkeypatch):
+    class Edge:
+        sample_count = 80
+        win_rate = 0.42
+        avg_r = -0.08
+        positive = False
+        negative = False
+        severe_negative = False
+
+    monkeypatch.setattr("scenarios.scenario_engine.get_pair_edge", lambda *args, **kwargs: Edge())
+    monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
+    monkeypatch.setattr("scenarios.scenario_engine.get_scenario_edge", lambda *args, **kwargs: None)
+
+    scenario = Scenario(
+        name="Main Bearish",
+        condition="price breaks below 32.0",
+        interpretation="downside continuation",
+        target="28.0",
+        bias="BEARISH",
+        invalidation=35.0,
+        confirmation=32.0,
+        stop_loss=35.0,
+        targets=[30.0, 28.0, 26.0],
+    )
+
+    prioritized = prioritize_scenarios(
+        symbol="AVAXUSDT",
+        timeframe="1D",
+        structure="RUNNING_FLAT",
+        projection=None,
+        scenarios=[scenario],
+    )
+
+    assert prioritized == [scenario]

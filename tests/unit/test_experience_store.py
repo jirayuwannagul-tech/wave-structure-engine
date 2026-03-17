@@ -3,6 +3,7 @@ import json
 from storage.experience_store import (
     build_experience_payload,
     clear_experience_store_cache,
+    get_pair_edge,
     get_pattern_edge,
     get_scenario_edge,
     save_experience_store,
@@ -43,6 +44,8 @@ def test_build_experience_payload_aggregates_by_symbol_timeframe_pattern_and_sid
 
     scenario_item = payload["scenarios"]["SOLUSDT|4H|RUNNING_FLAT|MAIN BEARISH|SHORT"]
     assert scenario_item == item
+    pair_item = payload["pairs"]["SOLUSDT|4H"]
+    assert pair_item == item
 
 
 def test_get_pattern_edge_reads_saved_payload(tmp_path, monkeypatch):
@@ -103,3 +106,34 @@ def test_get_scenario_edge_reads_saved_payload(tmp_path, monkeypatch):
     assert edge.sample_count == 5
     assert edge.avg_r == 0.32
     assert edge.positive is True
+
+
+def test_get_pair_edge_reads_saved_payload(tmp_path, monkeypatch):
+    path = tmp_path / "experience_store.json"
+    monkeypatch.setenv("EXPERIENCE_STORE_PATH", str(path))
+    clear_experience_store_cache()
+
+    save_experience_store(
+        {
+            "version": 3,
+            "patterns": {},
+            "scenarios": {},
+            "pairs": {
+                "AVAXUSDT|4H": {
+                    "sample_count": 48,
+                    "win_count": 18,
+                    "loss_count": 30,
+                    "win_rate": 0.375,
+                    "avg_r": -0.12,
+                    "total_r": -5.76,
+                }
+            },
+        }
+    )
+
+    edge = get_pair_edge("AVAXUSDT", "4H")
+
+    assert edge is not None
+    assert edge.sample_count == 48
+    assert edge.avg_r == -0.12
+    assert edge.win_rate == 0.375

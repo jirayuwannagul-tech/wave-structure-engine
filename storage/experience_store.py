@@ -25,17 +25,18 @@ def clear_experience_store_cache() -> None:
 def load_experience_store() -> dict:
     path = _store_path()
     if not path.exists():
-        return {"version": 2, "patterns": {}, "scenarios": {}}
+        return {"version": 3, "patterns": {}, "scenarios": {}, "pairs": {}}
 
     with path.open("r", encoding="utf-8") as fh:
         payload = json.load(fh)
 
     if not isinstance(payload, dict):
-        return {"version": 2, "patterns": {}, "scenarios": {}}
+        return {"version": 3, "patterns": {}, "scenarios": {}, "pairs": {}}
 
     payload.setdefault("patterns", {})
     payload.setdefault("scenarios", {})
-    payload.setdefault("version", 2)
+    payload.setdefault("pairs", {})
+    payload.setdefault("version", 3)
     return payload
 
 
@@ -57,6 +58,10 @@ def _scenario_key(symbol: str, timeframe: str, pattern: str, scenario_name: str,
         f"{symbol.upper()}|{timeframe.upper()}|{pattern.upper()}|"
         f"{scenario_name.strip().upper()}|{side.upper()}"
     )
+
+
+def _pair_key(symbol: str, timeframe: str) -> str:
+    return f"{symbol.upper()}|{timeframe.upper()}"
 
 
 @dataclass
@@ -114,9 +119,14 @@ def build_experience_payload(records: list[dict]) -> dict:
     grouped_scenarios = defaultdict(
         lambda: {"sample_count": 0, "win_count": 0, "loss_count": 0, "total_r": 0.0}
     )
+    grouped_pairs = defaultdict(
+        lambda: {"sample_count": 0, "win_count": 0, "loss_count": 0, "total_r": 0.0}
+    )
 
     for record in records:
         reward_r = float(record["reward_r"])
+        pair_key = _pair_key(record["symbol"], record["timeframe"])
+        _record_group_edge(grouped_pairs, pair_key, reward_r)
         pattern_key = _edge_key(
             record["symbol"],
             record["timeframe"],
@@ -137,9 +147,10 @@ def build_experience_payload(records: list[dict]) -> dict:
             _record_group_edge(grouped_scenarios, scenario_key, reward_r)
 
     return {
-        "version": 2,
+        "version": 3,
         "patterns": _summarize_grouped_edges(grouped_patterns),
         "scenarios": _summarize_grouped_edges(grouped_scenarios),
+        "pairs": _summarize_grouped_edges(grouped_pairs),
     }
 
 
@@ -180,6 +191,25 @@ def get_scenario_edge(
     item = (payload.get("scenarios") or {}).get(
         _scenario_key(symbol, timeframe, pattern, scenario_name, side)
     )
+    if not item:
+        return None
+
+    return PatternEdge(
+        sample_count=int(item["sample_count"]),
+        win_count=int(item["win_count"]),
+        loss_count=int(item["loss_count"]),
+        win_rate=float(item["win_rate"]),
+        avg_r=float(item["avg_r"]),
+        total_r=float(item["total_r"]),
+    )
+
+
+def get_pair_edge(symbol: str, timeframe: str) -> PatternEdge | None:
+    if not experience_store_enabled():
+        return None
+
+    payload = load_experience_store()
+    item = (payload.get("pairs") or {}).get(_pair_key(symbol, timeframe))
     if not item:
         return None
 

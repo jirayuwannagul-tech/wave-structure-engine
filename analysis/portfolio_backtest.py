@@ -968,11 +968,10 @@ def build_trade_candidates(
         if use_all_scenarios:
             scenarios = analysis.get("all_scenarios") or analysis.get("scenarios") or []
         else:
-            scenarios = (
-                analysis.get("execution_scenarios")
-                if "execution_scenarios" in analysis
-                else analysis.get("scenarios")
-            ) or analysis.get("scenarios") or []
+            if "execution_scenarios" in analysis:
+                scenarios = analysis.get("execution_scenarios") or []
+            else:
+                scenarios = analysis.get("scenarios") or []
         if not scenarios:
             continue
 
