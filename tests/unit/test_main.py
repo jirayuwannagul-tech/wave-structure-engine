@@ -302,15 +302,14 @@ def test_refresh_experience_store_prints_summary(monkeypatch, capsys, tmp_path):
 
 def test_run_system_kpi_prints_summary(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        "main.compute_system_kpis",
-        lambda **kwargs: {
-            "section_scores": {"data": 90.0, "wave_counting": 80.0, "entry_pipeline": 70.0},
-            "symbols": kwargs["symbols"],
-        },
-    )
-    monkeypatch.setattr(
-        "main.write_system_kpi_report",
-        lambda report, output_path=None: tmp_path / "local_system_kpi_report.json",
+        "main._load_system_kpi_tools",
+        lambda: (
+            lambda **kwargs: {
+                "section_scores": {"data": 90.0, "wave_counting": 80.0, "entry_pipeline": 70.0},
+                "symbols": kwargs["symbols"],
+            },
+            lambda report, output_path=None: tmp_path / "local_system_kpi_report.json",
+        ),
     )
 
     main._run_system_kpi(

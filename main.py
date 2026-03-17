@@ -135,13 +135,19 @@ def _run_wave_overlay_chart(symbol: str, output: str | None = None) -> None:
     print(json.dumps({"symbol": symbol.upper(), "output_path": str(path)}, indent=2))
 
 
+def _load_system_kpi_tools():
+    from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
+
+    return compute_system_kpis, write_system_kpi_report
+
+
 def _run_system_kpi(
     symbols: list[str],
     analysis_timeframes: list[str],
     data_timeframes: list[str],
     output: str | None = None,
 ) -> None:
-    from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
+    compute_system_kpis, write_system_kpi_report = _load_system_kpi_tools()
 
     report = compute_system_kpis(
         symbols=symbols,
