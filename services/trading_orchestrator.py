@@ -67,6 +67,15 @@ def _optional_text_line(label: str, value, suffix: str = "") -> str | None:
     return f"• {label}: {value}{suffix}"
 
 
+def _format_trade_side(side: str | None) -> str:
+    normalized = (side or "").upper()
+    if normalized == "LONG":
+        return "🟢 Long"
+    if normalized == "SHORT":
+        return "🔴 Short"
+    return _humanize_token(side)
+
+
 def _fallback_targets(
     bias: str | None,
     entry: float | None,
@@ -438,6 +447,7 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp3 = _signal_value("tp3")
     status = _signal_value("status")
     symbol = _signal_value("symbol")
+    side = _signal_value("side")
     rr_tp1 = _signal_value("rr_tp1")
     rr_tp2 = _signal_value("rr_tp2")
     rr_tp3 = _signal_value("rr_tp3")
@@ -478,6 +488,7 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         "",
         f"• Scenario: {scenario_name}",
         f"• Status: {_humanize_token(status)}",
+        f"• Side: {_format_trade_side(side)}",
         f"• Entry: {_fmt_value(entry_price)}",
         f"• SL: {_fmt_value(stop_loss)}{sl_mark}",
         _optional_level_line("TP1", tp1, f"{tp1_mark}{_rr_suffix(rr_tp1)}"),

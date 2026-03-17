@@ -42,6 +42,7 @@ def test_build_signal_event_message_includes_tracking_summary():
     assert message.startswith("❌ BTCUSDT | 4H Stop Loss Hit")
     assert "• Scenario: Main Bullish" in message
     assert "• Status: Stopped" in message
+    assert "• Side: 🟢 Long" in message
     assert "• SL: 95 ❌" in message
     assert "• TP1: 110 ✅ (2R)" in message
     assert "• TP2: 120 (4R)" in message
@@ -77,6 +78,7 @@ def test_build_signal_event_message_supports_protective_exit_types():
 
     assert message is not None
     assert message.startswith("🛡 ETHUSDT | 4H Opposite Structure Exit")
+    assert "• Side: 🔴 Short" in message
     assert "• Result: Opposite Structure Exit" in message
 
 
