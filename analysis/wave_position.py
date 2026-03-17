@@ -8,6 +8,28 @@ from analysis.wave_detector import ABCPattern, ImpulsePattern
 if TYPE_CHECKING:
     from analysis.inprogress_detector import InProgressWave
 
+_CORRECTIVE_STRUCTURES = {
+    "ABC_CORRECTION",
+    "CORRECTION",
+    "FLAT",
+    "EXPANDED_FLAT",
+    "RUNNING_FLAT",
+    "WXY",
+}
+_TRIANGLE_STRUCTURES = {
+    "TRIANGLE",
+    "CONTRACTING_TRIANGLE",
+    "EXPANDING_TRIANGLE",
+    "ASCENDING_BARRIER_TRIANGLE",
+    "DESCENDING_BARRIER_TRIANGLE",
+}
+_TREND_STRUCTURES = {
+    "IMPULSE",
+    "ENDING_DIAGONAL",
+    "LEADING_DIAGONAL",
+}
+_GENERIC_STRUCTURES = {"UNKNOWN", "CORRECTION", "IMPULSE"}
+
 
 @dataclass
 class WavePosition:
@@ -122,6 +144,35 @@ def _build_pattern_position(pattern_type: str, pattern) -> WavePosition:
     )
 
 
+def _resolve_inprogress_structure(
+    pattern_type: str | None,
+    inprogress_structure: str | None,
+) -> str:
+    pattern_type = (pattern_type or "").upper()
+    inprogress_structure = (inprogress_structure or "").upper()
+
+    if not inprogress_structure:
+        return pattern_type or "UNKNOWN"
+
+    # Keep the richer parent structure whenever the in-progress detector only
+    # knows the generic leg shape. This preserves pattern subtype context such
+    # as EXPANDED_FLAT / RUNNING_FLAT / TRIANGLE while a sub-wave is building.
+    if pattern_type and pattern_type not in _GENERIC_STRUCTURES and inprogress_structure in _GENERIC_STRUCTURES:
+        return pattern_type
+
+    if inprogress_structure == "CORRECTION":
+        if pattern_type in _CORRECTIVE_STRUCTURES | _TRIANGLE_STRUCTURES:
+            return pattern_type
+        return inprogress_structure
+
+    if inprogress_structure == "IMPULSE":
+        if pattern_type in _TREND_STRUCTURES:
+            return pattern_type
+        return inprogress_structure
+
+    return inprogress_structure
+
+
 def detect_wave_position(
     pattern_type: str | None = None,
     pattern=None,
@@ -134,7 +185,7 @@ def detect_wave_position(
         bias = "BULLISH" if inprogress.direction == "bullish" else "BEARISH"
         conf = "high" if inprogress.completed_waves >= 3 else "medium"
         return WavePosition(
-            structure=inprogress.structure,
+            structure=_resolve_inprogress_structure(pattern_type, inprogress.structure),
             position=f"IN_WAVE_{inprogress.wave_number}",
             bias=bias,
             confidence=conf,

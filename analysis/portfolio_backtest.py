@@ -5,7 +5,6 @@ from dataclasses import asdict, dataclass
 import pandas as pd
 
 from analysis.backtest_timeframe_context import resolve_backtest_higher_timeframe_context
-from analysis.setup_filter import apply_trade_filters
 from analysis.trade_backtest import (
     TradeSetup,
     _effective_entry_from_open,
@@ -18,7 +17,7 @@ from analysis.trade_backtest import (
     build_trade_setup_from_scenario,
 )
 from core.engine import build_dataframe_analysis
-from storage.experience_store import get_pattern_edge
+from storage.experience_store import get_pattern_edge, get_scenario_edge
 
 
 @dataclass
@@ -68,6 +67,7 @@ class TradeCandidate:
     entry_price: float | None
     exit_price: float | None
     priority_score: float
+    scenario_name: str | None = None
 
 
 @dataclass
@@ -117,18 +117,32 @@ def _candidate_priority(
     symbol: str,
     timeframe: str,
     pattern: str | None,
+    scenario_name: str | None,
     side: str,
     confidence: float,
     probability: float,
 ) -> float:
-    edge = get_pattern_edge(symbol, timeframe, pattern, side)
+    pattern_edge = get_pattern_edge(symbol, timeframe, pattern, side)
+    scenario_edge = get_scenario_edge(symbol, timeframe, pattern, scenario_name, side)
     edge_bonus = 0.0
-    if edge is not None:
-        if edge.positive:
-            edge_bonus = 0.25
-        elif edge.negative:
-            edge_bonus = -0.15
-    return round((confidence * 0.45) + (probability * 0.35) + edge_bonus, 6)
+
+    if pattern_edge is not None:
+        edge_bonus += float(pattern_edge.avg_r) * 0.15
+        if pattern_edge.positive:
+            edge_bonus += 0.2
+        elif pattern_edge.negative:
+            edge_bonus -= 0.15
+
+    if scenario_edge is not None:
+        edge_bonus += float(scenario_edge.avg_r) * 0.35
+        if scenario_edge.positive:
+            edge_bonus += 0.35
+        elif scenario_edge.negative:
+            edge_bonus -= 0.2
+        if scenario_edge.severe_negative:
+            edge_bonus -= 0.35
+
+    return round((confidence * 0.35) + (probability * 0.25) + edge_bonus, 6)
 
 
 def _timestamp_at(df, idx: int | None) -> pd.Timestamp | None:
@@ -240,6 +254,7 @@ def simulate_trade_lifecycle(
         )
 
     remaining_size = 1.0
+    dynamic_stop = float(setup.stop_loss)
     target_cursor = 0
     realized_targets: list[str] = []
     realized_size_pct = 0.0
@@ -277,7 +292,10 @@ def simulate_trade_lifecycle(
 
     for i in range(entry_index, len(df)):
         candle = df.iloc[i]
-        stop_hit = _stop_hit(candle, setup)
+        if _is_long(setup):
+            stop_hit = float(candle["low"]) <= dynamic_stop
+        else:
+            stop_hit = float(candle["high"]) >= dynamic_stop
         next_label = None
         next_target_price = None
         if target_cursor < len(targets):
@@ -285,7 +303,36 @@ def simulate_trade_lifecycle(
         target_hit = next_target_price is not None and _target_hit(candle, float(next_target_price), setup)
 
         if stop_hit and target_hit:
-            stop_exit = _effective_exit_price(float(setup.stop_loss), setup, slippage_rate)
+            candle_open = float(candle["open"])
+            stop_distance = abs(candle_open - dynamic_stop)
+            target_distance = abs(candle_open - float(next_target_price))
+
+            # When both sides trade within the same candle and we do not have
+            # intrabar data, resolve by proximity to the candle open rather than
+            # always assuming the worst case. This keeps the backtest neutral.
+            if target_distance < stop_distance:
+                effective_target = _effective_exit_price(float(next_target_price), setup, slippage_rate)
+                gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(
+                    effective_entry,
+                    effective_target,
+                    setup,
+                    fee_rate,
+                )
+                fill_size = min(remaining_size, targets[target_cursor][2])
+                gross_total += gross_pnl * fill_size
+                net_total += net_pnl * fill_size
+                fee_total += fee_paid * fill_size
+                realized_targets.append(next_label)
+                realized_size_pct += fill_size
+                remaining_size -= fill_size
+                exit_index = i
+                exit_price = effective_target
+                target_cursor += 1
+                if remaining_size <= 1e-9:
+                    remaining_size = 0.0
+                    break
+
+            stop_exit = _effective_exit_price(dynamic_stop, setup, slippage_rate)
             gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(effective_entry, stop_exit, setup, fee_rate)
             gross_total += gross_pnl * remaining_size
             net_total += net_pnl * remaining_size
@@ -297,7 +344,7 @@ def simulate_trade_lifecycle(
             break
 
         if stop_hit:
-            stop_exit = _effective_exit_price(float(setup.stop_loss), setup, slippage_rate)
+            stop_exit = _effective_exit_price(dynamic_stop, setup, slippage_rate)
             gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(effective_entry, stop_exit, setup, fee_rate)
             gross_total += gross_pnl * remaining_size
             net_total += net_pnl * remaining_size
@@ -325,6 +372,15 @@ def simulate_trade_lifecycle(
             exit_index = i
             exit_price = effective_target
             target_cursor += 1
+
+            # Protect remaining size once the trade has proven itself.
+            if remaining_size > 1e-9:
+                if label == "TP1":
+                    dynamic_stop = effective_entry
+                elif label == "TP2":
+                    tp1_price = float(setup.take_profit_1 or effective_entry)
+                    dynamic_stop = max(dynamic_stop, tp1_price) if _is_long(setup) else min(dynamic_stop, tp1_price)
+
             if remaining_size <= 1e-9:
                 remaining_size = 0.0
                 break
@@ -522,13 +578,6 @@ def run_portfolio_backtest(
             continue
 
         htf_wave_number = str((higher_timeframe_context or {}).get("wave_number") or "").upper() or None
-        analysis = apply_trade_filters(
-            analysis,
-            higher_timeframe_bias=higher_timeframe_bias,
-            htf_wave_number=htf_wave_number,
-            higher_timeframe_context=higher_timeframe_context,
-        )
-
         # ── Hierarchical wave count injection (1D only) ────────────────────
         # When the pattern detector finds nothing OR filters all scenarios,
         # try the hierarchical counter (Primary 1W + Intermediate 1D).
@@ -579,14 +628,6 @@ def run_portfolio_backtest(
                         analysis["has_pattern"] = True
                         analysis["primary_pattern_type"] = wave_label
                         analysis["hierarchical_count"] = hier_count
-                        # Re-run quality filter so hierarchical scenarios obey the same rules
-                        analysis = apply_trade_filters(
-                            analysis,
-                            higher_timeframe_bias=higher_timeframe_bias,
-                            htf_wave_number=htf_wave_number,
-                            higher_timeframe_context=higher_timeframe_context,
-                        )
-
         if not analysis.get("has_pattern"):
             continue
 
@@ -605,6 +646,7 @@ def run_portfolio_backtest(
             symbol=symbol,
             timeframe=timeframe,
             pattern=analysis.get("primary_pattern_type"),
+            scenario_name=getattr(main_scenario, "name", None),
             side=setup.side,
             confidence=float(analysis.get("confidence") or 0.0),
             probability=float(analysis.get("probability") or 0.0),
@@ -685,6 +727,7 @@ def build_trade_candidates(
     minor_timeframe_min_window: int | None = None,
     sub_minor_csv_path: str | None = None,
     sub_minor_min_window: int | None = None,
+    use_all_scenarios: bool = False,
 ) -> dict:
     from analysis.indicator_engine import calculate_atr as _calc_atr
 
@@ -741,13 +784,6 @@ def build_trade_candidates(
             continue
 
         htf_wave_number = str((higher_timeframe_context or {}).get("wave_number") or "").upper() or None
-        analysis = apply_trade_filters(
-            analysis,
-            higher_timeframe_bias=higher_timeframe_bias,
-            htf_wave_number=htf_wave_number,
-            higher_timeframe_context=higher_timeframe_context,
-        )
-
         # ── Hierarchical wave count injection (1D only) ────────────────────
         if (
             higher_timeframe_df is not None
@@ -832,68 +868,69 @@ def build_trade_candidates(
                         analysis["hierarchical_count"] = hier_count
                         analysis["_hier_fingerprint"] = hier_count.wave_fingerprint
                         analysis["_hier_dedup_key"] = dedup_key
-                        # Re-run quality filter so hierarchical scenarios obey the same rules
-                        analysis = apply_trade_filters(
-                            analysis,
-                            higher_timeframe_bias=higher_timeframe_bias,
-                            htf_wave_number=htf_wave_number,
-                            higher_timeframe_context=higher_timeframe_context,
-                        )
-
         if not analysis.get("has_pattern"):
             continue
 
         analyzed_cases += 1
-        scenarios = analysis.get("scenarios") or []
+        scenario_pool_key = "all_scenarios" if use_all_scenarios else "scenarios"
+        scenarios = analysis.get(scenario_pool_key) or analysis.get("scenarios") or []
         if not scenarios:
             continue
 
-        main_scenario = scenarios[0]
-        setup = build_trade_setup_from_scenario(main_scenario)
-        if setup is None:
-            continue
+        built_any_setup = False
+        appended_any_candidate = False
+        for scenario in scenarios:
+            setup = build_trade_setup_from_scenario(scenario)
+            if setup is None:
+                continue
+            built_any_setup = True
+            priority_score = _candidate_priority(
+                symbol=symbol,
+                timeframe=timeframe,
+                pattern=analysis.get("primary_pattern_type"),
+                scenario_name=getattr(scenario, "name", None),
+                side=setup.side,
+                confidence=float(analysis.get("confidence") or 0.0),
+                probability=float(analysis.get("probability") or 0.0),
+            )
+            lifecycle = simulate_trade_lifecycle(
+                future_df,
+                setup,
+                fee_rate=fee_rate,
+                slippage_rate=slippage_rate,
+                tp_allocations=tp_allocations,
+            )
+            if not lifecycle.triggered or lifecycle.entry_time is None:
+                continue
 
-        setups_built += 1
+            appended_any_candidate = True
+            candidates.append(
+                TradeCandidate(
+                    symbol=symbol.upper(),
+                    timeframe=timeframe.upper(),
+                    structure=analysis.get("primary_pattern_type"),
+                    scenario_name=getattr(scenario, "name", None),
+                    side=setup.side,
+                    outcome=lifecycle.outcome,
+                    reward_r=float(lifecycle.reward_r),
+                    entry_time=lifecycle.entry_time,
+                    exit_time=lifecycle.exit_time,
+                    entry_price=lifecycle.entry_price,
+                    exit_price=lifecycle.exit_price,
+                    priority_score=priority_score,
+                )
+            )
+            if not use_all_scenarios:
+                break
+
+        if built_any_setup:
+            setups_built += 1
 
         # Record the wave fingerprint so we don't re-enter the same wave
         hier_fp = analysis.get("_hier_fingerprint")
         hier_dk = analysis.get("_hier_dedup_key")
-        if hier_fp and hier_dk:
+        if hier_fp and hier_dk and (appended_any_candidate or built_any_setup):
             hier_wave_seen[hier_dk] = hier_fp
-
-        priority_score = _candidate_priority(
-            symbol=symbol,
-            timeframe=timeframe,
-            pattern=analysis.get("primary_pattern_type"),
-            side=setup.side,
-            confidence=float(analysis.get("confidence") or 0.0),
-            probability=float(analysis.get("probability") or 0.0),
-        )
-        lifecycle = simulate_trade_lifecycle(
-            future_df,
-            setup,
-            fee_rate=fee_rate,
-            slippage_rate=slippage_rate,
-            tp_allocations=tp_allocations,
-        )
-        if not lifecycle.triggered or lifecycle.entry_time is None:
-            continue
-
-        candidates.append(
-            TradeCandidate(
-                symbol=symbol.upper(),
-                timeframe=timeframe.upper(),
-                structure=analysis.get("primary_pattern_type"),
-                side=setup.side,
-                outcome=lifecycle.outcome,
-                reward_r=float(lifecycle.reward_r),
-                entry_time=lifecycle.entry_time,
-                exit_time=lifecycle.exit_time,
-                entry_price=lifecycle.entry_price,
-                exit_price=lifecycle.exit_price,
-                priority_score=priority_score,
-            )
-        )
 
     summary = PortfolioCandidateSummary(
         symbol=symbol.upper(),

@@ -128,7 +128,6 @@ def test_run_trade_backtest_with_invalid_setup(monkeypatch):
     dummy_df = _make_dummy_ohlcv(30)
     monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis", lambda **kwargs: _fake_analysis_with_pattern())
     monkeypatch.setattr("analysis.trade_backtest_runner.build_trade_setup_from_scenario", lambda s: None)
-    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters", lambda a, **kw: a)
 
     with patch("pandas.read_csv", return_value=dummy_df):
         result = run_trade_backtest("dummy.csv", "1D", min_window=10, step=5)
@@ -141,7 +140,6 @@ def test_run_trade_backtest_with_valid_setup(monkeypatch):
     """When everything is valid, simulate_trade should be called and results recorded."""
     dummy_df = _make_dummy_ohlcv(30)
     monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis", lambda **kwargs: _fake_analysis_with_pattern())
-    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters", lambda a, **kw: a)
 
     from analysis.trade_backtest import TradeBacktestResult
     fake_trade_result = TradeBacktestResult(
@@ -169,7 +167,6 @@ def test_run_trade_backtest_no_scenarios(monkeypatch):
     dummy_df = _make_dummy_ohlcv(30)
     analysis = {"has_pattern": True, "scenarios": [], "primary_pattern_type": "FLAT"}
     monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis", lambda **kwargs: analysis)
-    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters", lambda a, **kw: a)
 
     with patch("pandas.read_csv", return_value=dummy_df):
         result = run_trade_backtest("dummy.csv", "1D", min_window=10, step=5)
@@ -184,7 +181,6 @@ def test_run_trade_backtest_returns_dict_structure():
     with (
         patch("pandas.read_csv", return_value=dummy_df),
         patch("analysis.trade_backtest_runner.build_dataframe_analysis", return_value={"has_pattern": False}),
-        patch("analysis.trade_backtest_runner.apply_trade_filters", return_value={"has_pattern": False}),
     ):
         result = run_trade_backtest("dummy.csv", "4H", min_window=5, step=2)
 
@@ -210,8 +206,6 @@ def test_run_trade_backtest_with_higher_timeframe(monkeypatch):
 
     monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis",
                         lambda **kwargs: {"has_pattern": False})
-    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters",
-                        lambda a, **kw: a)
 
     with patch("pandas.read_csv", side_effect=fake_read_csv):
         result = run_trade_backtest(
@@ -261,8 +255,6 @@ def test_run_trade_backtest_with_parent_timeframe_csv(monkeypatch):
 
     monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis",
                         lambda **kwargs: {"has_pattern": False})
-    monkeypatch.setattr("analysis.trade_backtest_runner.apply_trade_filters",
-                        lambda a, **kw: a)
 
     with patch("pandas.read_csv", side_effect=fake_read_csv):
         result = run_trade_backtest(

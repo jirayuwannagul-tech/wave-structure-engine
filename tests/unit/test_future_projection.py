@@ -118,6 +118,58 @@ def test_project_next_wave_from_triangle():
     assert result.target_2 == 100.0
 
 
+def test_project_next_wave_from_triangle_variant():
+    position = WavePosition(
+        structure="ASCENDING_BARRIER_TRIANGLE",
+        position="IN_WAVE_A",
+        bias="NEUTRAL",
+        confidence="medium",
+    )
+
+    key_levels = KeyLevels(
+        structure_type="triangle",
+        support=100.0,
+        resistance=120.0,
+        invalidation=100.0,
+        confirmation=120.0,
+        wave_start=120.0,
+        wave_end=110.0,
+    )
+
+    result = project_next_wave(position, key_levels)
+
+    assert result.expected_structure == "BREAKOUT"
+    assert result.expected_direction == "NEUTRAL"
+    assert result.target_1 == 120.0
+    assert result.target_2 == 100.0
+
+
+def test_project_next_wave_from_generic_correction():
+    position = WavePosition(
+        structure="CORRECTION",
+        position="IN_WAVE_A",
+        bias="BEARISH",
+        confidence="medium",
+    )
+
+    key_levels = KeyLevels(
+        structure_type="correction",
+        support=80.0,
+        resistance=100.0,
+        invalidation=105.0,
+        confirmation=80.0,
+        wave_start=100.0,
+        wave_end=85.0,
+    )
+
+    result = project_next_wave(position, key_levels)
+
+    assert result.expected_structure == "NEW_BEARISH_IMPULSE"
+    assert result.expected_direction == "DOWN"
+    assert result.confirmation == 80.0
+    assert result.invalidation == 105.0
+
+
 def test_project_next_wave_from_bullish_impulse():
     position = WavePosition(
         structure="IMPULSE",

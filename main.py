@@ -11,6 +11,7 @@ from analysis.portfolio_backtest import (
     run_global_portfolio_backtest,
     run_portfolio_backtest,
 )
+from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
 from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.settings import load_env_file
 from data.market_data_fetcher import MarketDataFetcher
@@ -133,6 +134,25 @@ def _run_market_data_sync(
 def _run_wave_overlay_chart(symbol: str, output: str | None = None) -> None:
     path = build_wave_overlay_svg(symbol=symbol, output_path=output)
     print(json.dumps({"symbol": symbol.upper(), "output_path": str(path)}, indent=2))
+
+
+def _run_system_kpi(
+    symbols: list[str],
+    analysis_timeframes: list[str],
+    data_timeframes: list[str],
+    output: str | None = None,
+) -> None:
+    report = compute_system_kpis(
+        symbols=symbols,
+        analysis_timeframes=analysis_timeframes,
+        data_timeframes=data_timeframes,
+    )
+    output_path = write_system_kpi_report(report, output_path=output)
+    payload = {
+        **report,
+        "output_path": str(output_path),
+    }
+    print(json.dumps(payload, indent=2))
 
 
 def _run_trade_backtest(
@@ -464,6 +484,7 @@ def _refresh_experience_store(
                     higher_timeframe_min_window=higher_timeframe_min_window,
                     parent_timeframe_csv_path=parent_timeframe_csv_path,
                     parent_timeframe_min_window=parent_timeframe_min_window,
+                    use_all_scenarios=True,
                 )
 
                 key = f"{symbol.upper()}:{timeframe.upper()}"
@@ -473,6 +494,7 @@ def _refresh_experience_store(
                         "symbol": candidate["symbol"],
                         "timeframe": candidate["timeframe"],
                         "pattern": candidate["structure"] or "UNKNOWN",
+                        "scenario_name": candidate.get("scenario_name"),
                         "side": candidate["side"],
                         "reward_r": candidate["reward_r"],
                     }
@@ -586,6 +608,16 @@ def build_parser() -> argparse.ArgumentParser:
     wave_overlay_parser.add_argument("--symbol", default="BTCUSDT")
     wave_overlay_parser.add_argument("--output")
 
+    system_kpi_parser = subparsers.add_parser(
+        "system-kpi",
+        help="Compute local KPI report for data, wave counting, and entry quality",
+    )
+    system_kpi_parser.add_argument("--symbol", default="BTCUSDT")
+    system_kpi_parser.add_argument("--symbols", nargs="*")
+    system_kpi_parser.add_argument("--analysis-timeframes", nargs="*", default=["1D", "4H"])
+    system_kpi_parser.add_argument("--data-timeframes", nargs="*", default=["1W", "1D", "4H"])
+    system_kpi_parser.add_argument("--output")
+
     dashboard_parser = subparsers.add_parser("terminal-dashboard", help="Render read-only terminal dashboard")
     dashboard_parser.add_argument("--symbol", default="BTCUSDT")
     dashboard_parser.add_argument("--watch", action="store_true")
@@ -688,6 +720,15 @@ def main() -> None:
     if args.command == "wave-overlay-chart":
         _run_wave_overlay_chart(
             symbol=args.symbol,
+            output=args.output,
+        )
+        return
+
+    if args.command == "system-kpi":
+        _run_system_kpi(
+            symbols=_resolve_symbols(args.symbol, args.symbols),
+            analysis_timeframes=args.analysis_timeframes,
+            data_timeframes=args.data_timeframes,
             output=args.output,
         )
         return

@@ -62,6 +62,10 @@ class InProgressWave:
     def current_wave_direction(self) -> str:
         """Direction of the wave being built (not the overall structure)."""
         n = self.wave_number
+        if n in {"A", "C", "W", "Y"}:
+            return "bearish" if self.direction == "bullish" else "bullish"
+        if n in {"B", "X"}:
+            return "bullish" if self.direction == "bullish" else "bearish"
         if self.direction == "bullish":
             # Odd waves move up, even waves correct down
             return "bullish" if n in ("1", "3", "5") else "bearish"

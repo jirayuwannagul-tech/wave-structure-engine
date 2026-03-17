@@ -12,7 +12,6 @@ from analysis.multi_count_engine import (
     generate_wave_counts,
 )
 from analysis.pivot_detector import detect_pivots
-from analysis.setup_filter import apply_trade_filters
 from analysis.trend_classifier import classify_market_trend
 from analysis.wave_decision_engine import build_wave_summary
 from analysis.wave_position import detect_wave_position
@@ -20,7 +19,9 @@ from analysis.wave_sequence_engine import build_wave_sequence
 from data.candle_utils import drop_unclosed_candle
 from data.market_data_fetcher import MarketDataFetcher
 from output.report_formatter import format_report
-from scenarios.scenario_engine import generate_scenarios
+from scenarios.scenario_engine import generate_scenarios, prioritize_scenarios
+
+_GENERIC_STRUCTURES = {"UNKNOWN", "IMPULSE", "CORRECTION"}
 
 
 def _price_in_pattern_zone(
@@ -52,6 +53,19 @@ def _price_in_pattern_zone(
     zone_range = high - low if high != low else high * 0.05
 
     return (low - zone_range * tolerance) <= current_price <= (high + zone_range * tolerance)
+
+
+def _prefer_specific_structure(existing: str | None, incoming: str | None) -> str | None:
+    existing = (existing or "").upper()
+    incoming = (incoming or "").upper()
+
+    if not incoming:
+        return existing or None
+    if not existing:
+        return incoming
+    if incoming in _GENERIC_STRUCTURES and existing not in _GENERIC_STRUCTURES:
+        return existing
+    return incoming
 
 
 def build_dataframe_analysis(
@@ -216,19 +230,20 @@ def build_dataframe_analysis(
     current_leg_structure = current_leg.get("structure")
     current_leg_position = current_leg.get("position")
     if current_leg_label:
+        merged_structure = _prefer_specific_structure(position.structure, current_leg_structure)
         if hasattr(position, "__dataclass_fields__"):
             position = replace(
                 position,
                 wave_number=current_leg_label,
                 building_wave=bool(current_leg.get("building", position.building_wave)),
                 position=current_leg_position or position.position,
-                structure=current_leg_structure or position.structure,
+                structure=merged_structure or position.structure,
             )
         else:
             position.wave_number = current_leg_label
             position.building_wave = bool(current_leg.get("building", getattr(position, "building_wave", False)))
             position.position = current_leg_position or getattr(position, "position", None)
-            position.structure = current_leg_structure or getattr(position, "structure", None)
+            position.structure = merged_structure or getattr(position, "structure", None)
 
     # Build Fibonacci confluence zones from recent significant swings
     confluence_zones = []
@@ -277,6 +292,16 @@ def build_dataframe_analysis(
             for s in inprogress_scenarios:
                 if getattr(s, "bias", None) not in existing_biases:
                     scenarios.append(s)
+
+    raw_scenarios = list(scenarios)
+    scenarios = prioritize_scenarios(
+        symbol=symbol,
+        timeframe=timeframe.upper(),
+        structure=primary_pattern_type,
+        projection=projection,
+        scenarios=scenarios,
+        confluence_zones=confluence_zones,
+    )
 
     probability = primary_report.get("probability")
     confidence = primary_report.get("confidence")
@@ -327,12 +352,13 @@ def build_dataframe_analysis(
         "candle_patterns": candle_patterns,
     }
 
-    return apply_trade_filters(
-        analysis,
-        higher_timeframe_bias=higher_timeframe_bias,
-        htf_wave_number=higher_timeframe_wave_number,
-        higher_timeframe_context=higher_timeframe_context,
-    )
+    analysis["all_scenarios"] = raw_scenarios
+    analysis["trade_filter"] = {
+        "disabled": True,
+        "notes": ["trade filters disabled"],
+    }
+    analysis["wave_hierarchy"] = None
+    return analysis
 
 
 _CANDLE_LIMITS: dict[str, int] = {"1W": 500, "1D": 300, "4H": 200, "1H": 200}

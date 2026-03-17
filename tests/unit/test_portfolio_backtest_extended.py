@@ -89,16 +89,19 @@ def test_timestamp_at_valid():
 def test_candidate_priority_no_edge():
     """When no edge exists, score is based on confidence + probability only."""
     from unittest.mock import patch
-    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=None):
+    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=None), patch(
+        "analysis.portfolio_backtest.get_scenario_edge", return_value=None
+    ):
         score = _candidate_priority(
             symbol="BTCUSDT",
             timeframe="1D",
             pattern="ABC_CORRECTION",
+            scenario_name="Main Bullish",
             side="LONG",
             confidence=0.8,
             probability=0.7,
         )
-    expected = round(0.8 * 0.45 + 0.7 * 0.35, 6)
+    expected = round(0.8 * 0.35 + 0.7 * 0.25, 6)
     assert score == expected
 
 
@@ -107,16 +110,21 @@ def test_candidate_priority_positive_edge():
     fake_edge = MagicMock()
     fake_edge.positive = True
     fake_edge.negative = False
-    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=fake_edge):
+    fake_edge.severe_negative = False
+    fake_edge.avg_r = 0.0
+    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=fake_edge), patch(
+        "analysis.portfolio_backtest.get_scenario_edge", return_value=None
+    ):
         score = _candidate_priority(
             symbol="BTCUSDT",
             timeframe="1D",
             pattern="IMPULSE",
+            scenario_name="Main Bullish",
             side="LONG",
             confidence=0.8,
             probability=0.7,
         )
-    expected = round(0.8 * 0.45 + 0.7 * 0.35 + 0.25, 6)
+    expected = round(0.8 * 0.35 + 0.7 * 0.25 + 0.2, 6)
     assert score == expected
 
 
@@ -125,16 +133,21 @@ def test_candidate_priority_negative_edge():
     fake_edge = MagicMock()
     fake_edge.positive = False
     fake_edge.negative = True
-    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=fake_edge):
+    fake_edge.severe_negative = False
+    fake_edge.avg_r = 0.0
+    with patch("analysis.portfolio_backtest.get_pattern_edge", return_value=fake_edge), patch(
+        "analysis.portfolio_backtest.get_scenario_edge", return_value=None
+    ):
         score = _candidate_priority(
             symbol="BTCUSDT",
             timeframe="1D",
             pattern="FLAT",
+            scenario_name="Main Bearish",
             side="SHORT",
             confidence=0.6,
             probability=0.5,
         )
-    expected = round(0.6 * 0.45 + 0.5 * 0.35 - 0.15, 6)
+    expected = round(0.6 * 0.35 + 0.5 * 0.25 - 0.15, 6)
     assert score == expected
 
 
@@ -394,7 +407,6 @@ def test_run_portfolio_backtest_no_pattern(monkeypatch):
     """When no patterns detected, should return empty trades."""
     dummy_df = _make_dummy_ohlcv(20)
     monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: {"has_pattern": False})
-    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
 
     with patch("pandas.read_csv", return_value=dummy_df):
         result = run_portfolio_backtest(
@@ -427,7 +439,6 @@ def test_run_portfolio_backtest_with_triggered_trade(monkeypatch):
     }
 
     monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: analysis)
-    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
     monkeypatch.setattr("analysis.portfolio_backtest.get_pattern_edge", lambda *a, **kw: None)
 
     entry_time = pd.Timestamp("2026-01-15T00:00:00Z")
@@ -470,7 +481,6 @@ def test_build_trade_candidates_no_pattern(monkeypatch):
     """Returns empty candidates when no patterns detected."""
     dummy_df = _make_dummy_ohlcv(20)
     monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: {"has_pattern": False})
-    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
 
     with patch("pandas.read_csv", return_value=dummy_df):
         result = build_trade_candidates(
@@ -503,7 +513,6 @@ def test_build_trade_candidates_with_triggered(monkeypatch):
     }
 
     monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: analysis)
-    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
     monkeypatch.setattr("analysis.portfolio_backtest.get_pattern_edge", lambda *a, **kw: None)
 
     entry_time = pd.Timestamp("2026-01-15T00:00:00Z")
@@ -561,7 +570,6 @@ def test_build_trade_candidates_skips_4h_when_daily_context_is_not_tradeable(mon
         "analysis.portfolio_backtest.resolve_backtest_higher_timeframe_context",
         lambda **kwargs: ("BEARISH", {"timeframe": "1D", "is_tradeable": False}, False),
     )
-    monkeypatch.setattr("analysis.portfolio_backtest.apply_trade_filters", lambda a, **kw: a)
 
     with patch("pandas.read_csv", return_value=dummy_df):
         result = build_trade_candidates(

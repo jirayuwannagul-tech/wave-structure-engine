@@ -104,6 +104,52 @@ def test_terminal_dashboard_command_routes_to_dashboard(monkeypatch):
     assert captured == {"symbol": "BTCUSDT", "watch": True, "refresh_seconds": 3.0}
 
 
+def test_system_kpi_command_routes_to_runner(monkeypatch):
+    captured = {}
+
+    def fake_run_system_kpi(symbols, analysis_timeframes, data_timeframes, output):
+        captured["symbols"] = symbols
+        captured["analysis_timeframes"] = analysis_timeframes
+        captured["data_timeframes"] = data_timeframes
+        captured["output"] = output
+
+    monkeypatch.setattr("main._run_system_kpi", fake_run_system_kpi)
+
+    parser = main.build_parser()
+    args = parser.parse_args(
+        [
+            "system-kpi",
+            "--symbols",
+            "BTCUSDT",
+            "ETHUSDT",
+            "--analysis-timeframes",
+            "1D",
+            "4H",
+            "--data-timeframes",
+            "1W",
+            "1D",
+            "4H",
+            "--output",
+            "storage/report.json",
+        ]
+    )
+
+    if args.command == "system-kpi":
+        main._run_system_kpi(
+            symbols=main._resolve_symbols(args.symbol, args.symbols),
+            analysis_timeframes=args.analysis_timeframes,
+            data_timeframes=args.data_timeframes,
+            output=args.output,
+        )
+
+    assert captured == {
+        "symbols": ["BTCUSDT", "ETHUSDT"],
+        "analysis_timeframes": ["1D", "4H"],
+        "data_timeframes": ["1W", "1D", "4H"],
+        "output": "storage/report.json",
+    }
+
+
 def test_web_dashboard_command_routes_to_server(monkeypatch):
     captured = {}
 
@@ -246,3 +292,28 @@ def test_refresh_experience_store_prints_summary(monkeypatch, capsys, tmp_path):
     output = json.loads(capsys.readouterr().out)
     assert output["record_count"] == 2
     assert output["pattern_edges"] == 1
+
+
+def test_run_system_kpi_prints_summary(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(
+        "main.compute_system_kpis",
+        lambda **kwargs: {
+            "section_scores": {"data": 90.0, "wave_counting": 80.0, "entry_pipeline": 70.0},
+            "symbols": kwargs["symbols"],
+        },
+    )
+    monkeypatch.setattr(
+        "main.write_system_kpi_report",
+        lambda report, output_path=None: tmp_path / "local_system_kpi_report.json",
+    )
+
+    main._run_system_kpi(
+        symbols=["BTCUSDT"],
+        analysis_timeframes=["1D", "4H"],
+        data_timeframes=["1W", "1D", "4H"],
+        output=None,
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["section_scores"]["wave_counting"] == 80.0
+    assert output["output_path"].endswith("local_system_kpi_report.json")

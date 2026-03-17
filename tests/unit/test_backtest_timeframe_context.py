@@ -70,12 +70,8 @@ def test_resolve_backtest_higher_timeframe_context_blocks_4h_when_daily_is_not_t
             "primary_pattern_type": "ABC_CORRECTION",
             "position": SimpleNamespace(bias="BULLISH", wave_number="B", structure="ABC_CORRECTION", position="IN_WAVE_B"),
             "wave_summary": {"bias": "BULLISH", "current_wave": "B"},
-            "scenarios": [SimpleNamespace(name="Main Bullish", bias="BULLISH")],
+            "scenarios": [],
         },
-    )
-    monkeypatch.setattr(
-        "analysis.backtest_timeframe_context.apply_trade_filters",
-        lambda analysis, **kwargs: {**analysis, "scenarios": [], "trade_filter": {"scenario_count_after": 0}},
     )
 
     bias, context, allow_analysis = resolve_backtest_higher_timeframe_context(

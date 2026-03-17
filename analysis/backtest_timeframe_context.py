@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.setup_filter import apply_trade_filters, build_higher_timeframe_context, extract_trade_bias
+from analysis.setup_filter import build_higher_timeframe_context, extract_trade_bias
 from core.engine import build_dataframe_analysis
 from storage.manual_wave_context import get_manual_wave_context, serialize_manual_wave_context
 
@@ -60,9 +60,6 @@ def resolve_backtest_higher_timeframe_context(
         timeframe="1D",
         df=higher_sample_df,
         current_price=float(higher_sample_df.iloc[-1]["close"]),
-    )
-    daily_analysis = apply_trade_filters(
-        daily_analysis,
         higher_timeframe_bias=weekly_bias,
         higher_timeframe_context=weekly_context,
     )

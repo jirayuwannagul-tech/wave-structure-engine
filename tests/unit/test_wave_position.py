@@ -183,6 +183,66 @@ def test_detect_wave_position_inprogress_low_completed():
     assert pos.confidence == "medium"
 
 
+def test_detect_wave_position_preserves_triangle_subtype_for_inprogress_correction():
+    from types import SimpleNamespace
+
+    inprogress = SimpleNamespace(
+        is_valid=True,
+        direction="bearish",
+        wave_number="A",
+        completed_waves=1,
+        structure="CORRECTION",
+    )
+
+    pos = detect_wave_position(
+        pattern_type="ASCENDING_BARRIER_TRIANGLE",
+        inprogress=inprogress,
+    )
+
+    assert pos.structure == "ASCENDING_BARRIER_TRIANGLE"
+    assert pos.position == "IN_WAVE_A"
+
+
+def test_detect_wave_position_preserves_flat_subtype_for_inprogress_correction():
+    from types import SimpleNamespace
+
+    inprogress = SimpleNamespace(
+        is_valid=True,
+        direction="bullish",
+        wave_number="C",
+        completed_waves=2,
+        structure="CORRECTION",
+    )
+
+    pos = detect_wave_position(
+        pattern_type="EXPANDED_FLAT",
+        inprogress=inprogress,
+    )
+
+    assert pos.structure == "EXPANDED_FLAT"
+    assert pos.position == "IN_WAVE_C"
+
+
+def test_detect_wave_position_preserves_specific_subtype_for_generic_inprogress_impulse():
+    from types import SimpleNamespace
+
+    inprogress = SimpleNamespace(
+        is_valid=True,
+        direction="bearish",
+        wave_number="4",
+        completed_waves=3,
+        structure="IMPULSE",
+    )
+
+    pos = detect_wave_position(
+        pattern_type="EXPANDED_FLAT",
+        inprogress=inprogress,
+    )
+
+    assert pos.structure == "EXPANDED_FLAT"
+    assert pos.position == "IN_WAVE_4"
+
+
 def test_detect_wave_position_diagonal_pattern():
     from analysis.diagonal_detector import DiagonalPattern
     from analysis.pivot_detector import Pivot

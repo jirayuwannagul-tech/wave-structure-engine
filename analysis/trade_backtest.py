@@ -80,14 +80,14 @@ def _is_long(setup: TradeSetup) -> bool:
 
 
 def _triggered_by_candle(candle, setup: TradeSetup) -> bool:
-    # Phase 2: candle must CLOSE beyond confirmation level (not just wick touch)
-    # Phase 5: close must clear the level by 0.5% margin (filters false breakouts)
+    # Entry is confirmed by a close through the scenario level.
+    # Keep this aligned with the raw signal logic instead of adding an extra
+    # percentage buffer, so KPI/backtests measure the EW entry directly.
     entry = float(setup.entry_price)
     close = float(candle["close"])
-    margin = entry * 0.005  # 0.5% of confirmation price
     if _is_long(setup):
-        return close >= entry + margin
-    return close <= entry - margin
+        return close >= entry
+    return close <= entry
 
 
 def _stop_hit(candle, setup: TradeSetup) -> bool:

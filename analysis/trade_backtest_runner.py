@@ -9,7 +9,6 @@ from analysis.trade_backtest import (
     build_trade_setup_from_scenario,
     simulate_trade_from_setup,
 )
-from analysis.setup_filter import apply_trade_filters
 from core.engine import build_dataframe_analysis
 
 
@@ -156,12 +155,6 @@ def run_trade_backtest(
         )
         if not allow_analysis:
             continue
-
-        analysis = apply_trade_filters(
-            analysis,
-            higher_timeframe_bias=higher_timeframe_bias,
-            higher_timeframe_context=higher_timeframe_context,
-        )
 
         if not analysis.get("has_pattern"):
             continue
