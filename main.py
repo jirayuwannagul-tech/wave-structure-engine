@@ -11,7 +11,6 @@ from analysis.portfolio_backtest import (
     run_global_portfolio_backtest,
     run_portfolio_backtest,
 )
-from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
 from analysis.trade_backtest_runner import run_trade_backtest_suite
 from config.markets import get_default_monitor_symbols
 from config.settings import load_env_file
@@ -142,6 +141,8 @@ def _run_system_kpi(
     data_timeframes: list[str],
     output: str | None = None,
 ) -> None:
+    from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
+
     report = compute_system_kpis(
         symbols=symbols,
         analysis_timeframes=analysis_timeframes,
