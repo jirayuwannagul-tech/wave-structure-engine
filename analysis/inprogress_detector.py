@@ -566,10 +566,29 @@ def _try_partial_bearish_corrective(pivots: list[Pivot]) -> Optional[InProgressW
 
 
 def _validate_full_bullish_impulse(pivots: list[Pivot]) -> tuple[bool, dict[str, bool]]:
-    """Validate a complete 6-pivot bullish impulse [L,H,L,H,L,H] (W1-W5)."""
+    """Validate a complete 6-pivot bullish impulse [L,H,L,H,L,H] (W1-W5).
+
+    Includes a minimum-wave-duration check (4 bars per wave) so that
+    same-bar or very-fast sub-wave sequences don't qualify as Primary-degree
+    impulses.  This rejects e.g. W2 = 0 bars (same-bar H+L glitch) or W4 = 2
+    bars (Intermediate sub-wave noise masquerading as Primary W4).
+
+    Rule 3 is relaxed to W4 > W2 (not W4 > W1_high) to support diagonal /
+    ending-diagonal patterns (e.g. ETH 2022-2025 Primary cycle).
+    """
+    _MIN_WAVE_BARS = 4   # minimum bar separation for each wave leg
+
     checks: dict[str, bool] = {}
+
+    # Minimum duration: every consecutive pivot pair must span >= 4 bars
+    checks["min_wave_duration"] = all(
+        pivots[k + 1].index - pivots[k].index >= _MIN_WAVE_BARS
+        for k in range(5)
+    )
+    if not checks["min_wave_duration"]:
+        return False, checks
+
     # Monotonic: higher highs and higher lows in the impulse legs (indices 0-5)
-    # H[1]>L[0], L[2]>L[0], H[3]>H[1], L[4]>L[2], H[5]>H[3]
     checks["monotonic"] = (
         pivots[1].price > pivots[0].price  # H1 above L0
         and pivots[2].price > pivots[0].price  # L2 above L0 (higher low)
@@ -586,8 +605,17 @@ def _validate_full_bullish_impulse(pivots: list[Pivot]) -> tuple[bool, dict[str,
     w3 = pivots[3].price - pivots[2].price
     w5 = pivots[5].price - pivots[4].price
     checks["w3_not_shortest"] = w3 >= min(w1, w5)
-    # EW Rule 3: W4 never enters W1 territory
-    checks["w4_no_w1_overlap"] = pivots[4].price > pivots[1].price
+    # EW Rule 3 (relaxed — supports diagonal impulses): W4 must stay above W2
+    # Standard strict form is W4 > W1_high; relaxed allows diagonal W4/W1 overlap
+    # as long as W4 doesn't retrace all the way to W2 (higher-lows preserved).
+    checks["w4_no_w1_overlap"] = pivots[4].price > pivots[2].price
+    # Time-proportionality: Wave 5 duration must be >= 15% of Wave 4 duration.
+    # Rejects "flash W5" patterns where W3→W4 spans many bars (e.g. an entire bear
+    # market) but W4→W5 is only a few bars — a hallmark of pre-cycle contamination
+    # rather than a genuine Primary-degree Wave 5.
+    w4_dur = pivots[4].index - pivots[3].index   # bars W3→W4
+    w5_dur = pivots[5].index - pivots[4].index   # bars W4→W5
+    checks["w5_proportional"] = w5_dur >= max(1, w4_dur * 0.15)
     valid = all(checks.values())
     return valid, checks
 
@@ -839,8 +867,8 @@ def _nc_bullish_cw4(
                     continue
                 if w2.price >= w1.price:
                     continue
-                if w4.price <= w1.price:
-                    continue
+                # Relaxed Rule 3 loop filter: W4 must stay above W2 (allows diagonals)
+                # Full validation in _validate_bullish_partial handles the final check.
                 for i0 in [i for i in l_idx if i < i1]:  # forward = oldest first
                     w0 = pivots[i0]
                     if last_bar - w0.index > _NC_MAX_SPAN_BARS:
@@ -916,8 +944,7 @@ def _nc_bullish_cw5(
                         continue
                     if w2.price >= w1.price:
                         continue
-                    if w4.price <= w1.price:
-                        continue
+                    # Relaxed Rule 3 loop filter: W4 must stay above W2 (allows diagonals)
                     for i0 in [i for i in l_idx if i < i1]:  # forward = oldest first
                         w0 = pivots[i0]
                         if last_bar - w0.index > _NC_MAX_SPAN_BARS:
@@ -954,44 +981,68 @@ def _nc_bullish_cw6(
     h_idx: list[int],
     l_idx: list[int],
 ) -> Optional[InProgressWave]:
-    """7-pivot [L,H,L,H,L,H,L] non-consecutive, ending at last_idx (L). cw=6."""
+    """7-pivot [L,H,L,H,L,H,L] non-consecutive, ending at last_idx (L). cw=6.
+
+    Iterates ALL H pivots before WA as W5 candidates (not just the most recent).
+    This handles cases where a Wave B bounce occurred between the true W5 and WA,
+    making the most-recent H a sub-wave bounce rather than the Primary W5.
+
+    Also skips same-bar W5+WA pairs (e.g. BTC ATH weekly candle where both
+    the H and L are detected at bar 425) — those are same-bar artifacts, not
+    real Wave A confirmations.
+    """
     wa = pivots[last_idx]
-    # W5 = most recent H before the WA low
     h_before_wa = [i for i in h_idx if i < last_idx]
     if not h_before_wa:
         return None
-    i5 = h_before_wa[-1]
 
-    # W5 must be above WA low (Wave A went down from W5)
-    if pivots[i5].price <= wa.price:
-        return None
+    best_span = -1.0
+    best: Optional[InProgressWave] = None
 
-    # Find best 6-pivot ending at W5
-    result6 = _nc_bullish_cw5(pivots, i5, h_idx, l_idx)
-    if result6 is None:
-        return None
+    # Try every H pivot before WA as a potential W5
+    for i5 in reversed(h_before_wa):   # most-recent first for efficiency
+        w5_candidate = pivots[i5]
 
-    # Build 7-pivot result
-    sub7 = result6.pivots + [wa]
-    w5_pivot = result6.pivots[5]
-    wave_a_size = w5_pivot.price - wa.price
-    b_target_0382 = round(wa.price + wave_a_size * 0.382, 6)
-    b_target_0618 = round(wa.price + wave_a_size * 0.618, 6)
+        # W5 must be above WA (Wave A went down from W5)
+        if w5_candidate.price <= wa.price:
+            continue
 
-    return InProgressWave(
-        structure="CORRECTION",
-        direction="bearish",
-        wave_number="B",
-        completed_waves=6,
-        pivots=sub7,
-        last_pivot=wa,
-        current_wave_start=wa.price,
-        invalidation=w5_pivot.price,
-        fib_targets={"0.382": b_target_0382, "0.618": b_target_0618},
-        rule_checks=result6.rule_checks,
-        is_valid=True,
-        confidence=0.78,
-    )
+        # Skip same-bar H+L artifacts (ATH candle with both high and low detected)
+        if w5_candidate.index == wa.index:
+            continue
+
+        # Find best 6-pivot ending at this W5 candidate
+        result6 = _nc_bullish_cw5(pivots, i5, h_idx, l_idx)
+        if result6 is None:
+            continue
+
+        # Select by largest span across all 7 pivots
+        sub7_prices = [p.price for p in result6.pivots] + [wa.price]
+        span = max(sub7_prices) - min(sub7_prices)
+        if span <= best_span:
+            continue
+
+        best_span = span
+        w5_pivot = result6.pivots[5]
+        wave_a_size = w5_pivot.price - wa.price
+        b_target_0382 = round(wa.price + wave_a_size * 0.382, 6)
+        b_target_0618 = round(wa.price + wave_a_size * 0.618, 6)
+        best = InProgressWave(
+            structure="CORRECTION",
+            direction="bearish",
+            wave_number="B",
+            completed_waves=6,
+            pivots=result6.pivots + [wa],
+            last_pivot=wa,
+            current_wave_start=wa.price,
+            invalidation=w5_pivot.price,
+            fib_targets={"0.382": b_target_0382, "0.618": b_target_0618},
+            rule_checks=result6.rule_checks,
+            is_valid=True,
+            confidence=0.78,
+        )
+
+    return best
 
 
 def _find_nonconsecutive_bullish(
@@ -1027,6 +1078,15 @@ def _find_nonconsecutive_bullish(
         r = _nc_bullish_cw4(pivots, last_idx, h_idx, l_idx)
         if r:
             candidates.append(r)
+        # Edge case: same-bar H+L (e.g. BTC ATH weekly candle where the H and L
+        # are both detected at the same bar index).  The H at that bar is the true
+        # W5 high; the same-bar L is a same-candle artifact, not a real Wave-A low.
+        # _nc_bullish_cw6 skips the same-bar pair, so we try cw5 ending at the H.
+        h_before = [i for i in h_idx if i < last_idx]
+        if h_before and pivots[h_before[-1]].index == last.index:
+            r = _nc_bullish_cw5(pivots, h_before[-1], h_idx, l_idx)
+            if r:
+                candidates.append(r)
 
     if not candidates:
         return None
