@@ -9,7 +9,12 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from analysis.trade_management import managed_stop_after_target, time_stop_bars_for_timeframe
+from analysis.trade_management import (
+    managed_stop_after_target,
+    time_stop_bars_for_timeframe,
+    volatility_spike_against_position,
+)
+from scenarios.scenario_state_machine import update_scenario_state
 from analysis.risk_reward import calculate_rr_levels
 
 OPEN_SIGNAL_STATUSES = {
@@ -63,8 +68,14 @@ def _simplify_scenario(scenario) -> dict:
     }
 
 
+def _execution_scenarios(analysis: dict) -> list:
+    if "execution_scenarios" in analysis:
+        return list(analysis.get("execution_scenarios") or [])
+    return list(analysis.get("scenarios") or [])
+
+
 def build_signal_snapshot(analysis: dict) -> dict | None:
-    scenarios = analysis.get("scenarios") or []
+    scenarios = _execution_scenarios(analysis)
     if not scenarios:
         return None
 
@@ -652,6 +663,7 @@ class WaveRepository:
         symbol: str,
         current_price: float,
         event_time: str | None = None,
+        analyses: list[dict] | None = None,
     ) -> list[tuple[int, str]]:
         """Check current price against all open signals and update their lifecycle state.
 
@@ -662,6 +674,12 @@ class WaveRepository:
         current = _round_price(current_price)
         now = event_time or _utc_now()
         events_created: list[tuple[int, str]] = []
+
+        analysis_by_timeframe = {
+            str(item.get("timeframe") or "").upper(): item
+            for item in (analyses or [])
+            if isinstance(item, dict)
+        }
 
         try:
             with self._connect() as conn:
@@ -814,6 +832,44 @@ class WaveRepository:
                             events_created.append((signal_id, "STOP_LOSS_HIT"))
                             continue
 
+                        opposite_scenario = self._opposite_structure_scenario(
+                            analysis_by_timeframe.get(str(row["timeframe"] or "").upper()),
+                            side=side,
+                            current_price=current,
+                        )
+                        if opposite_scenario is not None:
+                            self._close_signal(
+                                conn,
+                                signal_id=signal_id,
+                                status="STOPPED",
+                                close_reason="OPPOSITE_STRUCTURE",
+                                current_price=current,
+                                event_time=now,
+                                event_type="OPPOSITE_STRUCTURE_HIT",
+                            )
+                            events_created.append((signal_id, "OPPOSITE_STRUCTURE_HIT"))
+                            continue
+
+                        if self._volatility_exit_triggered(
+                            conn,
+                            symbol=symbol,
+                            timeframe=row["timeframe"],
+                            side=side,
+                            current_price=current,
+                            entry_price=float(row["entry_triggered_price"] or entry),
+                        ):
+                            self._close_signal(
+                                conn,
+                                signal_id=signal_id,
+                                status="STOPPED",
+                                close_reason="VOLATILITY_EXIT",
+                                current_price=current,
+                                event_time=now,
+                                event_type="VOLATILITY_EXIT_HIT",
+                            )
+                            events_created.append((signal_id, "VOLATILITY_EXIT_HIT"))
+                            continue
+
                         limit = time_stop_bars_for_timeframe(row["timeframe"])
                         entry_triggered_at = _parse_iso_timestamp(row["entry_triggered_at"])
                         if (
@@ -841,6 +897,69 @@ class WaveRepository:
             traceback.print_exc()
 
         return events_created
+
+    def _opposite_structure_scenario(
+        self,
+        analysis: dict | None,
+        *,
+        side: str,
+        current_price: float,
+    ):
+        if not analysis:
+            return None
+
+        target_bias = "BEARISH" if side == "LONG" else "BULLISH"
+        for scenario in _execution_scenarios(analysis):
+            if (getattr(scenario, "bias", None) or "").upper() != target_bias:
+                continue
+            if update_scenario_state(scenario, current_price) == "CONFIRMED":
+                return scenario
+        return None
+
+    def _volatility_exit_triggered(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        symbol: str,
+        timeframe: str,
+        side: str,
+        current_price: float,
+        entry_price: float,
+    ) -> bool:
+        rows = conn.execute(
+            """
+            SELECT open, high, low, close
+            FROM market_candles
+            WHERE symbol = ? AND timeframe = ?
+            ORDER BY open_time DESC
+            LIMIT 6
+            """,
+            (symbol.upper(), str(timeframe or "").upper()),
+        ).fetchall()
+        if len(rows) < 3:
+            return False
+
+        latest = rows[0]
+        baseline_ranges = [
+            max(float(row["high"]) - float(row["low"]), 0.0)
+            for row in rows[1:]
+        ]
+        baseline_range = sum(baseline_ranges) / len(baseline_ranges) if baseline_ranges else 0.0
+        if baseline_range <= 0:
+            return False
+
+        candle = {
+            "open": float(latest["open"]),
+            "high": float(latest["high"]),
+            "low": float(latest["low"]),
+            "close": float(current_price),
+        }
+        return volatility_spike_against_position(
+            candle,
+            side,
+            baseline_range,
+            entry_price,
+        )
 
     def _replace_pending_signals(
         self,

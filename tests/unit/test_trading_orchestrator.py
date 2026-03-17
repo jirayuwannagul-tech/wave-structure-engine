@@ -51,6 +51,35 @@ def test_build_signal_event_message_includes_tracking_summary():
     assert "• Win Rate: 33.33%" in message
 
 
+def test_build_signal_event_message_supports_protective_exit_types():
+    signal_row = {
+        "symbol": "ETHUSDT",
+        "timeframe": "4H",
+        "scenario_name": "Main Bearish",
+        "side": "SHORT",
+        "entry_price": 2400.0,
+        "stop_loss": 2460.0,
+        "tp1": 2320.0,
+        "tp2": 2280.0,
+        "tp3": 2220.0,
+        "rr_tp1": 1.3333,
+        "rr_tp2": 2.0,
+        "rr_tp3": 3.0,
+        "status": "STOPPED",
+        "tp1_hit_at": None,
+        "tp2_hit_at": None,
+        "tp3_hit_at": None,
+        "close_reason": "OPPOSITE_STRUCTURE",
+        "current_price": 2380.0,
+    }
+
+    message = _build_signal_event_message(signal_row, "OPPOSITE_STRUCTURE_HIT")
+
+    assert message is not None
+    assert message.startswith("🛡 ETHUSDT | 4H Opposite Structure Exit")
+    assert "• Result: Opposite Structure Exit" in message
+
+
 def test_build_levels_from_analysis():
     analysis = {
         "timeframe": "4H",

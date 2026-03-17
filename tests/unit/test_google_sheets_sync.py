@@ -174,6 +174,20 @@ def test_compute_signal_tracking_time_stop_without_sl_mark():
     assert tracking["realized_rr"] != ""
 
 
+def test_compute_signal_tracking_opposite_structure_exit_without_sl_mark():
+    tracking = compute_signal_tracking(
+        _signal_row(
+            status="STOPPED",
+            close_reason="OPPOSITE_STRUCTURE",
+            current_price=68850.0,
+        )
+    )
+
+    assert tracking["result"] == "OPPOSITE_STRUCTURE_EXIT"
+    assert tracking["sl_mark"] == ""
+    assert tracking["realized_rr"] != ""
+
+
 def test_should_sync_signal_to_sheet_only_after_real_entry():
     assert should_sync_signal_to_sheet(_signal_row(status="PENDING_ENTRY")) is False
     assert should_sync_signal_to_sheet(_signal_row(status="INVALIDATED")) is False

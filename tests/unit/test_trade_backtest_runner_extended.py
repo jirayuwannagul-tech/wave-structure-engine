@@ -183,6 +183,55 @@ def test_run_trade_backtest_no_scenarios(monkeypatch):
     assert result["trades"] == []
 
 
+def test_run_trade_backtest_prefers_execution_scenarios(monkeypatch):
+    dummy_df = _make_dummy_ohlcv(30)
+    display_scenario = MagicMock(name="display")
+    exec_scenario = MagicMock(name="exec")
+    analysis = {
+        "has_pattern": True,
+        "scenarios": [display_scenario],
+        "execution_scenarios": [exec_scenario],
+        "primary_pattern_type": "FLAT",
+    }
+    used = {}
+
+    monkeypatch.setattr("analysis.trade_backtest_runner.build_dataframe_analysis", lambda **kwargs: analysis)
+
+    def fake_setup(scenario):
+        used["scenario"] = scenario
+        return TradeSetup(
+            side="SHORT",
+            entry_price=100.0,
+            stop_loss=110.0,
+            take_profit_1=90.0,
+        )
+
+    monkeypatch.setattr("analysis.trade_backtest_runner.build_trade_setup_from_scenario", fake_setup)
+    monkeypatch.setattr(
+        "analysis.trade_backtest_runner.simulate_trade_from_setup",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {
+                "outcome": "TP1",
+                "reward_r": 1.0,
+                "entry_index": 1,
+                "exit_index": 2,
+                "entry_price": 100.0,
+                "exit_price": 90.0,
+                "gross_pnl_per_unit": 10.0,
+                "net_pnl_per_unit": 9.9,
+                "fee_paid_per_unit": 0.1,
+            },
+        )(),
+    )
+
+    with patch("pandas.read_csv", return_value=dummy_df):
+        run_trade_backtest("dummy.csv", "1D", min_window=10, step=5)
+
+    assert used["scenario"] is exec_scenario
+
+
 def test_run_trade_backtest_returns_dict_structure():
     """Smoke test: run_trade_backtest always returns the right shape."""
     dummy_df = _make_dummy_ohlcv(15)

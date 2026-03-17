@@ -54,6 +54,30 @@ def test_build_signal_snapshot_returns_tradeable_signal():
     assert snapshot["rr_tp3"] == 6.0
 
 
+def test_build_signal_snapshot_prefers_execution_scenarios_when_present():
+    analysis = _analysis()
+    analysis["execution_scenarios"] = [
+        Scenario(
+            name="Exec Bearish",
+            condition="test",
+            interpretation="test",
+            target="test",
+            bias="BEARISH",
+            invalidation=105.0,
+            confirmation=98.0,
+            stop_loss=105.0,
+            targets=[92.0, 88.0, 84.0],
+        )
+    ]
+
+    snapshot = build_signal_snapshot(analysis)
+
+    assert snapshot is not None
+    assert snapshot["scenario_name"] == "Exec Bearish"
+    assert snapshot["side"] == "SHORT"
+    assert snapshot["entry_price"] == 98.0
+
+
 def test_repository_tracks_tp1_then_stop_loss(tmp_path):
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     signal_id = repo.sync_analysis(_analysis())
@@ -78,6 +102,94 @@ def test_repository_tracks_tp1_then_stop_loss(tmp_path):
 
     event_types = [event["event_type"] for event in repo.fetch_signal_events(signal_id)]
     assert event_types == ["SIGNAL_CREATED", "ENTRY_TRIGGERED", "TP1_HIT", "STOP_MOVED", "STOP_LOSS_HIT"]
+
+
+def test_repository_closes_active_trade_on_opposite_structure(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
+
+    repo.track_price_update("BTCUSDT", 100.5)
+    events = repo.track_price_update(
+        "BTCUSDT",
+        98.5,
+        analyses=[
+            {
+                "timeframe": "4H",
+                "execution_scenarios": [
+                    Scenario(
+                        name="Opposite Bearish",
+                        condition="test",
+                        interpretation="test",
+                        target="test",
+                        bias="BEARISH",
+                        invalidation=104.0,
+                        confirmation=99.0,
+                        stop_loss=104.0,
+                        targets=[94.0],
+                    )
+                ],
+            }
+        ],
+    )
+
+    assert (signal_id, "OPPOSITE_STRUCTURE_HIT") in events
+
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+
+    assert row["status"] == "STOPPED"
+    assert row["close_reason"] == "OPPOSITE_STRUCTURE"
+
+
+def test_repository_closes_active_trade_on_volatility_exit(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
+
+    repo.track_price_update("BTCUSDT", 100.5)
+
+    df = pd.DataFrame(
+        {
+            "open_time": pd.to_datetime(
+                [
+                    "2026-03-17T00:00:00Z",
+                    "2026-03-17T04:00:00Z",
+                    "2026-03-17T08:00:00Z",
+                    "2026-03-17T12:00:00Z",
+                    "2026-03-17T16:00:00Z",
+                    "2026-03-17T20:00:00Z",
+                ],
+                utc=True,
+            ),
+            "open": [100.0, 100.5, 100.2, 100.1, 100.4, 100.0],
+            "high": [101.0, 101.2, 101.1, 101.0, 101.3, 110.0],
+            "low": [99.4, 99.7, 99.6, 99.7, 99.9, 90.0],
+            "close": [100.6, 100.3, 100.4, 100.5, 100.2, 99.0],
+            "volume": [1, 1, 1, 1, 1, 1],
+            "close_time": pd.to_datetime(
+                [
+                    "2026-03-17T03:59:59Z",
+                    "2026-03-17T07:59:59Z",
+                    "2026-03-17T11:59:59Z",
+                    "2026-03-17T15:59:59Z",
+                    "2026-03-17T19:59:59Z",
+                    "2026-03-17T23:59:59Z",
+                ],
+                utc=True,
+            ),
+            "quote_asset_volume": [1, 1, 1, 1, 1, 1],
+            "number_of_trades": [1, 1, 1, 1, 1, 1],
+        }
+    )
+    repo.upsert_market_candles("BTCUSDT", "4H", df)
+
+    events = repo.track_price_update("BTCUSDT", 99.0)
+    assert (signal_id, "VOLATILITY_EXIT_HIT") in events
+
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+
+    assert row["status"] == "STOPPED"
+    assert row["close_reason"] == "VOLATILITY_EXIT"
 
 
 def test_repository_time_stop_closes_stalled_trade(tmp_path):

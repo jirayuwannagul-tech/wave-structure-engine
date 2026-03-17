@@ -503,6 +503,67 @@ def test_run_portfolio_backtest_with_triggered_trade(monkeypatch):
     assert any(t["outcome"] == "TP1" for t in result["trades"])
 
 
+def test_run_portfolio_backtest_prefers_execution_scenarios(monkeypatch):
+    dummy_df = _make_dummy_ohlcv(30)
+
+    display_scenario = MagicMock(name="display")
+    exec_scenario = MagicMock(name="exec")
+    analysis = {
+        "has_pattern": True,
+        "scenarios": [display_scenario],
+        "execution_scenarios": [exec_scenario],
+        "primary_pattern_type": "ABC_CORRECTION",
+        "confidence": 0.8,
+        "probability": 0.7,
+    }
+    used = {}
+
+    monkeypatch.setattr("analysis.portfolio_backtest.build_dataframe_analysis", lambda **kw: analysis)
+    monkeypatch.setattr("analysis.portfolio_backtest.get_pattern_edge", lambda *a, **kw: None)
+
+    def fake_setup(scenario):
+        used["scenario"] = scenario
+        return TradeSetup(
+            side="SHORT",
+            entry_price=100.0,
+            stop_loss=110.0,
+            take_profit_1=90.0,
+            take_profit_2=85.0,
+            take_profit_3=80.0,
+        )
+
+    monkeypatch.setattr("analysis.portfolio_backtest.build_trade_setup_from_scenario", fake_setup)
+
+    fake_lifecycle = TradeLifecycleResult(
+        triggered=True,
+        outcome="TP1",
+        entry_index=1,
+        exit_index=5,
+        entry_time=pd.Timestamp("2026-01-15T00:00:00Z"),
+        exit_time=pd.Timestamp("2026-01-20T00:00:00Z"),
+        entry_price=100.0,
+        exit_price=90.0,
+        reward_r=1.0,
+        realized_targets=["TP1"],
+        realized_size_pct=0.4,
+        gross_pnl_per_unit=10.0,
+        net_pnl_per_unit=9.9,
+        fee_paid_per_unit=0.1,
+    )
+    monkeypatch.setattr("analysis.portfolio_backtest.simulate_trade_lifecycle", lambda *a, **kw: fake_lifecycle)
+
+    with patch("pandas.read_csv", return_value=dummy_df):
+        run_portfolio_backtest(
+            csv_path="dummy.csv",
+            symbol="BTCUSDT",
+            timeframe="1D",
+            min_window=10,
+            step=5,
+        )
+
+    assert used["scenario"] is exec_scenario
+
+
 # ---------- build_trade_candidates mocked ----------
 
 def test_build_trade_candidates_no_pattern(monkeypatch):

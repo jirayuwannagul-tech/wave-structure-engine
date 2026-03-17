@@ -173,7 +173,12 @@ def _build_runtime(symbol: str, analyses: list[dict]) -> OrchestratorRuntime:
 
     for analysis in analyses:
         levels.extend(_build_levels_from_analysis(analysis))
-        for scenario in analysis.get("scenarios", []):
+        execution_scenarios = (
+            analysis.get("execution_scenarios")
+            if "execution_scenarios" in analysis
+            else analysis.get("scenarios")
+        ) or []
+        for scenario in execution_scenarios:
             scenarios.append(
                 {
                     "timeframe": analysis.get("timeframe"),
@@ -285,6 +290,7 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
                             )
                             analysis_1d = dict(analysis_1d)
                             analysis_1d["scenarios"] = hier.scenarios
+                            analysis_1d["execution_scenarios"] = hier.scenarios
                             analysis_1d["has_pattern"] = True
                             analysis_1d["primary_pattern_type"] = wave_label
                             analysis_1d["_hier_count"] = hier
@@ -400,7 +406,16 @@ def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float |
 
 def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     event_type = (event_type or "").upper()
-    if event_type not in {"ENTRY_TRIGGERED", "TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT"}:
+    if event_type not in {
+        "ENTRY_TRIGGERED",
+        "TP1_HIT",
+        "TP2_HIT",
+        "TP3_HIT",
+        "STOP_LOSS_HIT",
+        "TIME_STOP_HIT",
+        "OPPOSITE_STRUCTURE_HIT",
+        "VOLATILITY_EXIT_HIT",
+    }:
         return None
 
     def _signal_value(key: str):
@@ -439,6 +454,18 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         "TP3_HIT": "TP3 Hit",
         "STOP_LOSS_HIT": "Stop Loss Hit",
         "TIME_STOP_HIT": "Time Stop Hit",
+        "OPPOSITE_STRUCTURE_HIT": "Opposite Structure Exit",
+        "VOLATILITY_EXIT_HIT": "Volatility Exit",
+    }
+    event_icons = {
+        "ENTRY_TRIGGERED": "🎯",
+        "TP1_HIT": "✅",
+        "TP2_HIT": "✅",
+        "TP3_HIT": "✅",
+        "STOP_LOSS_HIT": "❌",
+        "TIME_STOP_HIT": "⏱",
+        "OPPOSITE_STRUCTURE_HIT": "🛡",
+        "VOLATILITY_EXIT_HIT": "🛡",
     }
 
     def _rr_suffix(value) -> str:
@@ -447,7 +474,7 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         return f" ({_fmt_value(value)}R)"
 
     lines = [
-        f"{'❌' if event_type == 'STOP_LOSS_HIT' else ('⏱' if event_type == 'TIME_STOP_HIT' else ('🎯' if event_type == 'ENTRY_TRIGGERED' else '✅'))} {symbol} | {timeframe} {event_titles[event_type]}",
+        f"{event_icons[event_type]} {symbol} | {timeframe} {event_titles[event_type]}",
         "",
         f"• Scenario: {scenario_name}",
         f"• Status: {_humanize_token(status)}",
@@ -489,7 +516,11 @@ def process_market_update(
         )
 
     if repository is not None:
-        lifecycle_events = repository.track_price_update(runtime.symbol, current_price)
+        lifecycle_events = repository.track_price_update(
+            runtime.symbol,
+            current_price,
+            analyses=runtime.analyses,
+        )
         for signal_id, event_type in lifecycle_events:
             signal_row = repository.fetch_signal(signal_id)
             if signal_row is None:

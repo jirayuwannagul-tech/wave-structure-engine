@@ -294,7 +294,7 @@ def build_dataframe_analysis(
                     scenarios.append(s)
 
     raw_scenarios = list(scenarios)
-    scenarios = prioritize_scenarios(
+    execution_scenarios = prioritize_scenarios(
         symbol=symbol,
         timeframe=timeframe.upper(),
         structure=primary_pattern_type,
@@ -302,6 +302,10 @@ def build_dataframe_analysis(
         scenarios=scenarios,
         confluence_zones=confluence_zones,
     )
+    # Keep a display-level scenario list even when execution pruning removes
+    # every candidate. This lets us measure what the engine "sees" separately
+    # from what live/backtest is allowed to execute.
+    scenarios = list(execution_scenarios) if execution_scenarios else list(raw_scenarios)
 
     probability = primary_report.get("probability")
     confidence = primary_report.get("confidence")
@@ -341,6 +345,7 @@ def build_dataframe_analysis(
         "key_levels": key_levels,
         "projection": projection,
         "scenarios": scenarios,
+        "execution_scenarios": execution_scenarios,
         "wave_summary": wave_summary,
         "trend": trend,
         "confidence": confidence,

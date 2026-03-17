@@ -202,7 +202,7 @@ def _rr_from_exit_price(signal_row, exit_price: float | None) -> float | None:
 
 def _residual_exit_rr(signal_row, close_reason: str) -> float | None:
     close_reason = (close_reason or "").upper()
-    if close_reason == "TIME_STOP":
+    if close_reason in {"TIME_STOP", "PROTECTIVE_EXIT", "OPPOSITE_STRUCTURE", "VOLATILITY_EXIT"}:
         return _rr_from_exit_price(signal_row, _to_float(_field(signal_row, "current_price")))
     if close_reason in {"STOP_LOSS", "STOP_LOSS_BEFORE_ENTRY"}:
         return _rr_from_exit_price(signal_row, _to_float(_field(signal_row, "stop_loss")))
@@ -225,6 +225,24 @@ def compute_signal_tracking(signal_row) -> dict[str, str]:
     elif status == "STOPPED":
         if close_reason == "TIME_STOP":
             result = "TIME_STOP"
+            if realized_rr_value is None:
+                win_rate_pct = ""
+            else:
+                win_rate_pct = _normalize_percentage(100.0 if realized_rr_value > 0 else 0.0)
+        elif close_reason == "OPPOSITE_STRUCTURE":
+            result = "OPPOSITE_STRUCTURE_EXIT"
+            if realized_rr_value is None:
+                win_rate_pct = ""
+            else:
+                win_rate_pct = _normalize_percentage(100.0 if realized_rr_value > 0 else 0.0)
+        elif close_reason == "VOLATILITY_EXIT":
+            result = "VOLATILITY_EXIT"
+            if realized_rr_value is None:
+                win_rate_pct = ""
+            else:
+                win_rate_pct = _normalize_percentage(100.0 if realized_rr_value > 0 else 0.0)
+        elif close_reason == "PROTECTIVE_EXIT":
+            result = "PROTECTIVE_EXIT"
             if realized_rr_value is None:
                 win_rate_pct = ""
             else:

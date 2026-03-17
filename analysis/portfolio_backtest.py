@@ -668,7 +668,13 @@ def run_portfolio_backtest(
                 if "open_time" in sample_df.columns
                 else None
             )
-            if cutoff_time is not None and not (analysis.get("scenarios") or []):
+            if cutoff_time is not None and not (
+                (
+                    analysis.get("execution_scenarios")
+                    if "execution_scenarios" in analysis
+                    else analysis.get("scenarios")
+                ) or []
+            ):
                 weekly_sample = higher_timeframe_df[
                     higher_timeframe_df["open_time"] <= cutoff_time
                 ].copy()
@@ -700,6 +706,7 @@ def run_portfolio_backtest(
                         )
                         analysis = dict(analysis)
                         analysis["scenarios"] = hier_count.scenarios
+                        analysis["execution_scenarios"] = hier_count.scenarios
                         analysis["has_pattern"] = True
                         analysis["primary_pattern_type"] = wave_label
                         analysis["hierarchical_count"] = hier_count
@@ -707,7 +714,11 @@ def run_portfolio_backtest(
             continue
 
         analyzed_cases += 1
-        scenarios = analysis.get("scenarios") or []
+        scenarios = (
+            analysis.get("execution_scenarios")
+            if "execution_scenarios" in analysis
+            else analysis.get("scenarios")
+        ) or []
         if not scenarios:
             continue
 
@@ -871,7 +882,13 @@ def build_trade_candidates(
                 if "open_time" in sample_df.columns
                 else None
             )
-            if cutoff_time is not None and not (analysis.get("scenarios") or []):
+            if cutoff_time is not None and not (
+                (
+                    analysis.get("execution_scenarios")
+                    if "execution_scenarios" in analysis
+                    else analysis.get("scenarios")
+                ) or []
+            ):
                 weekly_sample = higher_timeframe_df[
                     higher_timeframe_df["open_time"] <= cutoff_time
                 ].copy()
@@ -948,8 +965,14 @@ def build_trade_candidates(
             continue
 
         analyzed_cases += 1
-        scenario_pool_key = "all_scenarios" if use_all_scenarios else "scenarios"
-        scenarios = analysis.get(scenario_pool_key) or analysis.get("scenarios") or []
+        if use_all_scenarios:
+            scenarios = analysis.get("all_scenarios") or analysis.get("scenarios") or []
+        else:
+            scenarios = (
+                analysis.get("execution_scenarios")
+                if "execution_scenarios" in analysis
+                else analysis.get("scenarios")
+            ) or analysis.get("scenarios") or []
         if not scenarios:
             continue
 

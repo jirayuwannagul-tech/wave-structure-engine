@@ -162,7 +162,11 @@ def run_trade_backtest(
             continue
 
         analyzed_cases += 1
-        scenarios = analysis.get("scenarios") or []
+        scenarios = (
+            analysis.get("execution_scenarios")
+            if "execution_scenarios" in analysis
+            else analysis.get("scenarios")
+        ) or []
         if not scenarios:
             continue
 
