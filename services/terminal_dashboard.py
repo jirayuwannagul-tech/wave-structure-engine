@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 from typing import Any
 
+from config.markets import get_default_monitor_symbols
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.settings import load_execution_config
 from services.binance_price_service import get_last_price
@@ -77,10 +77,7 @@ def _service_status(service_name: str) -> str:
 
 
 def _resolve_dashboard_symbols(symbol: str) -> list[str]:
-    configured = (os.getenv("MONITOR_SYMBOLS") or "").split(",")
-    symbols = [item.strip().upper() for item in configured if item.strip()]
-    if not symbols:
-        symbols = [symbol.upper()]
+    symbols = get_default_monitor_symbols()
     if symbol.upper() not in symbols:
         symbols.insert(0, symbol.upper())
     return symbols

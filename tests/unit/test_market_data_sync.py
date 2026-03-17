@@ -87,6 +87,10 @@ def test_sync_recent_market_data_recovers_from_empty_existing_csv(tmp_path, monk
         "services.market_data_sync._fetch_recent_history",
         lambda symbol, timeframe, lookback_candles=3: _sample_df("2026-01-01", 2, "1D"),
     )
+    monkeypatch.setattr(
+        "services.market_data_sync._fetch_full_history",
+        lambda symbol, timeframe, start_time: _sample_df("2025-01-01", 4, "1D"),
+    )
 
     summary = sync_recent_market_data(
         symbols=["DOGEUSDT"],
@@ -96,6 +100,36 @@ def test_sync_recent_market_data_recovers_from_empty_existing_csv(tmp_path, monk
     )
 
     item = summary["items"]["DOGEUSDT:1D"]
-    assert item["rows_fetched"] == 2
-    assert item["csv_rows_total"] == 2
-    assert repository.count_market_candles("DOGEUSDT", "1D") == 2
+    assert item["rows_fetched"] == 4
+    assert item["csv_rows_total"] == 4
+    assert repository.count_market_candles("DOGEUSDT", "1D") == 4
+
+
+def test_sync_recent_market_data_backfills_full_history_when_csv_missing(tmp_path, monkeypatch):
+    repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    path = tmp_path / "XRPUSDT_4h.csv"
+
+    monkeypatch.setattr(
+        "services.market_data_sync._dataset_path",
+        lambda symbol, timeframe: path,
+    )
+    monkeypatch.setattr(
+        "services.market_data_sync._fetch_recent_history",
+        lambda *args, **kwargs: _sample_df("2026-01-01", 2, "4h"),
+    )
+    monkeypatch.setattr(
+        "services.market_data_sync._fetch_full_history",
+        lambda symbol, timeframe, start_time: _sample_df("2025-01-01", 4, "4h"),
+    )
+
+    summary = sync_recent_market_data(
+        symbols=["XRPUSDT"],
+        timeframes=["4H"],
+        repository=repository,
+        lookback_candles=2,
+    )
+
+    item = summary["items"]["XRPUSDT:4H"]
+    assert item["rows_fetched"] == 4
+    assert item["csv_rows_total"] == 4
+    assert repository.count_market_candles("XRPUSDT", "4H") == 4

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/wave-structure-engine
-ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py orchestrator --symbols BTCUSDT DOGEUSDT SOLUSDT BNBUSDT ETHUSDT --poll-interval 5
+ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/main.py orchestrator --symbols BTCUSDT ETHUSDT BNBUSDT SOLUSDT DOGEUSDT XRPUSDT ADAUSDT AVAXUSDT LINKUSDT LTCUSDT --poll-interval 5
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

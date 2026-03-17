@@ -13,6 +13,7 @@ from analysis.portfolio_backtest import (
 )
 from analysis.system_kpi import compute_system_kpis, write_system_kpi_report
 from analysis.trade_backtest_runner import run_trade_backtest_suite
+from config.markets import get_default_monitor_symbols
 from config.settings import load_env_file
 from data.market_data_fetcher import MarketDataFetcher
 from execution.settings import load_execution_config
@@ -52,8 +53,7 @@ def _resolve_symbols(symbol: str | None = None, symbols: list[str] | None = None
     elif symbol:
         resolved = [symbol.strip().upper()]
     else:
-        default_symbols = (os.getenv("MONITOR_SYMBOLS") or "BTCUSDT").split(",")
-        resolved = [item.strip().upper() for item in default_symbols if item.strip()]
+        resolved = get_default_monitor_symbols()
 
     unique_symbols: list[str] = []
     seen: set[str] = set()

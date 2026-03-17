@@ -10,6 +10,7 @@ from storage.wave_repository import WaveRepository
 
 
 DEFAULT_SYNC_TIMEFRAMES = ("1W", "1D", "4H")
+DEFAULT_FULL_HISTORY_START = pd.Timestamp("2018-01-01", tz="UTC")
 
 
 def _dataset_path(symbol: str, timeframe: str) -> Path:
@@ -39,6 +40,18 @@ def _merge_with_existing_csv(path: Path, df: pd.DataFrame) -> pd.DataFrame:
     return _normalize_dataframe(combined)
 
 
+def _path_has_usable_history(path: Path) -> bool:
+    if not path.exists():
+        return False
+
+    try:
+        existing = pd.read_csv(path, nrows=1)
+    except (pd.errors.EmptyDataError, FileNotFoundError):
+        return False
+
+    return not existing.empty
+
+
 def _fetch_full_history(symbol: str, timeframe: str, start_time: pd.Timestamp) -> pd.DataFrame:
     fetcher = MarketDataFetcher(symbol=symbol, interval=timeframe.lower(), limit=1000)
     df = fetcher.fetch_ohlcv_range(start_time=start_time, end_time=pd.Timestamp.now(tz="UTC"))
@@ -62,7 +75,7 @@ def sync_market_data(
 ) -> dict:
     repository = repository or WaveRepository()
     resolved_timeframes = [item.upper() for item in (timeframes or DEFAULT_SYNC_TIMEFRAMES)]
-    sync_start = start_time or pd.Timestamp("2018-01-01", tz="UTC")
+    sync_start = start_time or DEFAULT_FULL_HISTORY_START
     results: dict[str, dict] = {}
 
     for symbol in [item.upper() for item in symbols]:
@@ -103,8 +116,11 @@ def sync_recent_market_data(
 
     for symbol in [item.upper() for item in symbols]:
         for timeframe in resolved_timeframes:
-            df = _fetch_recent_history(symbol, timeframe, lookback_candles=lookback_candles)
             path = _dataset_path(symbol, timeframe)
+            if _path_has_usable_history(path):
+                df = _fetch_recent_history(symbol, timeframe, lookback_candles=lookback_candles)
+            else:
+                df = _fetch_full_history(symbol, timeframe, DEFAULT_FULL_HISTORY_START)
             merged = _merge_with_existing_csv(path, df)
             MarketDataFetcher(symbol=symbol, interval=timeframe.lower()).save_to_csv(merged, path)
             upserted = repository.upsert_market_candles(symbol, timeframe, df)

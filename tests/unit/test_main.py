@@ -3,6 +3,7 @@ import json
 import pytest
 
 import main
+from config.markets import DEFAULT_MONITOR_SYMBOLS
 
 
 def test_resolve_timeframes_defaults_to_all():
@@ -11,6 +12,11 @@ def test_resolve_timeframes_defaults_to_all():
 
 def test_resolve_symbols_prefers_symbols_list():
     assert main._resolve_symbols("BTCUSDT", ["BTCUSDT", "ethusdt", "BTCUSDT"]) == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_resolve_symbols_defaults_to_market_config(monkeypatch):
+    monkeypatch.delenv("MONITOR_SYMBOLS", raising=False)
+    assert main._resolve_symbols() == list(DEFAULT_MONITOR_SYMBOLS)
 
 
 def test_dataset_path_uses_symbol_and_timeframe():

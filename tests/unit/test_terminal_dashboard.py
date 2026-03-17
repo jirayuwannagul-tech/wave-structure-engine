@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from services.terminal_dashboard import _build_signals, render_terminal_dashboard
+from config.markets import DEFAULT_MONITOR_SYMBOLS
+from services.terminal_dashboard import _build_signals, _resolve_dashboard_symbols, render_terminal_dashboard
 
 
 def test_render_terminal_dashboard_shows_read_only_sections():
@@ -68,6 +69,11 @@ def test_render_terminal_dashboard_handles_no_positions():
     assert "no open positions" in output
 
 
+def test_resolve_dashboard_symbols_defaults_to_market_config(monkeypatch):
+    monkeypatch.delenv("MONITOR_SYMBOLS", raising=False)
+    assert _resolve_dashboard_symbols("BTCUSDT") == list(DEFAULT_MONITOR_SYMBOLS)
+
+
 def test_build_signals_falls_back_to_all_scenarios_and_wave_summary():
     runtimes = [
         SimpleNamespace(
@@ -132,7 +138,7 @@ def test_build_signals_prefers_valid_wave_summary_over_invalid_selected_scenario
                         "bias": "BULLISH",
                         "confirm": 666.16,
                         "stop_loss": 607.86,
-                        "targets": [666.16, 686.14, 706.13],
+                        "targets": [686.14, 706.13, 726.12],
                     },
                 }
             ],
@@ -148,6 +154,6 @@ def test_build_signals_prefers_valid_wave_summary_over_invalid_selected_scenario
             "bias": "BULLISH",
             "entry": 666.16,
             "sl": 607.86,
-            "tp1": 666.16,
+            "tp1": 686.14,
         }
     ]
