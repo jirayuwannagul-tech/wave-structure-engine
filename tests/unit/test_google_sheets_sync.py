@@ -3,6 +3,8 @@ from services.google_sheets_sync import (
     GoogleSheetsSignalLogger,
     build_signal_sheet_row,
     compute_sheet_result,
+    safe_sync_signal,
+    should_sync_signal_to_sheet,
 )
 
 
@@ -119,3 +121,29 @@ def test_google_sheets_logger_upserts_existing_signal_row():
     assert len(worksheet.rows) == 2
     assert worksheet.rows[1][12] == "TP1_THEN_SL"
     assert worksheet.rows[1][13] == "0.33"
+
+
+def test_should_sync_signal_to_sheet_only_after_real_entry():
+    assert should_sync_signal_to_sheet(_signal_row(status="PENDING_ENTRY")) is False
+    assert should_sync_signal_to_sheet(_signal_row(status="INVALIDATED")) is False
+    assert should_sync_signal_to_sheet(_signal_row(status="REPLACED")) is False
+    assert should_sync_signal_to_sheet(_signal_row(status="ACTIVE")) is True
+    assert should_sync_signal_to_sheet(_signal_row(status="PARTIAL_TP1")) is True
+    assert should_sync_signal_to_sheet(_signal_row(status="STOPPED")) is True
+
+
+def test_safe_sync_signal_skips_pending_entry_and_appends_on_active():
+    worksheet = FakeWorksheet()
+    logger = GoogleSheetsSignalLogger(
+        spreadsheet_id="test",
+        credentials_path="storage/credentials.json",
+        worksheet_name="wave_log",
+        worksheet=worksheet,
+    )
+
+    safe_sync_signal(_signal_row(status="PENDING_ENTRY"), logger)
+    assert worksheet.rows == [SHEET_HEADERS.copy()]
+
+    safe_sync_signal(_signal_row(status="ACTIVE"), logger)
+    assert len(worksheet.rows) == 2
+    assert worksheet.rows[1][12] == "ACTIVE"

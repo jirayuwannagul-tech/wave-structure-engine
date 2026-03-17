@@ -23,6 +23,14 @@ SHEET_HEADERS = [
     "win_score",
 ]
 
+SYNCABLE_SIGNAL_STATUSES = {
+    "ACTIVE",
+    "PARTIAL_TP1",
+    "PARTIAL_TP2",
+    "TP3_HIT",
+    "STOPPED",
+}
+
 
 def _is_enabled() -> bool:
     return (os.getenv("GOOGLE_SHEETS_ENABLED", "false") or "").strip().lower() in {
@@ -99,6 +107,11 @@ def build_signal_sheet_row(signal_row) -> list[str]:
 
 def _build_identity_key(row_values: list[str]) -> tuple[str, ...]:
     return tuple(row_values[:9])
+
+
+def should_sync_signal_to_sheet(signal_row) -> bool:
+    status = str((signal_row or {}).get("status") or "").upper()
+    return status in SYNCABLE_SIGNAL_STATUSES
 
 
 class GoogleSheetsSignalLogger:
@@ -180,6 +193,8 @@ class GoogleSheetsSignalLogger:
 
 def safe_sync_signal(signal_row, logger: GoogleSheetsSignalLogger | None) -> None:
     if logger is None or signal_row is None:
+        return
+    if not should_sync_signal_to_sheet(signal_row):
         return
 
     try:
