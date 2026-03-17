@@ -29,7 +29,11 @@ def _merge_with_existing_csv(path: Path, df: pd.DataFrame) -> pd.DataFrame:
     if not path.exists():
         return _normalize_dataframe(df)
 
-    existing = pd.read_csv(path)
+    try:
+        existing = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return _normalize_dataframe(df)
+
     existing = _normalize_dataframe(existing)
     combined = pd.concat([existing, df], ignore_index=True)
     return _normalize_dataframe(combined)

@@ -72,3 +72,30 @@ def test_sync_recent_market_data_merges_into_existing_csv_and_db(tmp_path, monke
     assert item["rows_fetched"] == 2
     assert item["csv_rows_total"] == 3
     assert repository.count_market_candles("ETHUSDT", "4H") == 2
+
+
+def test_sync_recent_market_data_recovers_from_empty_existing_csv(tmp_path, monkeypatch):
+    repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    path = tmp_path / "DOGEUSDT_1d.csv"
+    path.write_text("")
+
+    monkeypatch.setattr(
+        "services.market_data_sync._dataset_path",
+        lambda symbol, timeframe: path,
+    )
+    monkeypatch.setattr(
+        "services.market_data_sync._fetch_recent_history",
+        lambda symbol, timeframe, lookback_candles=3: _sample_df("2026-01-01", 2, "1D"),
+    )
+
+    summary = sync_recent_market_data(
+        symbols=["DOGEUSDT"],
+        timeframes=["1D"],
+        repository=repository,
+        lookback_candles=2,
+    )
+
+    item = summary["items"]["DOGEUSDT:1D"]
+    assert item["rows_fetched"] == 2
+    assert item["csv_rows_total"] == 2
+    assert repository.count_market_candles("DOGEUSDT", "1D") == 2

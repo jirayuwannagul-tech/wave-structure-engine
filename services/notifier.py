@@ -25,9 +25,41 @@ def _clean_env_value(value: str | None) -> str:
     return value.split("#", 1)[0].strip()
 
 
-def _build_message(message: str) -> str:
-    header = _clean_env_value(os.getenv("TELEGRAM_MESSAGE_HEADER", ""))
-    footer = _clean_env_value(os.getenv("TELEGRAM_MESSAGE_FOOTER", ""))
+def _format_layout_text(
+    text: str,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+) -> str:
+    formatted = text
+    if symbol:
+        formatted = formatted.replace("{symbol}", symbol.upper())
+    if timeframe:
+        formatted = formatted.replace("{timeframe}", timeframe.upper())
+
+    # Backward-compatible fallback for older env values that hardcode BTCUSDT.
+    if symbol and "{symbol}" not in text and "BTCUSDT" in formatted:
+        formatted = formatted.replace("BTCUSDT", symbol.upper(), 1)
+
+    return formatted
+
+
+def _build_message(
+    message: str,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+) -> str:
+    header = _format_layout_text(
+        _clean_env_value(os.getenv("TELEGRAM_MESSAGE_HEADER", "")),
+        symbol=symbol,
+        timeframe=timeframe,
+    )
+    footer = _format_layout_text(
+        _clean_env_value(os.getenv("TELEGRAM_MESSAGE_FOOTER", "")),
+        symbol=symbol,
+        timeframe=timeframe,
+    )
 
     parts = []
 
@@ -73,9 +105,14 @@ def send_notification(
     topic_id: str | int | None = None,
     topic_key: str | None = None,
     timeframe: str | None = None,
+    symbol: str | None = None,
     include_layout: bool = True,
 ) -> bool:
-    final_message = _build_message(message) if include_layout else message
+    final_message = (
+        _build_message(message, symbol=symbol, timeframe=timeframe)
+        if include_layout
+        else message
+    )
 
     bot_token = _clean_env_value(os.getenv("TELEGRAM_BOT_TOKEN", ""))
     chat_id = _clean_env_value(os.getenv("TELEGRAM_CHAT_ID", ""))

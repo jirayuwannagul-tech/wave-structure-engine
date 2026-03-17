@@ -51,5 +51,7 @@ def test_check_scenario_and_alert_uses_unique_key_per_level(monkeypatch, tmp_pat
     assert state_1d == "CONFIRMED"
     assert state_4h == "CONFIRMED"
     assert len(sent) == 2
+    assert sent[0][1]["symbol"] == "BTCUSDT"
+    assert sent[1][1]["symbol"] == "BTCUSDT"
     assert sent[0][1]["timeframe"] is None
     assert sent[1][1]["timeframe"] is None

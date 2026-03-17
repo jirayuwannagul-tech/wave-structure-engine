@@ -50,6 +50,7 @@ def run_daily_job(
     send_notification(
         build_daily_summary_message(report, symbol=symbol, now=now),
         topic_key="daily_summary",
+        symbol=symbol,
     )
 
 

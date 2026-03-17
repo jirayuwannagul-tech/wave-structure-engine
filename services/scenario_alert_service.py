@@ -45,6 +45,7 @@ def check_scenario_and_alert(
             f"SL: {_fmt_value(scenario.stop_loss)}\n"
             f"Targets: {[ _fmt_value(target) for target in scenario.targets ]}",
             timeframe=timeframe,
+            symbol=symbol,
         )
 
     elif state == "INVALIDATED":
@@ -54,6 +55,7 @@ def check_scenario_and_alert(
             f"ราคา: {_fmt_value(current_price)}\n"
             f"Invalidation: {_fmt_value(scenario.invalidation)}",
             timeframe=timeframe,
+            symbol=symbol,
         )
 
     return state

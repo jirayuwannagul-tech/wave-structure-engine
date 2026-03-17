@@ -10,7 +10,7 @@ def test_process_price_update_sends_only_one_notification_per_state(tmp_path, mo
 
     monkeypatch.setattr(
         "services.live_price_monitor.send_notification",
-        lambda message: sent.append(message),
+        lambda message, **kwargs: sent.append((message, kwargs)),
     )
 
     levels = [Level("4H Support", 69266.0, "support")]
@@ -19,7 +19,8 @@ def test_process_price_update_sends_only_one_notification_per_state(tmp_path, mo
     _process_price_update("BTCUSDT", 69180.0, levels, store)
 
     assert len(sent) == 1
-    assert "4H Support" in sent[0]
+    assert "4H Support" in sent[0][0]
+    assert sent[0][1]["symbol"] == "BTCUSDT"
 
 
 def test_run_monitor_refreshes_runtime_levels_between_cycles(tmp_path, monkeypatch):

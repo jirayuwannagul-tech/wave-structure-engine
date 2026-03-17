@@ -34,12 +34,14 @@ def _process_price_update(
         if state == "NEAR":
             send_notification(
                 f"⚠️ ราคาเข้าใกล้ {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}"
+                f"ราคาปัจจุบัน: {current_price}",
+                symbol=symbol,
             )
         elif state == "BREAK":
             send_notification(
                 f"🚨 ราคา BREAK {level.name} ({level.price})\n"
-                f"ราคาปัจจุบัน: {current_price}"
+                f"ราคาปัจจุบัน: {current_price}",
+                symbol=symbol,
             )
 
 

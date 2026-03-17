@@ -15,6 +15,7 @@ from services.binance_price_service import get_last_price
 from services.google_sheets_sync import safe_sync_signal
 from services.market_data_sync import sync_recent_market_data
 from services.notifier import send_notification
+from services.scenario_alert_service import check_scenario_and_alert
 from storage.manual_wave_context import get_manual_wave_context, serialize_manual_wave_context
 from storage.wave_repository import WaveRepository
 from scenarios.scenario_state_machine import update_scenario_state
@@ -378,6 +379,7 @@ def _refresh_runtime(
             f"Reason:\n• {reason.replace(', ', chr(10) + '• ')}\n\n"
             f"{_format_analysis_summary(analysis)}",
             timeframe=analysis.get("timeframe"),
+            symbol=runtime.symbol,
         )
     return refreshed
 
@@ -439,6 +441,23 @@ def process_market_update(
     repository: WaveRepository | None = None,
     sheets_logger=None,
 ) -> OrchestratorRuntime:
+    for item in runtime.scenarios:
+        if isinstance(item, dict):
+            scenario = item.get("scenario")
+            timeframe = item.get("timeframe")
+        else:
+            scenario = item
+            timeframe = None
+        if scenario is None:
+            continue
+        check_scenario_and_alert(
+            scenario=scenario,
+            current_price=current_price,
+            store=store,
+            symbol=runtime.symbol,
+            timeframe=timeframe,
+        )
+
     if repository is not None:
         lifecycle_events = repository.track_price_update(runtime.symbol, current_price)
         for signal_id, event_type in lifecycle_events:
@@ -448,7 +467,12 @@ def process_market_update(
             safe_sync_signal(signal_row, sheets_logger)
             message = _build_signal_event_message(signal_row, event_type)
             if message:
-                send_notification(message, timeframe=signal_row["timeframe"], include_layout=False)
+                send_notification(
+                    message,
+                    timeframe=signal_row["timeframe"],
+                    symbol=signal_row["symbol"],
+                    include_layout=False,
+                )
 
     return runtime
 
@@ -502,6 +526,7 @@ def run_orchestrator(
         try:
             snapshots: list[str] = []
             now_ts = time.time()
+            refresh_runtimes = False
             if now_ts - last_market_data_sync_at >= MARKET_DATA_SYNC_INTERVAL_SECONDS:
                 sync_recent_market_data(
                     symbols=symbols,
@@ -509,7 +534,14 @@ def run_orchestrator(
                     repository=repository,
                 )
                 last_market_data_sync_at = now_ts
+                refresh_runtimes = True
             for runtime in list(runtimes.values()):
+                if refresh_runtimes:
+                    runtime = _load_runtime(runtime.symbol)
+                    runtimes[runtime.symbol] = runtime
+                    signal_ids = repository.sync_runtime(runtime)
+                    for signal_id in signal_ids:
+                        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
                 price = get_last_price(runtime.symbol)
                 print(f"{runtime.symbol} price: {price}")
                 daily_sent = maybe_run_daily_job(

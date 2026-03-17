@@ -29,7 +29,7 @@ def test_run_daily_job_calls_notification(monkeypatch):
     run_daily_job(symbol="BTCUSDT", now=now, runtime=runtime, current_price=70123.4)
 
     assert calls["message"] == "BTCUSDT | Daily Summary\n📅 2026-03-12\n\nTEST REPORT"
-    assert calls["kwargs"] == {"topic_key": "daily_summary"}
+    assert calls["kwargs"] == {"topic_key": "daily_summary", "symbol": "BTCUSDT"}
 
 
 def test_maybe_run_daily_job_runs_once_per_day(monkeypatch, tmp_path):
