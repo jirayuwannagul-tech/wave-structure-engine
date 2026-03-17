@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from analysis.trade_management import (
+    evaluate_entry_guardrails,
+    time_stop_hit,
+    volatility_spike_against_position,
+)
+
 
 TARGET_INDEX = {
     "TP1": 0,
@@ -137,6 +143,7 @@ def simulate_trade_from_setup(
     df,
     setup: TradeSetup,
     target_label: str = "TP1",
+    timeframe: str | None = None,
     fee_rate: float = 0.0,
     slippage_rate: float = 0.0,
 ) -> TradeBacktestResult:
@@ -189,6 +196,7 @@ def simulate_trade_from_setup(
         )
 
     entry_candle = df.iloc[entry_index]
+    trigger_candle = df.iloc[trigger_index]
     effective_entry = _effective_entry_from_open(float(entry_candle["open"]), setup, slippage_rate)
     effective_stop = _effective_exit_price(float(setup.stop_loss), setup, slippage_rate)
     stop_gross_pnl, stop_net_pnl, stop_fee_paid = _net_pnl_per_unit(
@@ -198,6 +206,25 @@ def simulate_trade_from_setup(
         fee_rate,
     )
     risk_amount = abs(stop_net_pnl)
+
+    guard_decision = evaluate_entry_guardrails(
+        trigger_candle=trigger_candle,
+        entry_open=float(entry_candle["open"]),
+        side=setup.side,
+        planned_entry=float(setup.entry_price),
+        stop_loss=float(setup.stop_loss),
+    )
+    if not guard_decision.allow_entry:
+        return TradeBacktestResult(
+            triggered=False,
+            outcome=guard_decision.reason or "ENTRY_BLOCKED",
+            target_label=target_label,
+            entry_index=None,
+            exit_index=None,
+            entry_price=None,
+            exit_price=None,
+            reward_r=0.0,
+        )
 
     if risk_amount == 0:
         return TradeBacktestResult(
@@ -319,6 +346,57 @@ def simulate_trade_from_setup(
                 exit_index=i,
                 entry_price=round(effective_entry, 6),
                 exit_price=round(effective_target, 6),
+                reward_r=round(reward_r, 3),
+                gross_pnl_per_unit=round(gross_pnl, 6),
+                net_pnl_per_unit=round(net_pnl, 6),
+                fee_paid_per_unit=round(fee_paid, 6),
+            )
+
+        if time_stop_hit(
+            entry_index=entry_index,
+            current_index=i,
+            timeframe=timeframe,
+            realized_targets=[],
+        ):
+            time_exit = _effective_exit_price(float(candle["close"]), setup, slippage_rate)
+            gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(
+                effective_entry,
+                time_exit,
+                setup,
+                fee_rate,
+            )
+            reward_r = net_pnl / risk_amount if risk_amount else 0.0
+            return TradeBacktestResult(
+                triggered=True,
+                outcome="TIME_STOP",
+                target_label=target_label,
+                entry_index=entry_index,
+                exit_index=i,
+                entry_price=round(effective_entry, 6),
+                exit_price=round(time_exit, 6),
+                reward_r=round(reward_r, 3),
+                gross_pnl_per_unit=round(gross_pnl, 6),
+                net_pnl_per_unit=round(net_pnl, 6),
+                fee_paid_per_unit=round(fee_paid, 6),
+            )
+
+        if volatility_spike_against_position(candle, setup.side, candle.get("atr"), effective_entry):
+            protective_exit = _effective_exit_price(float(candle["close"]), setup, slippage_rate)
+            gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(
+                effective_entry,
+                protective_exit,
+                setup,
+                fee_rate,
+            )
+            reward_r = net_pnl / risk_amount if risk_amount else 0.0
+            return TradeBacktestResult(
+                triggered=True,
+                outcome="PROTECTIVE_EXIT",
+                target_label=target_label,
+                entry_index=entry_index,
+                exit_index=i,
+                entry_price=round(effective_entry, 6),
+                exit_price=round(protective_exit, 6),
                 reward_r=round(reward_r, 3),
                 gross_pnl_per_unit=round(gross_pnl, 6),
                 net_pnl_per_unit=round(net_pnl, 6),

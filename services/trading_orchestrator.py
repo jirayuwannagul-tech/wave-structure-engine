@@ -9,10 +9,10 @@ from analysis.price_level_watcher import Level
 from analysis.setup_filter import build_higher_timeframe_context, extract_trade_bias
 from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
-from scheduler.daily_scheduler import maybe_run_daily_job
+from scheduler.daily_scheduler import maybe_run_combined_daily_job
 from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
-from services.google_sheets_sync import safe_sync_signal
+from services.google_sheets_sync import compute_signal_tracking, safe_sync_signal
 from services.market_data_sync import sync_recent_market_data
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
@@ -59,6 +59,12 @@ def _optional_level_line(label: str, value, suffix: str = "") -> str | None:
     if value is None:
         return None
     return f"• {label}: {_fmt_value(value)}{suffix}"
+
+
+def _optional_text_line(label: str, value, suffix: str = "") -> str | None:
+    if value in (None, ""):
+        return None
+    return f"• {label}: {value}{suffix}"
 
 
 def _fallback_targets(
@@ -244,8 +250,6 @@ def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRunt
                     from pathlib import Path
                     import pandas as pd
                     from analysis.hierarchical_wave_counter import build_hierarchical_count_from_dfs
-                    from analysis.setup_filter import apply_trade_filters
-
                     csv_1w = Path(f"data/{symbol}_1w.csv")
                     csv_1d = Path(f"data/{symbol}_1d.csv")
                     if csv_1w.exists() and csv_1d.exists():
@@ -396,39 +400,65 @@ def render_runtime_snapshot(runtime: OrchestratorRuntime, current_price: float |
 
 def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     event_type = (event_type or "").upper()
-    if event_type not in {"ENTRY_TRIGGERED", "TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT"}:
+    if event_type not in {"ENTRY_TRIGGERED", "TP1_HIT", "TP2_HIT", "TP3_HIT", "STOP_LOSS_HIT", "TIME_STOP_HIT"}:
         return None
 
-    timeframe = signal_row["timeframe"]
-    scenario_name = signal_row["scenario_name"]
-    entry_price = signal_row["entry_price"]
-    stop_loss = signal_row["stop_loss"]
-    tp1 = signal_row["tp1"]
-    tp2 = signal_row["tp2"]
-    tp3 = signal_row["tp3"]
-    status = signal_row["status"]
-    symbol = signal_row["symbol"]
-    tp1_mark = " ✅" if signal_row["tp1_hit_at"] else ""
-    tp2_mark = " ✅" if signal_row["tp2_hit_at"] else ""
-    tp3_mark = " ✅" if signal_row["tp3_hit_at"] else ""
-    sl_mark = " ❌" if event_type == "STOP_LOSS_HIT" else ""
+    def _signal_value(key: str):
+        if hasattr(signal_row, "keys"):
+            try:
+                if key in signal_row.keys():
+                    return signal_row[key]
+            except Exception:
+                pass
+        if isinstance(signal_row, dict):
+            return signal_row.get(key)
+        return signal_row[key]
+
+    timeframe = _signal_value("timeframe")
+    scenario_name = _signal_value("scenario_name")
+    entry_price = _signal_value("entry_price")
+    stop_loss = _signal_value("stop_loss")
+    tp1 = _signal_value("tp1")
+    tp2 = _signal_value("tp2")
+    tp3 = _signal_value("tp3")
+    status = _signal_value("status")
+    symbol = _signal_value("symbol")
+    rr_tp1 = _signal_value("rr_tp1")
+    rr_tp2 = _signal_value("rr_tp2")
+    rr_tp3 = _signal_value("rr_tp3")
+    tracking = compute_signal_tracking(signal_row)
+    tg_marks = {"✓": "✅", "✗": "❌"}
+    tp1_mark = f" {tg_marks[tracking['tp1_mark']]}" if tracking["tp1_mark"] else ""
+    tp2_mark = f" {tg_marks[tracking['tp2_mark']]}" if tracking["tp2_mark"] else ""
+    tp3_mark = f" {tg_marks[tracking['tp3_mark']]}" if tracking["tp3_mark"] else ""
+    sl_mark = f" {tg_marks[tracking['sl_mark']]}" if tracking["sl_mark"] else ""
     event_titles = {
         "ENTRY_TRIGGERED": "Entry Triggered",
         "TP1_HIT": "TP1 Hit",
         "TP2_HIT": "TP2 Hit",
         "TP3_HIT": "TP3 Hit",
         "STOP_LOSS_HIT": "Stop Loss Hit",
+        "TIME_STOP_HIT": "Time Stop Hit",
     }
+
+    def _rr_suffix(value) -> str:
+        if value is None:
+            return ""
+        return f" ({_fmt_value(value)}R)"
+
     lines = [
-        f"{'❌' if event_type == 'STOP_LOSS_HIT' else ('🎯' if event_type == 'ENTRY_TRIGGERED' else '✅')} {symbol} | {timeframe} {event_titles[event_type]}",
+        f"{'❌' if event_type == 'STOP_LOSS_HIT' else ('⏱' if event_type == 'TIME_STOP_HIT' else ('🎯' if event_type == 'ENTRY_TRIGGERED' else '✅'))} {symbol} | {timeframe} {event_titles[event_type]}",
         "",
         f"• Scenario: {scenario_name}",
         f"• Status: {_humanize_token(status)}",
         f"• Entry: {_fmt_value(entry_price)}",
         f"• SL: {_fmt_value(stop_loss)}{sl_mark}",
-        _optional_level_line("TP1", tp1, tp1_mark),
-        _optional_level_line("TP2", tp2, tp2_mark),
-        _optional_level_line("TP3", tp3, tp3_mark),
+        _optional_level_line("TP1", tp1, f"{tp1_mark}{_rr_suffix(rr_tp1)}"),
+        _optional_level_line("TP2", tp2, f"{tp2_mark}{_rr_suffix(rr_tp2)}"),
+        _optional_level_line("TP3", tp3, f"{tp3_mark}{_rr_suffix(rr_tp3)}"),
+        _optional_text_line("Result", _humanize_token(tracking["result"])),
+        _optional_text_line("Realized RR", tracking["realized_rr"], "R"),
+        _optional_text_line("Win Rate", tracking["win_rate_pct"], "%"),
     ]
     return "\n".join(line for line in lines if line is not None)
 
@@ -535,6 +565,8 @@ def run_orchestrator(
                 )
                 last_market_data_sync_at = now_ts
                 refresh_runtimes = True
+            price_updates: dict[str, float] = {}
+            ordered_runtimes: list[OrchestratorRuntime] = []
             for runtime in list(runtimes.values()):
                 if refresh_runtimes:
                     runtime = _load_runtime(runtime.symbol)
@@ -543,18 +575,17 @@ def run_orchestrator(
                     for signal_id in signal_ids:
                         safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
                 price = get_last_price(runtime.symbol)
+                price_updates[runtime.symbol] = price
+                ordered_runtimes.append(runtime)
                 print(f"{runtime.symbol} price: {price}")
-                daily_sent = maybe_run_daily_job(
-                    repository=repository,
-                    runtime=runtime,
-                    current_price=price,
-                )
-                if daily_sent:
-                    runtime = _load_runtime(runtime.symbol)
-                    runtimes[runtime.symbol] = runtime
-                    signal_ids = repository.sync_runtime(runtime, current_price=price)
-                    for signal_id in signal_ids:
-                        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+            maybe_run_combined_daily_job(
+                repository=repository,
+                runtimes=ordered_runtimes,
+                current_prices=price_updates,
+            )
+
+            for runtime in ordered_runtimes:
+                price = price_updates[runtime.symbol]
                 runtime = process_market_update(
                     runtime=runtime,
                     current_price=price,

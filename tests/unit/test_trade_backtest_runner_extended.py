@@ -78,6 +78,14 @@ def test_summarize_results_open_trades_contribute_to_triggered():
     assert summary.open_trades == 1
 
 
+def test_summarize_results_counts_time_stop_as_triggered_closed_trade():
+    results = [_make_result("TIME_STOP", 0.15), _make_result("OVEREXTENDED_ENTRY", 0.0)]
+    summary = _summarize_results("4H", "TP1", 0.0, 0.0, 5, 2, 2, results)
+    assert summary.triggered_trades == 1
+    assert summary.no_trigger_trades == 1
+    assert summary.stop_losses == 1
+
+
 # ---------- run_trade_backtest mocked ----------
 
 def _make_dummy_ohlcv(n=30):

@@ -3,6 +3,7 @@ from services.google_sheets_sync import (
     GoogleSheetsSignalLogger,
     build_signal_sheet_row,
     compute_sheet_result,
+    compute_signal_tracking,
     safe_sync_signal,
     should_sync_signal_to_sheet,
 )
@@ -13,6 +14,8 @@ def _signal_row(
     tp1_hit_at=None,
     tp2_hit_at=None,
     tp3_hit_at=None,
+    close_reason=None,
+    current_price=None,
 ):
     return {
         "created_at": "2026-03-12T00:15:00+00:00",
@@ -31,6 +34,8 @@ def _signal_row(
         "tp1_hit_at": tp1_hit_at,
         "tp2_hit_at": tp2_hit_at,
         "tp3_hit_at": tp3_hit_at,
+        "close_reason": close_reason if close_reason is not None else ("STOP_LOSS" if status == "STOPPED" else None),
+        "current_price": current_price if current_price is not None else 68977.91,
     }
 
 
@@ -42,10 +47,6 @@ class FakeWorksheet:
         return self.rows[row_number - 1] if row_number <= len(self.rows) else []
 
     def update(self, target, values, value_input_option=None):
-        if target == "A1:N1":
-            self.rows[0] = list(values[0])
-            return
-
         row_number = int(target.split(":")[0][1:])
         while len(self.rows) < row_number:
             self.rows.append([""] * len(SHEET_HEADERS))
@@ -58,11 +59,15 @@ class FakeWorksheet:
         return [list(row) for row in self.rows]
 
 
+def _column(name: str) -> int:
+    return SHEET_HEADERS.index(name)
+
+
 def test_compute_sheet_result_closed_outcomes():
     assert compute_sheet_result(_signal_row(status="STOPPED")) == ("SL_HIT", "0.00")
     assert compute_sheet_result(_signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00")) == (
         "TP1_THEN_SL",
-        "0.33",
+        "33.33",
     )
     assert compute_sheet_result(
         _signal_row(
@@ -70,15 +75,39 @@ def test_compute_sheet_result_closed_outcomes():
             tp1_hit_at="2026-03-12T01:00:00+00:00",
             tp2_hit_at="2026-03-12T02:00:00+00:00",
         )
-    ) == ("TP2_THEN_SL", "0.66")
+    ) == ("TP2_THEN_SL", "66.67")
     assert compute_sheet_result(_signal_row(status="TP3_HIT", tp3_hit_at="2026-03-12T03:00:00+00:00")) == (
         "TP3_HIT",
-        "1.00",
+        "100.00",
     )
 
 
-def test_build_signal_sheet_row_formats_expected_columns():
-    row = build_signal_sheet_row(_signal_row(status="PARTIAL_TP1", tp1_hit_at="2026-03-12T01:00:00+00:00"))
+def test_compute_signal_tracking_marks_targets_and_stop_loss():
+    tracking = compute_signal_tracking(
+        _signal_row(
+            status="STOPPED",
+            tp1_hit_at="2026-03-12T01:00:00+00:00",
+        )
+    )
+
+    assert tracking == {
+        "result": "TP1_THEN_SL",
+        "tp1_mark": "✓",
+        "tp2_mark": "",
+        "tp3_mark": "",
+        "sl_mark": "✗",
+        "realized_rr": "-0.5232",
+        "win_rate_pct": "33.33",
+    }
+
+
+def test_build_signal_sheet_row_formats_trade_journal_columns():
+    row = build_signal_sheet_row(
+        _signal_row(
+            status="PARTIAL_TP1",
+            tp1_hit_at="2026-03-12T01:00:00+00:00",
+        )
+    )
 
     assert row == [
         "2026-03-12",
@@ -93,8 +122,13 @@ def test_build_signal_sheet_row_formats_expected_columns():
         "0.195",
         "0.521",
         "0.934",
-        "TP1_ACTIVE",
+        "✓",
         "",
+        "",
+        "",
+        "TP1_ACTIVE",
+        "0.078",
+        "33.33",
     ]
 
 
@@ -107,20 +141,37 @@ def test_google_sheets_logger_upserts_existing_signal_row():
         worksheet=worksheet,
     )
 
-    pending = _signal_row(status="PENDING_ENTRY")
-    logger.upsert_signal(pending)
+    active = _signal_row(status="ACTIVE")
+    logger.upsert_signal(active)
 
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][3] == "SHORT"
-    assert worksheet.rows[1][9] == "0.195"
-    assert worksheet.rows[1][12] == "PENDING_ENTRY"
+    assert worksheet.rows[1][_column("side")] == "SHORT"
+    assert worksheet.rows[1][_column("rr_tp1")] == "0.195"
+    assert worksheet.rows[1][_column("result")] == "ACTIVE"
 
     stopped = _signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00")
     logger.upsert_signal(stopped)
 
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][12] == "TP1_THEN_SL"
-    assert worksheet.rows[1][13] == "0.33"
+    assert worksheet.rows[1][_column("tp1_mark")] == "✓"
+    assert worksheet.rows[1][_column("sl_mark")] == "✗"
+    assert worksheet.rows[1][_column("result")] == "TP1_THEN_SL"
+    assert worksheet.rows[1][_column("realized_rr")] == "-0.5232"
+    assert worksheet.rows[1][_column("win_rate_pct")] == "33.33"
+
+
+def test_compute_signal_tracking_time_stop_without_sl_mark():
+    tracking = compute_signal_tracking(
+        _signal_row(
+            status="STOPPED",
+            close_reason="TIME_STOP",
+            current_price=68800.0,
+        )
+    )
+
+    assert tracking["result"] == "TIME_STOP"
+    assert tracking["sl_mark"] == ""
+    assert tracking["realized_rr"] != ""
 
 
 def test_should_sync_signal_to_sheet_only_after_real_entry():
@@ -146,4 +197,5 @@ def test_safe_sync_signal_skips_pending_entry_and_appends_on_active():
 
     safe_sync_signal(_signal_row(status="ACTIVE"), logger)
     assert len(worksheet.rows) == 2
-    assert worksheet.rows[1][12] == "ACTIVE"
+    assert worksheet.rows[1][_column("result")] == "ACTIVE"
+    assert worksheet.rows[1][_column("realized_rr")] == ""

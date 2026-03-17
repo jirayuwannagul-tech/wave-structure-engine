@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from analysis.trade_management import managed_stop_after_target, time_stop_bars_for_timeframe
 from analysis.risk_reward import calculate_rr_levels
 
 OPEN_SIGNAL_STATUSES = {
@@ -21,6 +22,15 @@ OPEN_SIGNAL_STATUSES = {
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _round_price(value: float | None) -> float | None:
@@ -695,6 +705,32 @@ class WaveRepository:
                             continue
 
                         if self._entry_crossed(side, current, entry):
+                            risk = abs(entry - stop_loss)
+                            if risk > 0:
+                                if side == "LONG" and current > (entry + (risk * 0.35)):
+                                    self._close_signal(
+                                        conn,
+                                        signal_id=signal_id,
+                                        status="INVALIDATED",
+                                        close_reason="OVEREXTENDED_ENTRY",
+                                        current_price=current,
+                                        event_time=now,
+                                        event_type="ENTRY_SKIPPED",
+                                    )
+                                    events_created.append((signal_id, "ENTRY_SKIPPED"))
+                                    continue
+                                if side == "SHORT" and current < (entry - (risk * 0.35)):
+                                    self._close_signal(
+                                        conn,
+                                        signal_id=signal_id,
+                                        status="INVALIDATED",
+                                        close_reason="OVEREXTENDED_ENTRY",
+                                        current_price=current,
+                                        event_time=now,
+                                        event_type="ENTRY_SKIPPED",
+                                    )
+                                    events_created.append((signal_id, "ENTRY_SKIPPED"))
+                                    continue
                             conn.execute(
                                 """
                                 UPDATE signals
@@ -721,15 +757,35 @@ class WaveRepository:
                     if status in {"ACTIVE", "PARTIAL_TP1", "PARTIAL_TP2"}:
                         if tp1 is not None and row["tp1_hit_at"] is None and self._target_crossed(side, current, float(tp1)):
                             self._mark_target_hit(conn, signal_id, "TP1", current, now, "PARTIAL_TP1")
+                            moved_stop = managed_stop_after_target(
+                                side=side,
+                                current_stop=stop_loss,
+                                entry_price=float(row["entry_triggered_price"] or entry),
+                                tp1=tp1,
+                                target_label="TP1",
+                            )
+                            if moved_stop != stop_loss:
+                                self._update_stop_loss(conn, signal_id, moved_stop, now)
                             events_created.append((signal_id, "TP1_HIT"))
                             row = self._refresh_row(conn, signal_id)
                             status = row["status"]
+                            stop_loss = float(row["stop_loss"])
 
                         if tp2 is not None and row["tp2_hit_at"] is None and self._target_crossed(side, current, float(tp2)):
                             self._mark_target_hit(conn, signal_id, "TP2", current, now, "PARTIAL_TP2")
+                            moved_stop = managed_stop_after_target(
+                                side=side,
+                                current_stop=stop_loss,
+                                entry_price=float(row["entry_triggered_price"] or entry),
+                                tp1=tp1,
+                                target_label="TP2",
+                            )
+                            if moved_stop != stop_loss:
+                                self._update_stop_loss(conn, signal_id, moved_stop, now)
                             events_created.append((signal_id, "TP2_HIT"))
                             row = self._refresh_row(conn, signal_id)
                             status = row["status"]
+                            stop_loss = float(row["stop_loss"])
 
                         if tp3 is not None and row["tp3_hit_at"] is None and self._target_crossed(side, current, float(tp3)):
                             self._mark_target_hit(conn, signal_id, "TP3", current, now, "TP3_HIT")
@@ -756,6 +812,29 @@ class WaveRepository:
                                 event_type="STOP_LOSS_HIT",
                             )
                             events_created.append((signal_id, "STOP_LOSS_HIT"))
+                            continue
+
+                        limit = time_stop_bars_for_timeframe(row["timeframe"])
+                        entry_triggered_at = _parse_iso_timestamp(row["entry_triggered_at"])
+                        if (
+                            limit is not None
+                            and entry_triggered_at is not None
+                            and row["tp1_hit_at"] is None
+                        ):
+                            now_dt = _parse_iso_timestamp(now)
+                            if now_dt is not None:
+                                bars_elapsed = self._bars_elapsed(row["timeframe"], entry_triggered_at, now_dt)
+                                if bars_elapsed >= limit:
+                                    self._close_signal(
+                                        conn,
+                                        signal_id=signal_id,
+                                        status="STOPPED",
+                                        close_reason="TIME_STOP",
+                                        current_price=current,
+                                        event_time=now,
+                                        event_type="TIME_STOP_HIT",
+                                    )
+                                    events_created.append((signal_id, "TIME_STOP_HIT"))
 
         except sqlite3.Error as exc:
             print(f"[wave_repository] track_price_update failed: {exc}")
@@ -839,6 +918,31 @@ class WaveRepository:
             event_time=event_time,
         )
 
+    def _update_stop_loss(
+        self,
+        conn: sqlite3.Connection,
+        signal_id: int,
+        stop_loss: float,
+        event_time: str,
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE signals
+            SET stop_loss = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (_round_price(stop_loss), event_time, signal_id),
+        )
+        self._insert_event(
+            conn,
+            signal_id=signal_id,
+            event_type="STOP_MOVED",
+            price=_round_price(stop_loss),
+            details={"stop_loss": _round_price(stop_loss)},
+            event_time=event_time,
+        )
+
     def _close_signal(
         self,
         conn: sqlite3.Connection,
@@ -869,6 +973,18 @@ class WaveRepository:
             details={"close_reason": close_reason, "status": status},
             event_time=event_time,
         )
+
+    def _bars_elapsed(self, timeframe: str | None, start: datetime, end: datetime) -> int:
+        mapping_seconds = {
+            "4H": 4 * 60 * 60,
+            "1D": 24 * 60 * 60,
+            "1W": 7 * 24 * 60 * 60,
+        }
+        seconds = mapping_seconds.get((timeframe or "").upper())
+        if not seconds:
+            return 0
+        elapsed = max(0.0, (end - start).total_seconds())
+        return int(elapsed // seconds)
 
     def _refresh_row(self, conn: sqlite3.Connection, signal_id: int) -> sqlite3.Row:
         return conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()

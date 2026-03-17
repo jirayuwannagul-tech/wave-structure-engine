@@ -147,7 +147,7 @@ def test_simulate_trade_enters_on_next_candle_open():
     df = pd.DataFrame(
         [
             {"open": 99.0, "high": 101.0, "low": 98.0, "close": 100.6},
-            {"open": 103.0, "high": 111.0, "low": 102.0, "close": 110.0},
+            {"open": 101.5, "high": 111.0, "low": 100.5, "close": 110.0},
             {"open": 110.0, "high": 112.0, "low": 108.0, "close": 111.0},
         ]
     )
@@ -162,7 +162,7 @@ def test_simulate_trade_enters_on_next_candle_open():
 
     assert result.triggered is True
     assert result.entry_index == 1
-    assert result.entry_price == 103.0
+    assert result.entry_price == 101.5
     assert result.outcome == "TP1"
 
 

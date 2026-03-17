@@ -43,17 +43,19 @@ def _summarize_results(
     setups_built: int,
     results: list[dict],
 ) -> TradeBacktestSummary:
-    valid_target_setups = sum(1 for r in results if r["outcome"] != "INVALID")
-    triggered_trades = sum(
-        1 for r in results if r["outcome"] in {target_label, "STOP_LOSS", "OPEN"}
-    )
-    no_trigger_trades = sum(1 for r in results if r["outcome"] == "NO_TRIGGER")
+    skipped_outcomes = {"INVALID", "NO_TRIGGER", "FAKEOUT_TRIGGER", "OVEREXTENDED_ENTRY", "ENTRY_BLOCKED"}
+    valid_target_setups = sum(1 for r in results if r["outcome"] not in {"INVALID"})
+    triggered_trades = sum(1 for r in results if r["outcome"] not in skipped_outcomes)
+    no_trigger_trades = sum(1 for r in results if r["outcome"] in {"NO_TRIGGER", "FAKEOUT_TRIGGER", "OVEREXTENDED_ENTRY", "ENTRY_BLOCKED"})
     invalid_setups = sum(1 for r in results if r["outcome"] == "INVALID")
     tp_hits = sum(1 for r in results if r["outcome"] == target_label)
-    stop_losses = sum(1 for r in results if r["outcome"] == "STOP_LOSS")
+    stop_losses = sum(1 for r in results if r["outcome"] in {"STOP_LOSS", "TIME_STOP", "PROTECTIVE_EXIT"})
     open_trades = sum(1 for r in results if r["outcome"] == "OPEN")
 
-    closed_results = [r for r in results if r["outcome"] in {target_label, "STOP_LOSS"}]
+    closed_results = [
+        r for r in results
+        if r["outcome"] not in skipped_outcomes and r["outcome"] != "OPEN"
+    ]
     closed_count = len(closed_results)
     win_rate = (tp_hits / closed_count) if closed_count else 0.0
     expectancy_r = (
@@ -183,6 +185,7 @@ def run_trade_backtest(
             future_df,
             setup,
             target_label=target_label,
+            timeframe=timeframe,
             fee_rate=fee_rate,
             slippage_rate=slippage_rate,
         )

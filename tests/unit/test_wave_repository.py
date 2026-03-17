@@ -72,11 +72,30 @@ def test_repository_tracks_tp1_then_stop_loss(tmp_path):
     with repo._connect() as conn:
         row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
     assert row["status"] == "STOPPED"
+    assert row["stop_loss"] == 100.5
     assert row["tp1_hit_at"] is not None
     assert row["close_reason"] == "STOP_LOSS"
 
     event_types = [event["event_type"] for event in repo.fetch_signal_events(signal_id)]
-    assert event_types == ["SIGNAL_CREATED", "ENTRY_TRIGGERED", "TP1_HIT", "STOP_LOSS_HIT"]
+    assert event_types == ["SIGNAL_CREATED", "ENTRY_TRIGGERED", "TP1_HIT", "STOP_MOVED", "STOP_LOSS_HIT"]
+
+
+def test_repository_time_stop_closes_stalled_trade(tmp_path):
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    signal_id = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0))
+
+    assert signal_id is not None
+
+    repo.track_price_update("BTCUSDT", 100.2, event_time="2026-03-17T00:00:00+00:00")
+    events = repo.track_price_update("BTCUSDT", 100.4, event_time="2026-03-18T00:00:00+00:00")
+
+    assert (signal_id, "TIME_STOP_HIT") in events
+
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+
+    assert row["status"] == "STOPPED"
+    assert row["close_reason"] == "TIME_STOP"
 
 
 def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):

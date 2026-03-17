@@ -16,6 +16,12 @@ from analysis.trade_backtest import (
     _triggered_by_candle,
     build_trade_setup_from_scenario,
 )
+from analysis.trade_management import (
+    evaluate_entry_guardrails,
+    managed_stop_after_target,
+    time_stop_hit,
+    volatility_spike_against_position,
+)
 from core.engine import build_dataframe_analysis
 from storage.experience_store import get_pattern_edge, get_scenario_edge
 
@@ -157,6 +163,7 @@ def _timestamp_at(df, idx: int | None) -> pd.Timestamp | None:
 def simulate_trade_lifecycle(
     df: pd.DataFrame,
     setup: TradeSetup,
+    timeframe: str | None = None,
     fee_rate: float = 0.0,
     slippage_rate: float = 0.0,
     tp_allocations: tuple[float, float, float] = (0.4, 0.3, 0.3),
@@ -230,10 +237,36 @@ def simulate_trade_lifecycle(
         )
 
     entry_candle = df.iloc[entry_index]
+    trigger_candle = df.iloc[trigger_index]
     effective_entry = _effective_entry_from_open(float(entry_candle["open"]), setup, slippage_rate)
     effective_stop = _effective_exit_price(float(setup.stop_loss), setup, slippage_rate)
     _, stop_net_pnl_per_unit, _ = _net_pnl_per_unit(effective_entry, effective_stop, setup, fee_rate)
     risk_per_unit = abs(stop_net_pnl_per_unit)
+
+    guard_decision = evaluate_entry_guardrails(
+        trigger_candle=trigger_candle,
+        entry_open=float(entry_candle["open"]),
+        side=setup.side,
+        planned_entry=float(setup.entry_price),
+        stop_loss=float(setup.stop_loss),
+    )
+    if not guard_decision.allow_entry:
+        return TradeLifecycleResult(
+            triggered=False,
+            outcome=guard_decision.reason or "ENTRY_BLOCKED",
+            entry_index=None,
+            exit_index=None,
+            entry_time=None,
+            exit_time=None,
+            entry_price=None,
+            exit_price=None,
+            reward_r=0.0,
+            realized_targets=[],
+            realized_size_pct=0.0,
+            gross_pnl_per_unit=0.0,
+            net_pnl_per_unit=0.0,
+            fee_paid_per_unit=0.0,
+        )
 
     if risk_per_unit == 0:
         return TradeLifecycleResult(
@@ -264,6 +297,8 @@ def simulate_trade_lifecycle(
     exit_index: int | None = None
     exit_price: float | None = None
     stopped_after_partial = False
+    time_stopped = False
+    volatility_exited = False
 
     entry_open = float(entry_candle["open"])
     stop_gap_hit = (_is_long(setup) and entry_open <= float(setup.stop_loss)) or (
@@ -375,15 +410,51 @@ def simulate_trade_lifecycle(
 
             # Protect remaining size once the trade has proven itself.
             if remaining_size > 1e-9:
-                if label == "TP1":
-                    dynamic_stop = effective_entry
-                elif label == "TP2":
-                    tp1_price = float(setup.take_profit_1 or effective_entry)
-                    dynamic_stop = max(dynamic_stop, tp1_price) if _is_long(setup) else min(dynamic_stop, tp1_price)
+                dynamic_stop = managed_stop_after_target(
+                    side=setup.side,
+                    current_stop=dynamic_stop,
+                    entry_price=effective_entry,
+                    tp1=setup.take_profit_1,
+                    target_label=label,
+                )
 
             if remaining_size <= 1e-9:
                 remaining_size = 0.0
                 break
+
+        if remaining_size > 0 and time_stop_hit(
+            entry_index=entry_index,
+            current_index=i,
+            timeframe=timeframe,
+            realized_targets=realized_targets,
+        ):
+            time_exit = _effective_exit_price(float(candle["close"]), setup, slippage_rate)
+            gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(effective_entry, time_exit, setup, fee_rate)
+            gross_total += gross_pnl * remaining_size
+            net_total += net_pnl * remaining_size
+            fee_total += fee_paid * remaining_size
+            exit_index = i
+            exit_price = time_exit
+            time_stopped = True
+            remaining_size = 0.0
+            break
+
+        if remaining_size > 0 and volatility_spike_against_position(
+            candle,
+            setup.side,
+            candle.get("atr"),
+            effective_entry,
+        ):
+            protective_exit = _effective_exit_price(float(candle["close"]), setup, slippage_rate)
+            gross_pnl, net_pnl, fee_paid = _net_pnl_per_unit(effective_entry, protective_exit, setup, fee_rate)
+            gross_total += gross_pnl * remaining_size
+            net_total += net_pnl * remaining_size
+            fee_total += fee_paid * remaining_size
+            exit_index = i
+            exit_price = protective_exit
+            volatility_exited = True
+            remaining_size = 0.0
+            break
 
         if remaining_size <= 0:
             break
@@ -406,7 +477,11 @@ def simulate_trade_lifecycle(
             fee_paid_per_unit=round(fee_total, 6),
         )
 
-    if stopped_after_partial:
+    if time_stopped:
+        outcome = "TIME_STOP"
+    elif volatility_exited:
+        outcome = "PROTECTIVE_EXIT"
+    elif stopped_after_partial:
         outcome = "PARTIAL_STOPPED"
     elif remaining_size <= 0 and realized_targets:
         outcome = "TP3_HIT" if "TP3" in realized_targets else realized_targets[-1]
@@ -654,6 +729,7 @@ def run_portfolio_backtest(
         lifecycle = simulate_trade_lifecycle(
             future_df,
             setup,
+            timeframe=timeframe,
             fee_rate=fee_rate,
             slippage_rate=slippage_rate,
             tp_allocations=tp_allocations,
@@ -896,6 +972,7 @@ def build_trade_candidates(
             lifecycle = simulate_trade_lifecycle(
                 future_df,
                 setup,
+                timeframe=timeframe,
                 fee_rate=fee_rate,
                 slippage_rate=slippage_rate,
                 tp_allocations=tp_allocations,

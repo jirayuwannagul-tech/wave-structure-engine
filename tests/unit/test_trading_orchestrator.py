@@ -4,6 +4,7 @@ from scenarios.scenario_engine import Scenario
 from services.alert_state_store import AlertStateStore
 from services.trading_orchestrator import (
     OrchestratorRuntime,
+    _build_signal_event_message,
     _build_levels_from_analysis,
     _format_analysis_summary,
     _load_runtime,
@@ -12,6 +13,42 @@ from services.trading_orchestrator import (
     run_orchestrator,
 )
 from storage.wave_repository import WaveRepository
+
+
+def test_build_signal_event_message_includes_tracking_summary():
+    signal_row = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4H",
+        "scenario_name": "Main Bullish",
+        "side": "LONG",
+        "entry_price": 100.0,
+        "stop_loss": 95.0,
+        "tp1": 110.0,
+        "tp2": 120.0,
+        "tp3": 130.0,
+        "rr_tp1": 2.0,
+        "rr_tp2": 4.0,
+        "rr_tp3": 6.0,
+        "status": "STOPPED",
+        "tp1_hit_at": "2026-03-17T08:00:00+00:00",
+        "tp2_hit_at": None,
+        "tp3_hit_at": None,
+        "close_reason": "STOP_LOSS",
+    }
+
+    message = _build_signal_event_message(signal_row, "STOP_LOSS_HIT")
+
+    assert message is not None
+    assert message.startswith("❌ BTCUSDT | 4H Stop Loss Hit")
+    assert "• Scenario: Main Bullish" in message
+    assert "• Status: Stopped" in message
+    assert "• SL: 95 ❌" in message
+    assert "• TP1: 110 ✅ (2R)" in message
+    assert "• TP2: 120 (4R)" in message
+    assert "• TP3: 130 (6R)" in message
+    assert "• Result: TP1 Then SL" in message
+    assert "• Realized RR: 0.2R" in message
+    assert "• Win Rate: 33.33%" in message
 
 
 def test_build_levels_from_analysis():
@@ -439,7 +476,7 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     assert "• TP1: 110 ✅" in notifications[1][0]
     assert notifications[2][0].startswith("❌ BTCUSDT | 4H Stop Loss Hit")
     assert "• Status: Stopped" in notifications[2][0]
-    assert "• SL: 95 ❌" in notifications[2][0]
+    assert "• SL: 100.5 ❌" in notifications[2][0]
     assert "• TP1: 110 ✅" in notifications[2][0]
     assert notifications[2][1]["timeframe"] == "4H"
 
@@ -460,7 +497,7 @@ def test_run_orchestrator_once_supports_multiple_symbols(monkeypatch):
 
     monkeypatch.setattr("services.trading_orchestrator._load_runtime", lambda symbol: runtimes[symbol])
     monkeypatch.setattr("services.trading_orchestrator.get_last_price", lambda symbol: prices[symbol])
-    monkeypatch.setattr("services.trading_orchestrator.maybe_run_daily_job", lambda **kwargs: False)
+    monkeypatch.setattr("services.trading_orchestrator.maybe_run_combined_daily_job", lambda **kwargs: False)
     monkeypatch.setattr(
         "services.trading_orchestrator.sync_recent_market_data",
         lambda **kwargs: market_sync_calls.append(kwargs) or {"items": {}},

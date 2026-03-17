@@ -279,6 +279,34 @@ def test_simulate_trade_lifecycle_partial_stopped_after_tp1():
     assert "TP1" in result.realized_targets
 
 
+def test_simulate_trade_lifecycle_blocks_fakeout_trigger():
+    df = _make_df(
+        ("2026-01-01", 99.0, 112.0, 98.5, 100.6),   # closes above entry with rejection wick
+        ("2026-01-02", 100.0, 104.0, 99.5, 103.0),
+    )
+    setup = _long_setup(entry=100.0, stop=90.0, tp1=115.0, tp2=125.0, tp3=135.0)
+    result = simulate_trade_lifecycle(df, setup, timeframe="4H")
+    assert result.triggered is False
+    assert result.outcome == "FAKEOUT_TRIGGER"
+
+
+def test_simulate_trade_lifecycle_time_stop_without_follow_through():
+    df = _make_df(
+        ("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # triggers
+        ("2026-01-02", 100.0, 104.0, 99.0, 101.0),
+        ("2026-01-03", 101.0, 103.5, 99.5, 100.8),
+        ("2026-01-04", 100.8, 103.0, 99.7, 100.9),
+        ("2026-01-05", 100.9, 103.2, 99.6, 100.7),
+        ("2026-01-06", 100.7, 102.8, 99.8, 100.5),
+        ("2026-01-07", 100.5, 102.7, 99.9, 100.4),
+        ("2026-01-08", 100.4, 102.6, 99.8, 100.2),
+    )
+    setup = _long_setup(entry=100.0, stop=90.0, tp1=115.0, tp2=125.0, tp3=135.0)
+    result = simulate_trade_lifecycle(df, setup, timeframe="4H")
+    assert result.triggered is True
+    assert result.outcome == "TIME_STOP"
+
+
 # ---------- run_global_portfolio_backtest with concurrent ----------
 
 def test_run_global_portfolio_backtest_skips_when_max_concurrent(monkeypatch):

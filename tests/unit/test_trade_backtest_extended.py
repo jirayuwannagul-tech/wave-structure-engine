@@ -187,17 +187,17 @@ def test_simulate_stop_gap_at_open():
     assert result.outcome == "STOP_LOSS"
 
 
-def test_simulate_target_gap_at_open():
-    """Entry candle's open is above TP1 for LONG → immediate TP1 hit (gap = 0 reward_r)."""
+def test_simulate_target_gap_at_open_blocks_overextended_entry():
+    """If the next candle opens far beyond the planned entry, the system skips chasing it."""
     df = _df(
         _candle("2026-01-01", 100.0, 100.7, 99.5, 100.6),  # trigger
         _candle("2026-01-02", 116.0, 120.0, 115.0, 118.0),  # open above TP1=115
     )
     setup = _long(entry=100.0, stop=90.0, tp1=115.0)
     result = simulate_trade_from_setup(df, setup, target_label="TP1")
-    assert result.triggered
-    assert result.outcome == "TP1"
-    assert result.entry_index == 1
+    assert result.triggered is False
+    assert result.outcome == "OVEREXTENDED_ENTRY"
+    assert result.entry_index is None
 
 
 def test_simulate_stop_and_target_same_candle():
@@ -223,7 +223,35 @@ def test_simulate_open_trade():
     result = simulate_trade_from_setup(df, setup, target_label="TP1")
     assert result.triggered
     assert result.outcome == "OPEN"
-    assert result.exit_index is None
+
+
+def test_simulate_trade_blocks_fakeout_trigger():
+    df = _df(
+        _candle("2026-01-01", 99.0, 112.0, 98.5, 100.6),  # closes through entry with long upper wick
+        _candle("2026-01-02", 100.1, 104.0, 99.8, 103.0),
+    )
+    setup = _long(entry=100.0, stop=90.0, tp1=115.0)
+    result = simulate_trade_from_setup(df, setup, target_label="TP1", timeframe="4H")
+    assert result.triggered is False
+    assert result.outcome == "FAKEOUT_TRIGGER"
+
+
+def test_simulate_trade_time_stop():
+    df = _df(
+        _candle("2026-01-01", 99.0, 100.8, 98.5, 100.6),  # trigger
+        _candle("2026-01-02", 100.0, 104.0, 99.0, 101.0),
+        _candle("2026-01-03", 101.0, 103.5, 99.5, 100.8),
+        _candle("2026-01-04", 100.8, 103.0, 99.7, 100.9),
+        _candle("2026-01-05", 100.9, 103.2, 99.6, 100.7),
+        _candle("2026-01-06", 100.7, 102.8, 99.8, 100.5),
+        _candle("2026-01-07", 100.5, 102.7, 99.9, 100.4),
+        _candle("2026-01-08", 100.4, 102.6, 99.8, 100.2),
+    )
+    setup = _long(entry=100.0, stop=90.0, tp1=115.0)
+    result = simulate_trade_from_setup(df, setup, target_label="TP1", timeframe="4H")
+    assert result.triggered is True
+    assert result.outcome == "TIME_STOP"
+    assert result.exit_index == 7
 
 
 def test_simulate_trigger_at_last_candle_no_entry():
