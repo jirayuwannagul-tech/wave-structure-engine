@@ -115,6 +115,76 @@ def test_build_combined_daily_summary_message_lists_long_and_short_watch_prices(
     )
 
 
+def test_build_combined_daily_summary_message_falls_back_to_key_levels():
+    class KeyLevels:
+        def __init__(self, support, resistance):
+            self.support = support
+            self.resistance = resistance
+
+    class Runtime:
+        def __init__(self, symbol: str):
+            self.symbol = symbol
+            self.analyses = [
+                {
+                    "timeframe": "1D",
+                    "scenarios": [],
+                    "key_levels": KeyLevels(support=9.64, resistance=11.36),
+                    "wave_summary": {},
+                    "current_price": 10.52,
+                }
+            ]
+
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+
+    message = build_combined_daily_summary_message([Runtime("LINKUSDT")], now=now)
+
+    assert message == (
+        "Daily Watchlist\n"
+        "📅 2026-03-12\n\n"
+        "LINKUSDT | L 11.36 | S 9.64"
+    )
+
+
+def test_build_combined_daily_summary_message_ignores_already_crossed_scenario_levels():
+    class Scenario:
+        def __init__(self, bias, confirmation, stop_loss, targets):
+            self.bias = bias
+            self.confirmation = confirmation
+            self.stop_loss = stop_loss
+            self.targets = targets
+
+    class KeyLevels:
+        def __init__(self, support, resistance):
+            self.support = support
+            self.resistance = resistance
+
+    class Runtime:
+        def __init__(self, symbol: str):
+            self.symbol = symbol
+            self.analyses = [
+                {
+                    "timeframe": "1D",
+                    "current_price": 100.0,
+                    "scenarios": [
+                        Scenario("BULLISH", 90.0, 80.0, [110.0]),
+                        Scenario("BEARISH", 110.0, 120.0, [90.0]),
+                    ],
+                    "key_levels": KeyLevels(support=88.0, resistance=112.0),
+                    "wave_summary": {},
+                }
+            ]
+
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+
+    message = build_combined_daily_summary_message([Runtime("TESTUSDT")], now=now)
+
+    assert message == (
+        "Daily Watchlist\n"
+        "📅 2026-03-12\n\n"
+        "TESTUSDT | L 112 | S 88"
+    )
+
+
 def test_run_combined_daily_job_sends_single_message(monkeypatch):
     class Runtime:
         def __init__(self, symbol: str):

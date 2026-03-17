@@ -37,6 +37,7 @@ def _select_watch_price(runtime, bias: str, current_price: float | None = None) 
         scenarios = analysis.get("scenarios") or []
         analysis_price = analysis.get("current_price")
         price_reference = current_price if current_price is not None else analysis_price
+        analysis_candidates_before = len(candidates)
 
         for scenario in scenarios:
             scenario_bias = (getattr(scenario, "bias", None) or "").upper()
@@ -54,16 +55,53 @@ def _select_watch_price(runtime, bias: str, current_price: float | None = None) 
                     continue
                 if targets and not any(float(target) > entry for target in targets):
                     continue
+                if price_reference is not None and entry < float(price_reference):
+                    continue
             elif target_bias == "BEARISH":
                 if stop <= entry:
                     continue
                 if targets and not any(float(target) < entry for target in targets):
+                    continue
+                if price_reference is not None and entry > float(price_reference):
                     continue
             else:
                 continue
 
             distance = abs(float(price_reference) - entry) if price_reference is not None else float("inf")
             candidates.append((_timeframe_rank(timeframe), distance, entry))
+
+        if len(candidates) > analysis_candidates_before:
+            continue
+
+        key_levels = analysis.get("key_levels")
+        wave_summary = analysis.get("wave_summary") or {}
+        fallback_level = None
+
+        if target_bias == "BULLISH":
+            resistance = getattr(key_levels, "resistance", None) if key_levels is not None else None
+            support = getattr(key_levels, "support", None) if key_levels is not None else None
+            if price_reference is not None and resistance is not None and float(resistance) >= float(price_reference):
+                fallback_level = resistance
+            else:
+                fallback_level = resistance or wave_summary.get("confirm") or support
+        elif target_bias == "BEARISH":
+            support = getattr(key_levels, "support", None) if key_levels is not None else None
+            resistance = getattr(key_levels, "resistance", None) if key_levels is not None else None
+            if price_reference is not None and support is not None and float(support) <= float(price_reference):
+                fallback_level = support
+            else:
+                fallback_level = support or wave_summary.get("confirm") or resistance
+
+        if fallback_level is None:
+            continue
+
+        try:
+            fallback_value = float(fallback_level)
+        except (TypeError, ValueError):
+            continue
+
+        distance = abs(float(price_reference) - fallback_value) if price_reference is not None else float("inf")
+        candidates.append((_timeframe_rank(timeframe), distance, fallback_value))
 
     if not candidates:
         return None
