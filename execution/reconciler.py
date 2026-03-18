@@ -1,0 +1,290 @@
+"""Sync local exchange_positions with Binance position state."""
+
+from __future__ import annotations
+
+import os
+
+from execution.binance_futures_client import BinanceFuturesClient
+from execution.exchange_info import round_price, round_quantity
+from execution.models import ExecutionConfig
+from execution.position_manager import PositionManager
+from storage.position_store import PositionStore
+
+
+def _position_amt(row: dict | None) -> float:
+    if not row:
+        return 0.0
+    try:
+        return float(row.get("positionAmt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _emergency_sl_price(
+    client: BinanceFuturesClient,
+    symbol_u: str,
+    side: str,
+    entry_price: float,
+) -> float:
+    pct = float(os.getenv("RECOVERY_EMERGENCY_SL_PCT", "5")) / 100.0
+    ep = float(entry_price or 0.0)
+    if side.upper() == "LONG":
+        raw = ep * (1.0 - pct) if ep > 0 else ep
+    else:
+        raw = ep * (1.0 + pct) if ep > 0 else ep
+    return round_price(client, symbol_u, raw)
+
+
+def _query_sync_protective_orders(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    position_id: int,
+    symbol_u: str,
+) -> None:
+    """Update DB rows from exchange order status (FILLED / CANCELED / …)."""
+    qo = getattr(client, "query_order", None)
+    if not callable(qo):
+        return
+    for r in store.list_open_protective_orders(position_id):
+        if str(r["status"] or "") not in ("NEW", "OFF_BOOK", "UNKNOWN"):
+            continue
+        oid = r["order_id"]
+        if oid is None:
+            continue
+        try:
+            info = qo(symbol=symbol_u, order_id=int(oid))
+            ex = str(info.get("status") or "").upper()
+            if ex and ex != "NEW":
+                store.update_position_order_row_status(int(r["id"]), ex)
+        except Exception:
+            pass
+
+
+def _sync_off_exchange_book(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    position_id: int,
+    symbol_u: str,
+) -> None:
+    """Rows still NEW but not in openOrders → query status or UNKNOWN."""
+    orders = client.get_open_orders(symbol_u) or []
+    open_ids: set[int] = set()
+    for o in orders:
+        oid = o.get("orderId")
+        if oid is not None:
+            try:
+                open_ids.add(int(oid))
+            except (TypeError, ValueError):
+                pass
+    qo = getattr(client, "query_order", None)
+    for r in store.list_open_protective_orders(position_id):
+        if str(r["status"] or "") != "NEW":
+            continue
+        oid = r["order_id"]
+        if oid is None:
+            continue
+        try:
+            oid_i = int(oid)
+        except (TypeError, ValueError):
+            continue
+        if oid_i in open_ids:
+            continue
+        if callable(qo):
+            try:
+                info = qo(symbol=symbol_u, order_id=oid_i)
+                ex = str(info.get("status") or "").upper()
+                if ex:
+                    store.update_position_order_row_status(int(r["id"]), ex)
+                    continue
+            except Exception:
+                pass
+        store.update_position_order_row_status(int(r["id"]), "UNKNOWN")
+
+
+def _maybe_resize_stop_loss_qty(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    config: ExecutionConfig | None,
+    symbol_u: str,
+    row: object,
+    amt: float,
+) -> None:
+    """If SL reduce qty > current position (e.g. after TP partial), cancel SL and re-place."""
+    if config is None or not config.live_order_enabled:
+        return
+    pos_qty = round_quantity(client, symbol_u, abs(amt))
+    if pos_qty <= 0:
+        return
+    orders = client.get_open_orders(symbol_u) or []
+    sls: list[dict] = []
+    for o in orders:
+        if str(o.get("type") or "").upper() != "STOP_MARKET":
+            continue
+        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+            continue
+        sls.append(o)
+    if not sls:
+        return
+    overrun = False
+    for o in sls:
+        try:
+            oq = float(o.get("origQty") or 0)
+        except (TypeError, ValueError):
+            oq = 0.0
+        oq_r = round_quantity(client, symbol_u, oq)
+        if oq_r > pos_qty + 1e-9:
+            overrun = True
+            break
+    if not overrun:
+        return
+    canceled: list[int] = []
+    for o in sls:
+        try:
+            oid = int(o["orderId"])
+            client.cancel_order(symbol=symbol_u, order_id=oid)
+            canceled.append(oid)
+        except Exception:
+            pass
+    pid = int(row["id"])  # type: ignore[arg-type]
+    for r in store.list_open_protective_orders(pid):
+        if str(r["order_kind"]) != "SL":
+            continue
+        oid = r["order_id"]
+        if oid is None:
+            continue
+        try:
+            if int(oid) in canceled and str(r["status"]) == "NEW":
+                store.update_position_order_row_status(int(r["id"]), "CANCELED")
+        except (TypeError, ValueError):
+            pass
+    store.append_event(pid, "SL_RESIZED_TO_POSITION_QTY", {"position_qty": pos_qty})
+    if config is not None:
+        PositionManager(client, config, store).ensure_protection(symbol_u)
+
+
+def reconcile_symbol(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    symbol: str,
+    config: ExecutionConfig | None = None,
+) -> dict[str, str | int | None]:
+    """Close stale DB rows; recover DB from exchange position; ensure SL on book."""
+    symbol_u = symbol.upper()
+    row = store.get_open_position_by_symbol(symbol_u)
+    pos = client.get_position(symbol_u)
+    amt = _position_amt(pos)
+
+    if row is not None and abs(amt) < 1e-12:
+        store.close_position(int(row["id"]), "RECONCILE_EXCHANGE_FLAT")
+        return {"action": "closed_stale", "position_id": int(row["id"])}
+
+    if row is None and abs(amt) > 1e-12:
+        side = "LONG" if amt > 0 else "SHORT"
+        qty = abs(amt)
+        try:
+            entry_price = float(pos.get("entryPrice") or 0)
+        except (TypeError, ValueError):
+            entry_price = 0.0
+        orders = client.get_open_orders(symbol_u) or []
+        sl_px: float | None = None
+        for o in orders:
+            if str(o.get("type") or "").upper() != "STOP_MARKET":
+                continue
+            ro = str(o.get("reduceOnly") or "").lower()
+            if ro not in ("true", "1"):
+                continue
+            try:
+                sp = float(o.get("stopPrice") or 0)
+            except (TypeError, ValueError):
+                sp = 0.0
+            if sp > 0:
+                sl_px = sp
+                break
+        if sl_px is None:
+            sl_px = _emergency_sl_price(client, symbol_u, side, entry_price)
+        pid = store.create_position(
+            symbol=symbol_u,
+            side=side,
+            source_signal_id=None,
+            signal_hash=None,
+            quantity=qty,
+            entry_price=entry_price or None,
+            entry_order_id=None,
+            stop_loss_price=sl_px,
+            recovered=1,
+        )
+        store.append_event(pid, "RECOVERED_FROM_EXCHANGE", {"quantity": qty, "entry_price": entry_price})
+        close_side = "SELL" if side == "LONG" else "BUY"
+        for o in orders:
+            ot = str(o.get("type") or "").upper()
+            if ot == "STOP_MARKET":
+                try:
+                    oid = int(o["orderId"]) if o.get("orderId") is not None else None
+                except (TypeError, ValueError):
+                    oid = None
+                try:
+                    sp = float(o.get("stopPrice") or 0)
+                except (TypeError, ValueError):
+                    sp = 0.0
+                try:
+                    q = float(o.get("origQty") or o.get("quantity") or qty)
+                except (TypeError, ValueError):
+                    q = qty
+                store.record_order(
+                    pid,
+                    order_kind="SL",
+                    order_id=oid,
+                    client_order_id=o.get("clientOrderId"),
+                    side=close_side,
+                    order_type="STOP_MARKET",
+                    quantity=q,
+                    stop_price=sp or sl_px,
+                    status="NEW",
+                    reduce_only=True,
+                )
+            elif ot == "TAKE_PROFIT_MARKET":
+                try:
+                    oid = int(o["orderId"]) if o.get("orderId") is not None else None
+                except (TypeError, ValueError):
+                    oid = None
+                cid = str(o.get("clientOrderId") or "")
+                kind = "TP1"
+                if "TP2" in cid:
+                    kind = "TP2"
+                elif "TP3" in cid:
+                    kind = "TP3"
+                try:
+                    sp = float(o.get("stopPrice") or 0)
+                except (TypeError, ValueError):
+                    sp = 0.0
+                try:
+                    q = float(o.get("origQty") or o.get("quantity") or 0)
+                except (TypeError, ValueError):
+                    q = 0.0
+                store.record_order(
+                    pid,
+                    order_kind=kind,
+                    order_id=oid,
+                    client_order_id=o.get("clientOrderId"),
+                    side=close_side,
+                    order_type="TAKE_PROFIT_MARKET",
+                    quantity=q,
+                    stop_price=sp,
+                    status="NEW",
+                    reduce_only=True,
+                )
+        if config is not None:
+            PositionManager(client, config, store).ensure_protection(symbol_u)
+        return {"action": "recovered", "position_id": pid}
+
+    if row is not None and abs(amt) > 1e-12:
+        pid = int(row["id"])
+        _query_sync_protective_orders(client, store, pid, symbol_u)
+        _maybe_resize_stop_loss_qty(client, store, config, symbol_u, row, amt)
+        if config is not None:
+            PositionManager(client, config, store).ensure_protection(symbol_u)
+        _query_sync_protective_orders(client, store, pid, symbol_u)
+        _sync_off_exchange_book(client, store, pid, symbol_u)
+        return {"action": "still_open", "position_id": pid}
+
+    return {"action": "none"}

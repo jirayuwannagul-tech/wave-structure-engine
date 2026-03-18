@@ -80,6 +80,11 @@ This system is not:
 - `services/` monitoring, alerts, orchestrator flow
 - `data/` sample BTC datasets and market data fetchers
 - `tests/` unit, integration, regression, and live-flow tests
+- `execution/` optional Binance USDT-M futures position management (testnet-ready)
+
+### Binance position management (testnet)
+
+Market entry + `STOP_MARKET` SL + `TAKE_PROFIT_MARKET` TP1/2/3 (reduce-only). Wired from orchestrator lifecycle events **without** strategy filters (no confidence/indicator gating). See **[docs/POSITION_MGMT_TESTNET_CHECKLIST.md](docs/POSITION_MGMT_TESTNET_CHECKLIST.md)** before enabling live testnet orders.
 
 ## Requirements
 

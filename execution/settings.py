@@ -26,7 +26,39 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _normalize_tp_allocations(tp1: float, tp2: float, tp3: float) -> tuple[float, float, float]:
+    """
+    Normalize TP allocation percentages so they always sum to 1.0 within a small tolerance.
+
+    This is a safety helper, not a strategy filter: it prevents configuration mistakes
+    from producing over- or under-sized total exits.
+    """
+    total = float(tp1) + float(tp2) + float(tp3)
+    if total <= 0:
+        # Fall back to a sensible default split if misconfigured
+        return 0.4, 0.3, 0.3
+
+    # If already within tolerance of 1.0, keep as-is
+    if 0.98 <= total <= 1.02:
+        return float(tp1), float(tp2), float(tp3)
+
+    # Scale proportionally to sum to 1.0
+    scale = 1.0 / total
+    return float(tp1) * scale, float(tp2) * scale, float(tp3) * scale
+
+
 def load_execution_config() -> ExecutionConfig:
+    tp1 = _env_float("BINANCE_TP1_SIZE_PCT", 0.40)
+    tp2 = _env_float("BINANCE_TP2_SIZE_PCT", 0.30)
+    tp3 = _env_float("BINANCE_TP3_SIZE_PCT", 0.30)
+    raw_sum = float(tp1) + float(tp2) + float(tp3)
+    if raw_sum <= 0:
+        raise ValueError(
+            "BINANCE_TP1_SIZE_PCT + BINANCE_TP2_SIZE_PCT + BINANCE_TP3_SIZE_PCT must be "
+            f"positive (got sum={raw_sum}). Fix .env allocation weights."
+        )
+    tp1, tp2, tp3 = _normalize_tp_allocations(tp1, tp2, tp3)
+
     return ExecutionConfig(
         enabled=_env_flag("BINANCE_EXECUTION_ENABLED", False),
         live_order_enabled=_env_flag("BINANCE_LIVE_ORDER_ENABLED", False),
@@ -39,7 +71,7 @@ def load_execution_config() -> ExecutionConfig:
         margin_type=(os.getenv("BINANCE_MARGIN_TYPE") or "ISOLATED").upper(),
         allow_long=_env_flag("BINANCE_ALLOW_LONG", True),
         allow_short=_env_flag("BINANCE_ALLOW_SHORT", True),
-        tp1_size_pct=_env_float("BINANCE_TP1_SIZE_PCT", 0.40),
-        tp2_size_pct=_env_float("BINANCE_TP2_SIZE_PCT", 0.30),
-        tp3_size_pct=_env_float("BINANCE_TP3_SIZE_PCT", 0.30),
+        tp1_size_pct=tp1,
+        tp2_size_pct=tp2,
+        tp3_size_pct=tp3,
     )

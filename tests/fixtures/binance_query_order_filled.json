@@ -1,0 +1,9 @@
+{
+  "orderId": 123456789,
+  "symbol": "BTCUSDT",
+  "status": "FILLED",
+  "type": "TAKE_PROFIT_MARKET",
+  "origQty": "0.004",
+  "executedQty": "0.004",
+  "reduceOnly": true
+}

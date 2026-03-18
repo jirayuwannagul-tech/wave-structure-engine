@@ -17,8 +17,14 @@ from services.market_data_sync import sync_recent_market_data
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
 from storage.manual_wave_context import get_manual_wave_context, serialize_manual_wave_context
+from storage.position_store import PositionStore
 from storage.wave_repository import WaveRepository
 from scenarios.scenario_state_machine import update_scenario_state
+
+from execution.binance_futures_client import BinanceFuturesClient
+from execution.position_manager import PositionManager
+from execution.reconciler import reconcile_symbol
+from execution.settings import load_execution_config
 
 
 @dataclass
@@ -31,6 +37,52 @@ class OrchestratorRuntime:
 
 MARKET_DATA_SYNC_TIMEFRAMES = ("1W", "1D", "4H")
 MARKET_DATA_SYNC_INTERVAL_SECONDS = float(os.getenv("MARKET_DATA_SYNC_INTERVAL_SECONDS", "300"))
+
+
+def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> None:
+    """Binance futures testnet/live hooks: no strategy filters."""
+    cfg = load_execution_config()
+    if not cfg.enabled or not cfg.live_order_enabled or not cfg.credentials_ready:
+        return
+    if str(os.getenv("KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    try:
+        client = BinanceFuturesClient(cfg)
+        store = PositionStore()
+        pm = PositionManager(client, cfg, store)
+        if event_type == "ENTRY_TRIGGERED":
+            result = pm.open_from_signal(signal_row)
+            if not result.get("ok"):
+                print(f"[orchestrator] exchange open_from_signal: {result}")
+        elif event_type in (
+            "STOP_LOSS_HIT",
+            "TP3_HIT",
+            "TIME_STOP_HIT",
+            "OPPOSITE_STRUCTURE_HIT",
+            "VOLATILITY_EXIT_HIT",
+        ):
+            pm.close_symbol_cleanup(symbol, event_type)
+    except Exception as exc:
+        print(f"[orchestrator] exchange execution error: {exc}")
+        traceback.print_exc()
+
+
+def _reconcile_exchange_positions(symbols: list[str]) -> None:
+    cfg = load_execution_config()
+    if not cfg.enabled or not cfg.credentials_ready:
+        return
+    if str(os.getenv("KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    store = PositionStore()
+    try:
+        client = BinanceFuturesClient(cfg)
+    except Exception:
+        return
+    for sym in symbols:
+        try:
+            reconcile_symbol(client, store, sym, cfg)
+        except Exception as exc:
+            print(f"[orchestrator] reconcile {sym}: {exc}")
 
 
 def _fmt_value(value) -> str:
@@ -545,6 +597,7 @@ def process_market_update(
                     symbol=signal_row["symbol"],
                     include_layout=False,
                 )
+            _maybe_run_exchange_execution(runtime.symbol, event_type, signal_row)
 
     return runtime
 
@@ -640,6 +693,8 @@ def run_orchestrator(
                     snapshots.append(
                         f"{runtime.symbol}\n\n{render_runtime_snapshot(runtime, current_price=price)}"
                     )
+
+            _reconcile_exchange_positions(symbols)
 
             if once:
                 print("\n\n".join(snapshots))
