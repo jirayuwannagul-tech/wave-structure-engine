@@ -4,6 +4,9 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from services.terminal_dashboard import build_dashboard_snapshot, render_terminal_dashboard
+from execution.execution_health import read_execution_health
+from storage.execution_queue_store import ExecutionQueueStore
+import os
 
 
 def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
@@ -169,6 +172,9 @@ def run_web_dashboard(
             if path == "/healthz":
                 self._send_json(200, {"ok": True})
                 return
+            if path == "/api/execution_health":
+                self._send_execution_health()
+                return
             self._send_json(404, {"ok": False, "error": "not found"})
 
         def log_message(self, format, *args):  # noqa: A003
@@ -203,6 +209,24 @@ def run_web_dashboard(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_execution_health(self) -> None:
+            db_path = os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+            q = ExecutionQueueStore(db_path=db_path)
+            keys = [
+                "execution:last_open_ok",
+                "execution:last_close_ok",
+                "execution:last_queue_enqueue",
+                "execution:last_queue_ok",
+                "execution:last_queue_error",
+                "execution:circuit_opened",
+                "execution:circuit_until",
+                "execution:circuit_failures",
+                "execution:last_de_risk_applied",
+            ]
+            payload = {k: read_execution_health(k, db_path=db_path) for k in keys}
+            payload["queue_pending"] = q.count_pending()
+            self._send_json(200, {"ok": True, "execution": payload})
 
     server = ThreadingHTTPServer((host, port), DashboardHandler)
     print(f"Web dashboard running at http://{host}:{port}")

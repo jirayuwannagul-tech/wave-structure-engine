@@ -11,6 +11,7 @@ from typing import Any
 
 from execution.models import ExecutionConfig
 from storage.position_store import PositionStore
+from execution.execution_health import read_execution_health, record_execution_health
 
 
 def portfolio_pause_new_entries() -> bool:
@@ -30,6 +31,7 @@ def evaluate_new_position(
     new_trade_risk_usdt: float,
     symbol: str,
     position_side: str,
+    allow_existing_leg: bool = False,
 ) -> dict[str, Any]:
     """
     Empty dict => allow. Otherwise {"skipped": reason_key, ...} => block (soft; caller returns ok=True).
@@ -39,6 +41,30 @@ def evaluate_new_position(
 
     if equity_usdt <= 0:
         return {"skipped": "invalid_equity", "equity_usdt": equity_usdt}
+
+    # Drawdown-based de-risking (risk scaling only; does not block entries)
+    risk_multiplier: float = 1.0
+    if config.drawdown_de_risk_enabled:
+        peak = read_execution_health("execution:equity_peak_usdt", db_path=store.db_path) or {}
+        try:
+            peak_eq = float(peak.get("equity_peak_usdt") or 0)
+        except (TypeError, ValueError):
+            peak_eq = 0.0
+        if equity_usdt > peak_eq:
+            record_execution_health(
+                "execution:equity_peak_usdt",
+                {"equity_peak_usdt": float(equity_usdt)},
+                db_path=store.db_path,
+            )
+            peak_eq = float(equity_usdt)
+        dd = (peak_eq - equity_usdt) / peak_eq if peak_eq > 0 else 0.0
+        start = float(config.drawdown_start_fraction)
+        full = float(config.drawdown_full_fraction)
+        min_mult = float(config.drawdown_min_risk_multiplier)
+        if dd > start and full > start and min_mult > 0:
+            # Linear scale from 1.0 down to min_mult
+            t = min(1.0, max(0.0, (dd - start) / (full - start)))
+            risk_multiplier = max(min_mult, 1.0 - t * (1.0 - min_mult))
 
     n_open = store.count_open_positions()
     cap_n = int(config.portfolio_max_open_positions)
@@ -67,7 +93,10 @@ def evaluate_new_position(
             return {"skipped": "symbol_already_has_open_position"}
     else:
         ps = str(position_side).upper()
-        if store.has_open_leg_for_symbol(symbol, ps):
+        if (not allow_existing_leg) and store.has_open_leg_for_symbol(symbol, ps):
             return {"skipped": "symbol_leg_already_open", "leg": ps}
 
-    return {}
+    out: dict[str, Any] = {}
+    if abs(risk_multiplier - 1.0) > 1e-9:
+        out["risk_multiplier"] = risk_multiplier
+    return out

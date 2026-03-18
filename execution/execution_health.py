@@ -53,3 +53,27 @@ def record_execution_health(
         conn.commit()
     finally:
         conn.close()
+
+
+def read_execution_health(event_key: str, *, db_path: str | None = None) -> dict | None:
+    db_path = db_path or os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT created_at, details_json FROM system_events WHERE event_key = ? LIMIT 1",
+            (str(event_key),),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["details_json"] or "{}")
+        except Exception:
+            payload = {}
+        payload["_created_at"] = row["created_at"]
+        return payload
+    finally:
+        conn.close()

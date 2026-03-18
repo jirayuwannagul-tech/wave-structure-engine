@@ -30,8 +30,15 @@ class PositionStore:
     def _connect(self):
         path = Path(self.db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(path, timeout=30)
         conn.row_factory = sqlite3.Row
+        # Production hardening for SQLite (best-effort; safe on older SQLite)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA busy_timeout=30000;")
+        except Exception:
+            pass
         try:
             yield conn
             conn.commit()
@@ -101,6 +108,9 @@ class PositionStore:
                 """
             )
             self._ensure_column(conn, "exchange_positions", "stop_loss_price", "REAL")
+            self._ensure_column(conn, "exchange_positions", "tp1_price", "REAL")
+            self._ensure_column(conn, "exchange_positions", "tp2_price", "REAL")
+            self._ensure_column(conn, "exchange_positions", "tp3_price", "REAL")
             self._ensure_column(conn, "exchange_positions", "recovered", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "exchange_position_orders", "reduce_only", "INTEGER DEFAULT 1")
             self._ensure_column(conn, "exchange_positions", "close_price", "REAL")
@@ -136,6 +146,9 @@ class PositionStore:
                 close_reason,
                 entry_order_id,
                 stop_loss_price,
+                tp1_price,
+                tp2_price,
+                tp3_price,
                 recovered,
                 close_price,
                 position_side_tag
@@ -217,6 +230,39 @@ class PositionStore:
             ).fetchone()
         return row is not None
 
+    def get_open_leg_position(self, symbol: str, leg: str) -> sqlite3.Row | None:
+        """Return OPEN row for (symbol, LONG|SHORT) if present."""
+        sym = symbol.upper()
+        ps = str(leg).upper()
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT * FROM exchange_positions
+                WHERE symbol = ? AND status = 'OPEN'
+                  AND UPPER(IFNULL(position_side_tag, '')) = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (sym, ps),
+            ).fetchone()
+
+    def update_position_size_and_entry(
+        self,
+        position_id: int,
+        *,
+        new_quantity: float,
+        new_entry_price: float | None,
+    ) -> None:
+        now = _utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE exchange_positions
+                SET quantity = ?, entry_price = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (float(new_quantity), new_entry_price, now, int(position_id)),
+            )
+
     def count_open_positions(self) -> int:
         with self._connect() as conn:
             row = conn.execute(
@@ -272,6 +318,9 @@ class PositionStore:
         entry_price: float | None,
         entry_order_id: int | None,
         stop_loss_price: float | None = None,
+        tp1_price: float | None = None,
+        tp2_price: float | None = None,
+        tp3_price: float | None = None,
         recovered: int = 0,
         position_side_tag: str | None = None,
     ) -> int:
@@ -284,8 +333,8 @@ class PositionStore:
                     created_at, updated_at, symbol, side, status,
                     source_signal_id, signal_hash, quantity, entry_price,
                     entry_order_id, opened_at, stop_loss_price, recovered,
-                    position_side_tag
-                ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    position_side_tag, tp1_price, tp2_price, tp3_price
+                ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     now,
@@ -301,6 +350,9 @@ class PositionStore:
                     stop_loss_price,
                     int(recovered),
                     pst,
+                    tp1_price,
+                    tp2_price,
+                    tp3_price,
                 ),
             )
             pid = int(cur.lastrowid)
@@ -354,6 +406,20 @@ class PositionStore:
             oid_i = int(oid) if oid is not None else None
         except (TypeError, ValueError):
             oid_i = None
+        def _intent_val(name: str) -> float | None:
+            v = None
+            try:
+                v = getattr(intent, name) if hasattr(intent, name) else intent.get(name)  # type: ignore[union-attr]
+            except Exception:
+                v = None
+            if v in (None, "", "0"):
+                return None
+            try:
+                f = float(v)
+                return f if f > 0 else None
+            except (TypeError, ValueError):
+                return None
+
         return self.create_position(
             symbol=symbol,
             side=side,
@@ -363,6 +429,9 @@ class PositionStore:
             entry_price=entry_price,
             entry_order_id=oid_i,
             stop_loss_price=stop_loss_price,
+            tp1_price=_intent_val("tp1"),
+            tp2_price=_intent_val("tp2"),
+            tp3_price=_intent_val("tp3"),
             recovered=recovered,
             position_side_tag=position_side_tag,
         )
@@ -569,4 +638,11 @@ class PositionStore:
                 ORDER BY id ASC
                 """,
                 (position_id,),
+            ).fetchall()
+
+    def list_orders_for_position(self, position_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM exchange_position_orders WHERE position_id = ? ORDER BY id ASC",
+                (int(position_id),),
             ).fetchall()

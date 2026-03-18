@@ -76,6 +76,10 @@ def _position_side_param(config: ExecutionConfig, side_long_short: str) -> str |
     return str(side_long_short).upper() if config.hedge_position_mode else None
 
 
+def _pid_cid(position_id: int, suffix: str) -> str:
+    return f"P{int(position_id)}{suffix}"[:36]
+
+
 def _open_order_cids_and_sl_flag(client: BinanceFuturesClient, symbol: str) -> tuple[set[str], bool]:
     raw = client.get_open_orders(symbol) or []
     if not isinstance(raw, list):
@@ -330,6 +334,11 @@ class PositionManager:
 
         side = intent.side.upper()
         pst = _position_side_param(self.config, side)
+        existing_leg = (
+            self.store.get_open_leg_position(symbol, side)
+            if (self.config.hedge_position_mode and self.config.allow_scale_in_same_leg)
+            else None
+        )
         block = evaluate_new_position(
             store=self.store,
             config=self.config,
@@ -337,6 +346,7 @@ class PositionManager:
             new_trade_risk_usdt=float(intent.risk_amount_usdt),
             symbol=symbol,
             position_side=side,
+            allow_existing_leg=existing_leg is not None,
         )
         if block.get("skipped"):
             record_execution_health(
@@ -351,15 +361,26 @@ class PositionManager:
 
         entry_px = float(intent.entry_price)
         sl_px = round_price(self.client, symbol, float(intent.stop_loss))
+        risk_mult = 1.0
+        try:
+            risk_mult = float(block.get("risk_multiplier") or 1.0)
+        except (TypeError, ValueError):
+            risk_mult = 1.0
         try:
             qty = round_quantity_clamped(
                 self.client,
                 symbol,
-                float(intent.quantity),
+                float(intent.quantity) * risk_mult,
                 reference_price=entry_px,
             )
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
+        if abs(risk_mult - 1.0) > 1e-9:
+            record_execution_health(
+                "execution:last_de_risk_applied",
+                {"symbol": symbol, "signal_id": signal_id, "risk_multiplier": risk_mult, "qty": qty},
+                db_path=self.store.db_path,
+            )
         try:
             validate_order(self.client, symbol, entry_px, qty)
         except ValueError as exc:
@@ -430,14 +451,44 @@ class PositionManager:
             "orderId": oid_entry,
         }
         pos_tag = str(side).upper() if self.config.hedge_position_mode else None
-        pos_id = self.store.create_position_from_signal(
-            signal_row,
-            intent,
-            entry_payload,
-            stop_loss_price=sl_px,
-            recovered=0,
-            position_side_tag=pos_tag,
-        )
+
+        # Net scale-in (hedge leg): update the existing OPEN row instead of creating a new one.
+        if existing_leg is not None:
+            pos_id = int(existing_leg["id"])
+            try:
+                prev_qty = float(existing_leg["quantity"] or 0)
+            except (TypeError, ValueError):
+                prev_qty = 0.0
+            prev_ep = existing_leg["entry_price"]
+            try:
+                prev_ep_f = float(prev_ep) if prev_ep is not None else None
+            except (TypeError, ValueError):
+                prev_ep_f = None
+            new_qty = round_quantity(self.client, symbol, prev_qty + exec_qty)
+            new_ep = avg_px
+            if prev_qty > 0 and prev_ep_f is not None:
+                new_ep = (prev_qty * prev_ep_f + exec_qty * avg_px) / (prev_qty + exec_qty)
+            self.store.update_position_size_and_entry(pos_id, new_quantity=new_qty, new_entry_price=float(new_ep))
+            self.store.append_event(
+                pos_id,
+                "SCALE_IN_FILLED",
+                {
+                    "added_qty": exec_qty,
+                    "added_avg_price": avg_px,
+                    "new_qty": new_qty,
+                    "new_entry_price": new_ep,
+                    "source_signal_id": signal_id,
+                },
+            )
+        else:
+            pos_id = self.store.create_position_from_signal(
+                signal_row,
+                intent,
+                entry_payload,
+                stop_loss_price=sl_px,
+                recovered=0,
+                position_side_tag=pos_tag,
+            )
         row_entry = self.store.record_order(
             pos_id,
             order_kind="ENTRY",
@@ -452,6 +503,76 @@ class PositionManager:
         )
         if oid_entry is not None:
             self.store.update_order_exchange_id(row_entry, oid_entry)
+
+        if existing_leg is not None:
+            # Re-place SL/TP for the whole net position size using stored levels.
+            for r in self.store.list_open_protective_orders(pos_id):
+                oid = r["order_id"]
+                if oid is not None:
+                    try:
+                        self.client.cancel_order(symbol=symbol, order_id=int(oid))
+                    except Exception:
+                        pass
+                if str(r["status"] or "") == "NEW":
+                    try:
+                        self.store.update_position_order_row_status(int(r["id"]), "CANCELED")
+                    except Exception:
+                        pass
+            self.ensure_protection(symbol)
+            # Replace TP orders (if stored on the position row)
+            row_now = self.store.get_open_leg_position(symbol, side)
+            if row_now is not None:
+                tp_levels = [
+                    ("TP1", row_now["tp1_price"], float(self.config.tp1_size_pct)),
+                    ("TP2", row_now["tp2_price"], float(self.config.tp2_size_pct)),
+                    ("TP3", row_now["tp3_price"], float(self.config.tp3_size_pct)),
+                ]
+                valid = [(lab, px, w) for lab, px, w in tp_levels if px is not None and w > 0]
+                wsum = sum(w for _, _, w in valid)
+                placed = 0.0
+                total_qty = round_quantity(self.client, symbol, float(row_now["quantity"] or 0))
+                for j, (label, tp_px_raw, w) in enumerate(valid):
+                    if j == len(valid) - 1:
+                        tp_qty = round_quantity(self.client, symbol, total_qty - placed)
+                    else:
+                        tp_qty = round_quantity(self.client, symbol, total_qty * (w / wsum) if wsum > 0 else 0)
+                    placed = round_quantity(self.client, symbol, placed + tp_qty)
+                    if tp_qty <= 0:
+                        continue
+                    tp_px = round_price(self.client, symbol, float(tp_px_raw))
+                    cid = _pid_cid(pos_id, label)
+                    try:
+                        tp_resp = self.client.place_take_profit_market_reduce_only(
+                            symbol=symbol,
+                            side=side,
+                            stop_price=tp_px,
+                            quantity=tp_qty,
+                            client_order_id=cid,
+                            position_side=pst,
+                        )
+                        oid_tp = _order_id(tp_resp)
+                        row_tp = self.store.record_order(
+                            pos_id,
+                            order_kind=label,
+                            order_id=oid_tp,
+                            client_order_id=cid,
+                            side="SELL" if side == "LONG" else "BUY",
+                            order_type="TAKE_PROFIT_MARKET",
+                            quantity=tp_qty,
+                            stop_price=tp_px,
+                            status="NEW",
+                        )
+                        if oid_tp:
+                            self.store.update_order_exchange_id(row_tp, oid_tp)
+                    except Exception as exc:
+                        self.store.append_event(pos_id, f"{label}_REPLACE_FAILED", {"error": str(exc)})
+            self.store.append_event(pos_id, "SCALE_IN_PROTECTION_REPLACED", {})
+            record_execution_health(
+                "execution:last_open_ok",
+                {"symbol": symbol, "signal_id": signal_id, "position_id": pos_id, "scale_in": True},
+                db_path=self.store.db_path,
+            )
+            return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px, "scale_in": True}
 
         cids_open, has_sl_book = _open_order_cids_and_sl_flag(self.client, symbol)
         if cid_sl in cids_open or (has_sl_book and not self.config.hedge_position_mode):

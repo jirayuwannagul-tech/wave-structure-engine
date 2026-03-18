@@ -25,6 +25,16 @@ Lifecycle exits (`STOP_LOSS_HIT`, `TP3_HIT`, etc.) call **`close_for_signal(sign
 
 - **HTTP retries** on timeout / 429 / 5xx — `BINANCE_HTTP_MAX_RETRIES` (default `3`), `BINANCE_HTTP_RETRY_BACKOFF_SEC` (default `0.6`).
 - **Health markers** in `system_events` (same DB as `WAVE_DB_PATH`): `execution:last_open_ok`, `execution:last_portfolio_skip`, `execution:last_close_ok`.
+- **Order queue (optional)** — set `EXECUTION_QUEUE_ENABLED=1`. Orchestrator enqueues tasks and a per-cycle worker processes up to `EXECUTION_QUEUE_MAX_TASKS_PER_CYCLE` with retry/backoff.
+- **Circuit breaker (optional)** — `EXECUTION_CIRCUIT_BREAKER_ENABLED=1` (default), opens after `EXECUTION_CIRCUIT_BREAKER_FAILURES` and cools down for `EXECUTION_CIRCUIT_BREAKER_COOLDOWN_SEC` (persisted in `system_events`).
+- **Drawdown de-risk (optional)** — `PORTFOLIO_DRAWDOWN_DE_RISK_ENABLED=1`: scales entry size by a risk multiplier based on equity drawdown vs peak.
+
+## Net scale-in (B scope)
+
+Binance futures net positions per leg. With hedge mode + `BINANCE_ALLOW_SCALE_IN_SAME_LEG=1`, a new signal in the **same leg** will:
+- add to the net position,
+- update DB row quantity + weighted-average entry,
+- cancel & re-place protective orders for that `position_id` using stored `tp1_price/tp2_price/tp3_price`.
 
 ## Reconcile
 

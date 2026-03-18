@@ -109,7 +109,7 @@ def _maybe_resize_stop_loss_qty(
     row: object,
     amt: float,
 ) -> None:
-    """If SL reduce qty > current position (e.g. after TP partial), cancel SL and re-place."""
+    """Keep SL reduce qty aligned with current position (after TP partial or scale-in)."""
     if config is None or not config.live_order_enabled:
         return
     pos_qty = round_quantity(client, symbol_u, abs(amt))
@@ -125,17 +125,18 @@ def _maybe_resize_stop_loss_qty(
         sls.append(o)
     if not sls:
         return
-    overrun = False
+    mismatch = False
     for o in sls:
         try:
             oq = float(o.get("origQty") or 0)
         except (TypeError, ValueError):
             oq = 0.0
         oq_r = round_quantity(client, symbol_u, oq)
-        if oq_r > pos_qty + 1e-9:
-            overrun = True
+        # Replace if SL qty differs materially from current position qty
+        if abs(oq_r - pos_qty) > 1e-9:
+            mismatch = True
             break
-    if not overrun:
+    if not mismatch:
         return
     canceled: list[int] = []
     for o in sls:

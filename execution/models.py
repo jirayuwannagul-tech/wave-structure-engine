@@ -25,6 +25,17 @@ class ExecutionConfig:
     hedge_position_mode: bool = False
     http_max_retries: int = 3
     http_retry_backoff_sec: float = 0.6
+    # B-scope execution hardening + net scale-in (no per-lot independence)
+    allow_scale_in_same_leg: bool = False
+    execution_queue_enabled: bool = False
+    execution_queue_max_tasks_per_cycle: int = 10
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_failures: int = 5
+    circuit_breaker_cooldown_sec: float = 60.0
+    drawdown_de_risk_enabled: bool = False
+    drawdown_start_fraction: float = 0.10
+    drawdown_full_fraction: float = 0.30
+    drawdown_min_risk_multiplier: float = 0.25
 
     @property
     def credentials_ready(self) -> bool:

@@ -25,6 +25,8 @@ from execution.binance_futures_client import BinanceFuturesClient
 from execution.position_manager import PositionManager
 from execution.reconciler import reconcile_symbol
 from execution.settings import load_execution_config
+from execution.execution_health import record_execution_health, read_execution_health
+from storage.execution_queue_store import ExecutionQueueStore
 
 
 @dataclass
@@ -50,6 +52,7 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
         client = BinanceFuturesClient(cfg)
         store = PositionStore()
         pm = PositionManager(client, cfg, store)
+        queue = ExecutionQueueStore(db_path=store.db_path)
         if event_type == "ENTRY_TRIGGERED":
             eq_usdt = 0.0
             try:
@@ -66,12 +69,24 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
                                 break
             except Exception:
                 eq_usdt = 0.0
-            result = pm.open_from_signal(
-                signal_row,
-                account_equity_usdt=eq_usdt if eq_usdt > 0 else None,
-            )
-            if not result.get("ok"):
-                print(f"[orchestrator] exchange open_from_signal: {result}")
+            if cfg.execution_queue_enabled:
+                queue.enqueue(
+                    "OPEN_FROM_SIGNAL",
+                    {"signal_id": int(signal_row["id"]), "symbol": str(signal_row["symbol"]).upper()},
+                    dedupe_key=f"open:{int(signal_row['id'])}",
+                )
+                record_execution_health(
+                    "execution:last_queue_enqueue",
+                    {"type": "OPEN_FROM_SIGNAL", "signal_id": int(signal_row["id"]), "symbol": str(signal_row["symbol"]).upper()},
+                    db_path=store.db_path,
+                )
+            else:
+                result = pm.open_from_signal(
+                    signal_row,
+                    account_equity_usdt=eq_usdt if eq_usdt > 0 else None,
+                )
+                if not result.get("ok"):
+                    print(f"[orchestrator] exchange open_from_signal: {result}")
         elif event_type in (
             "STOP_LOSS_HIT",
             "TP3_HIT",
@@ -79,10 +94,116 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
             "OPPOSITE_STRUCTURE_HIT",
             "VOLATILITY_EXIT_HIT",
         ):
-            pm.close_for_signal(signal_row, event_type)
+            if cfg.execution_queue_enabled:
+                queue.enqueue(
+                    "CLOSE_FOR_SIGNAL",
+                    {
+                        "signal_id": int(signal_row["id"]),
+                        "symbol": str(signal_row["symbol"]).upper(),
+                        "reason": str(event_type),
+                    },
+                    dedupe_key=f"close:{int(signal_row['id'])}:{str(event_type)}",
+                )
+                record_execution_health(
+                    "execution:last_queue_enqueue",
+                    {"type": "CLOSE_FOR_SIGNAL", "signal_id": int(signal_row["id"]), "symbol": str(signal_row["symbol"]).upper()},
+                    db_path=store.db_path,
+                )
+            else:
+                pm.close_for_signal(signal_row, event_type)
     except Exception as exc:
         print(f"[orchestrator] exchange execution error: {exc}")
         traceback.print_exc()
+
+
+def _process_execution_queue(repository: WaveRepository) -> None:
+    cfg = load_execution_config()
+    if not cfg.enabled or not cfg.live_order_enabled or not cfg.credentials_ready:
+        return
+    if not cfg.execution_queue_enabled:
+        return
+    if str(os.getenv("KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
+
+    store = PositionStore()
+    queue = ExecutionQueueStore(db_path=store.db_path)
+    try:
+        client = BinanceFuturesClient(cfg)
+    except Exception:
+        return
+    pm = PositionManager(client, cfg, store)
+
+    if cfg.circuit_breaker_enabled:
+        until = read_execution_health("execution:circuit_until", db_path=store.db_path)
+        if until and (until.get("until") or "") > __import__("datetime").datetime.now(__import__("datetime").UTC).replace(microsecond=0).isoformat():
+            return
+
+    tasks = queue.fetch_ready(limit=int(cfg.execution_queue_max_tasks_per_cycle))
+    for t in tasks:
+        tid = int(t["id"])
+        queue.mark_running(tid)
+        try:
+            import json as _json
+
+            payload = _json.loads(t["payload_json"] or "{}")
+            ttype = str(t["task_type"])
+            if ttype == "OPEN_FROM_SIGNAL":
+                sig = repository.fetch_signal(int(payload["signal_id"]))
+                if sig is None:
+                    queue.mark_failed(tid, error="missing_signal")
+                    continue
+                out = pm.open_from_signal(sig)
+                if not out.get("ok"):
+                    raise RuntimeError(str(out))
+            elif ttype == "CLOSE_FOR_SIGNAL":
+                sig = repository.fetch_signal(int(payload["signal_id"]))
+                if sig is None:
+                    queue.mark_failed(tid, error="missing_signal")
+                    continue
+                out = pm.close_for_signal(sig, str(payload.get("reason") or "QUEUE_CLOSE"))
+                if not out.get("ok"):
+                    raise RuntimeError(str(out))
+            else:
+                queue.mark_failed(tid, error=f"unknown_task:{ttype}")
+                continue
+
+            queue.mark_done(tid)
+            record_execution_health(
+                "execution:last_queue_ok",
+                {"task_id": tid, "type": ttype},
+                db_path=store.db_path,
+            )
+            record_execution_health("execution:circuit_failures", {"n": 0}, db_path=store.db_path)
+        except Exception as exc:
+            attempts = int(t["attempts"] or 0)
+            backoff = min(300.0, (2.0 ** min(attempts, 6)))
+            if attempts + 1 >= 10:
+                queue.mark_failed(tid, error=str(exc))
+            else:
+                queue.mark_retry(tid, error=str(exc), backoff_seconds=backoff)
+            record_execution_health(
+                "execution:last_queue_error",
+                {"task_id": tid, "error": str(exc), "attempts": attempts + 1},
+                db_path=store.db_path,
+            )
+            if cfg.circuit_breaker_enabled:
+                cur = read_execution_health("execution:circuit_failures", db_path=store.db_path) or {}
+                n = int(cur.get("n") or 0) + 1
+                record_execution_health("execution:circuit_failures", {"n": n}, db_path=store.db_path)
+                if n >= int(cfg.circuit_breaker_failures):
+                    from datetime import UTC, datetime, timedelta
+
+                    until_ts = (
+                        datetime.now(UTC).replace(microsecond=0)
+                        + timedelta(seconds=float(cfg.circuit_breaker_cooldown_sec))
+                    ).isoformat()
+                    record_execution_health("execution:circuit_until", {"until": until_ts}, db_path=store.db_path)
+                    record_execution_health(
+                        "execution:circuit_opened",
+                        {"failures": n, "until": until_ts},
+                        db_path=store.db_path,
+                    )
+                    return
 
 
 def _reconcile_exchange_positions(symbols: list[str]) -> None:
@@ -667,6 +788,7 @@ def run_orchestrator(
 
     while True:
         try:
+            _process_execution_queue(repository)
             snapshots: list[str] = []
             now_ts = time.time()
             refresh_runtimes = False
