@@ -50,6 +50,14 @@ def _telegram_sheet_only_enabled() -> bool:
     return _env_truthy("TELEGRAM_SHEET_ONLY", default="1")
 
 
+def _signals_entry_only_enabled() -> bool:
+    # Default to entry-only (no PENDING_ENTRY) unless explicitly disabled.
+    raw = os.getenv("SIGNALS_ENTRY_ONLY")
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> None:
     """Binance futures testnet/live hooks: no strategy filters."""
     cfg = load_execution_config()
@@ -150,6 +158,27 @@ def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -
         return
 
     _maybe_run_exchange_execution(runtime_symbol, "ENTRY_TRIGGERED", signal_row)
+
+
+def _maybe_enqueue_open_for_any_active_synced_entries(
+    runtime_symbol: str,
+    repository: WaveRepository,
+) -> None:
+    """Safety net for entry-only mode.
+
+    `sync_runtime()` may not return existing ACTIVE signals again.
+    When entry-only mode created ACTIVE+entry_triggered_at earlier, we
+    still need to ensure we enqueue OPEN_FROM_SIGNAL for them.
+    """
+    if not _signals_entry_only_enabled():
+        return
+    try:
+        active_rows = repository.fetch_active_signals(runtime_symbol)
+    except Exception:
+        return
+
+    for row in active_rows:
+        _maybe_run_exchange_open_for_synced_entry(runtime_symbol, row)
 
 
 def _process_execution_queue(repository: WaveRepository) -> None:
@@ -622,6 +651,7 @@ def _refresh_runtime(
             safe_sync_signal(signal_row, sheets_logger)
             if signal_row is not None:
                 _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+        _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
     if not _telegram_sheet_only_enabled():
         for analysis in refreshed.analyses:
             send_notification(
@@ -823,6 +853,7 @@ def run_orchestrator(
             safe_sync_signal(signal_row, sheets_logger)
             if signal_row is not None:
                 _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+        _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
 
     print("Starting trading orchestrator...")
     for runtime in runtimes.values():
@@ -856,6 +887,7 @@ def run_orchestrator(
                         safe_sync_signal(signal_row, sheets_logger)
                         if signal_row is not None:
                             _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+                    _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
                 price = get_last_price(runtime.symbol)
                 price_updates[runtime.symbol] = price
                 ordered_runtimes.append(runtime)
