@@ -311,6 +311,13 @@ def build_signal_sheet_row(signal_row) -> list[str]:
 
 
 def _build_identity_key(row_values: list[str]) -> tuple[str, ...]:
+    mode = (os.getenv("GOOGLE_SHEETS_DEDUPE_MODE", "full_plan") or "").strip().lower()
+    # full_plan (default): keep separate rows for different SL/TP plans (date,symbol,timeframe,side,entry,sl,tp1,tp2,tp3)
+    if mode in {"full_plan", "plan", "default", ""}:
+        return tuple(row_values[:9])
+    # latest_per_symbol: one row per (symbol,timeframe,side) to avoid duplicates on sheet
+    if mode in {"latest_per_symbol", "symbol_timeframe", "symbol_timeframe_side"}:
+        return (row_values[1], row_values[2], row_values[3])
     return tuple(row_values[:9])
 
 
