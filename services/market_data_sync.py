@@ -20,9 +20,9 @@ def _dataset_path(symbol: str, timeframe: str) -> Path:
 def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if "open_time" in out.columns:
-        out["open_time"] = pd.to_datetime(out["open_time"], utc=True)
+        out["open_time"] = pd.to_datetime(out["open_time"], utc=True, errors="coerce", format="mixed")
     if "close_time" in out.columns:
-        out["close_time"] = pd.to_datetime(out["close_time"], utc=True)
+        out["close_time"] = pd.to_datetime(out["close_time"], utc=True, errors="coerce", format="mixed")
     return out.sort_values("open_time").drop_duplicates(subset=["open_time"]).reset_index(drop=True)
 
 
