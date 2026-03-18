@@ -110,6 +110,23 @@ def test_close_symbol_cleanup_cancels_orders_closes_db(temp_pm: PositionManager)
     assert temp_pm.store.get_open_position_by_symbol("BTCUSDT") is None
 
 
+def test_close_position_market_alias(temp_pm: PositionManager):
+    signal_row = {
+        "id": 8,
+        "symbol": "BTCUSDT",
+        "timeframe": "1D",
+        "side": "LONG",
+        "entry_price": 50000.0,
+        "stop_loss": 49000.0,
+        "tp1": 51000.0,
+        "tp2": None,
+        "tp3": None,
+    }
+    temp_pm.open_from_signal(signal_row)
+    assert temp_pm.close_position_market("BTCUSDT", "TIME_STOP_HIT")["ok"] is True
+    assert temp_pm.store.get_open_position("BTCUSDT") is None
+
+
 def test_entry_duplicate_response_reads_position_from_exchange():
     from execution.position_manager import _entry_duplicate_response
 

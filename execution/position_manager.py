@@ -9,14 +9,19 @@ from typing import Any
 import requests
 
 from execution.binance_futures_client import BinanceFuturesClient
-from execution.exchange_info import round_price, round_quantity, validate_order
+from execution.exchange_info import (
+    round_price,
+    round_quantity,
+    round_quantity_clamped,
+    validate_order,
+)
 from execution.models import ExecutionConfig
 from execution.signal_mapper import build_order_intent_from_signal
 from storage.position_store import PositionStore
 
 
 def _usdt_equity(client: BinanceFuturesClient) -> float:
-    bal = client.get_balance()
+    bal = client.get_account_balance()
     if not isinstance(bal, list):
         return 0.0
     for row in bal:
@@ -205,7 +210,11 @@ class PositionManager:
         self.store.append_event(int(row["id"]), "SL_ENSURE_PLACED", {"emergency": emergency})
         return {"ok": True, "placed": True, "emergency_sl": emergency}
 
-    def open_from_signal(self, signal_row: Any) -> dict[str, Any]:
+    def open_from_signal(
+        self,
+        signal_row: Any,
+        account_equity_usdt: float | None = None,
+    ) -> dict[str, Any]:
         """Market entry + STOP_MARKET SL + TAKE_PROFIT_MARKET TP1/2/3. No strategy filters."""
         signal_id = int(signal_row["id"])
         symbol = str(signal_row["symbol"]).upper()
@@ -219,7 +228,11 @@ class PositionManager:
         if abs(_position_amt_local(pos_chk)) > 1e-12 and self.store.get_open_position_by_symbol(symbol) is None:
             return {"ok": False, "error": "exchange_position_without_db_run_reconcile"}
 
-        equity = _usdt_equity(self.client)
+        equity = (
+            float(account_equity_usdt)
+            if account_equity_usdt is not None
+            else _usdt_equity(self.client)
+        )
         if equity <= 0:
             return {"ok": False, "error": "zero_or_missing_usdt_equity"}
 
@@ -232,12 +245,17 @@ class PositionManager:
         except Exception as exc:
             return {"ok": False, "error": f"intent_failed:{exc}"}
 
-        qty = round_quantity(self.client, symbol, float(intent.quantity))
-        if qty <= 0:
-            return {"ok": False, "error": "quantity_rounded_to_zero"}
-
         entry_px = float(intent.entry_price)
         sl_px = round_price(self.client, symbol, float(intent.stop_loss))
+        try:
+            qty = round_quantity_clamped(
+                self.client,
+                symbol,
+                float(intent.quantity),
+                reference_price=entry_px,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         try:
             validate_order(self.client, symbol, entry_px, qty)
         except ValueError as exc:
@@ -284,18 +302,26 @@ class PositionManager:
         exec_qty, avg_px = _executed_qty_price(entry_resp, qty, entry_px)
         exec_qty = round_quantity(self.client, symbol, exec_qty)
         if exec_qty <= 0:
-            return {"ok": False, "error": "executed_qty_zero_after_round"}
+            try:
+                exec_qty = round_quantity_clamped(
+                    self.client,
+                    symbol,
+                    float(_executed_qty_price(entry_resp, qty, entry_px)[0]),
+                    reference_price=avg_px,
+                )
+            except ValueError:
+                return {"ok": False, "error": "executed_qty_zero_after_round"}
 
         oid_entry = _order_id(entry_resp)
-
-        pos_id = self.store.create_position(
-            symbol=symbol,
-            side=side,
-            source_signal_id=signal_id,
-            signal_hash=str(signal_hash) if signal_hash else None,
-            quantity=exec_qty,
-            entry_price=avg_px,
-            entry_order_id=oid_entry,
+        entry_payload = {
+            "executedQty": exec_qty,
+            "avgPrice": avg_px,
+            "orderId": oid_entry,
+        }
+        pos_id = self.store.create_position_from_signal(
+            signal_row,
+            intent,
+            entry_payload,
             stop_loss_price=sl_px,
             recovered=0,
         )
@@ -434,5 +460,19 @@ class PositionManager:
                 except Exception as exc:
                     return {"ok": False, "error": str(exc)}
         if open_row:
-            self.store.close_position(int(open_row["id"]), reason)
+            close_px: float | None = None
+            if pos:
+                for k in ("markPrice", "entryPrice", "lastPrice"):
+                    v = pos.get(k)
+                    if v not in (None, "", "0"):
+                        try:
+                            close_px = float(v)
+                            break
+                        except (TypeError, ValueError):
+                            pass
+            self.store.close_position(int(open_row["id"]), reason, close_price=close_px)
         return {"ok": True}
+
+    def close_position_market(self, symbol: str, reason: str) -> dict[str, Any]:
+        """Spec name for :meth:`close_symbol_cleanup`."""
+        return self.close_symbol_cleanup(symbol, reason)

@@ -50,6 +50,9 @@ class FakeBinanceFuturesClient:
     def get_balance(self) -> list[dict]:
         return [{"asset": "USDT", "availableBalance": "100000"}]
 
+    def get_account_balance(self) -> list[dict]:
+        return self.get_balance()
+
     def get_exchange_info(self, symbol: str | None = None) -> dict:
         return _btc_exchange_info()
 

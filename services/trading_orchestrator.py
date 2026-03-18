@@ -51,7 +51,25 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
         store = PositionStore()
         pm = PositionManager(client, cfg, store)
         if event_type == "ENTRY_TRIGGERED":
-            result = pm.open_from_signal(signal_row)
+            eq_usdt = 0.0
+            try:
+                bal = client.get_account_balance()
+                if isinstance(bal, list):
+                    for row in bal:
+                        if str(row.get("asset") or "").upper() == "USDT":
+                            for key in ("availableBalance", "walletBalance", "balance"):
+                                v = row.get(key)
+                                if v is not None:
+                                    eq_usdt = float(v)
+                                    break
+                            if eq_usdt > 0:
+                                break
+            except Exception:
+                eq_usdt = 0.0
+            result = pm.open_from_signal(
+                signal_row,
+                account_equity_usdt=eq_usdt if eq_usdt > 0 else None,
+            )
             if not result.get("ok"):
                 print(f"[orchestrator] exchange open_from_signal: {result}")
         elif event_type in (

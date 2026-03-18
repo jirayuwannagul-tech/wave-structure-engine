@@ -83,6 +83,10 @@ class BinanceFuturesClient:
     def get_balance(self) -> Any:
         return self._request("GET", "/fapi/v2/balance", signed=True)
 
+    def get_account_balance(self) -> Any:
+        """Alias for :meth:`get_balance` (spec naming, USDT-M margin balances)."""
+        return self.get_balance()
+
     def get_position_risk(self) -> Any:
         return self._request("GET", "/fapi/v2/positionRisk", signed=True)
 

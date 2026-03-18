@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from typing import Any
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -102,6 +103,61 @@ class PositionStore:
             self._ensure_column(conn, "exchange_positions", "stop_loss_price", "REAL")
             self._ensure_column(conn, "exchange_positions", "recovered", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "exchange_position_orders", "reduce_only", "INTEGER DEFAULT 1")
+            self._ensure_column(conn, "exchange_positions", "close_price", "REAL")
+            self._ensure_views(conn)
+
+    def _ensure_views(self, conn: sqlite3.Connection) -> None:
+        """Spec table names: positions, position_orders, position_events (read-only views)."""
+        conn.executescript(
+            """
+            DROP VIEW IF EXISTS position_events;
+            DROP VIEW IF EXISTS position_orders;
+            DROP VIEW IF EXISTS positions;
+            CREATE VIEW positions AS
+            SELECT
+                id,
+                symbol,
+                side,
+                status,
+                quantity AS qty,
+                entry_price,
+                opened_at,
+                closed_at,
+                source_signal_id,
+                signal_hash AS source_signal_hash,
+                created_at,
+                updated_at,
+                close_reason,
+                entry_order_id,
+                stop_loss_price,
+                recovered,
+                close_price
+            FROM exchange_positions;
+            CREATE VIEW position_orders AS
+            SELECT
+                id,
+                position_id,
+                order_id,
+                client_order_id,
+                order_kind AS order_type,
+                CAST(NULL AS REAL) AS price,
+                stop_price,
+                quantity AS qty,
+                reduce_only,
+                status,
+                created_at,
+                updated_at
+            FROM exchange_position_orders;
+            CREATE VIEW position_events AS
+            SELECT
+                id,
+                position_id,
+                event_time,
+                event_type,
+                details_json AS payload_json
+            FROM exchange_position_events;
+            """
+        )
 
     def _ensure_column(
         self,
@@ -186,6 +242,66 @@ class PositionStore:
             )
             return pid
 
+    def create_position_from_signal(
+        self,
+        signal_row: Any,
+        intent: Any,
+        exchange_entry_result: dict[str, Any],
+        *,
+        stop_loss_price: float | None = None,
+        recovered: int = 0,
+    ) -> int:
+        """
+        Spec API: open DB row from signal + intent + Binance entry response (executedQty, avgPrice, orderId).
+        """
+        signal_id = int(signal_row["id"])
+        symbol = str(signal_row["symbol"]).upper()
+        if hasattr(intent, "side"):
+            side = str(intent.side).upper()
+        else:
+            side = str(intent["side"]).upper()
+        signal_hash = None
+        try:
+            if isinstance(signal_row, dict):
+                signal_hash = signal_row.get("signal_hash")
+            else:
+                signal_hash = getattr(signal_row, "signal_hash", None)
+        except Exception:
+            pass
+        try:
+            q = float(exchange_entry_result.get("executedQty") or 0)
+        except (TypeError, ValueError):
+            q = 0.0
+        ap = exchange_entry_result.get("avgPrice") or exchange_entry_result.get("price")
+        try:
+            entry_price = float(ap) if ap not in (None, "", "0") else None
+        except (TypeError, ValueError):
+            entry_price = None
+        oid = exchange_entry_result.get("orderId")
+        try:
+            oid_i = int(oid) if oid is not None else None
+        except (TypeError, ValueError):
+            oid_i = None
+        return self.create_position(
+            symbol=symbol,
+            side=side,
+            source_signal_id=signal_id,
+            signal_hash=str(signal_hash) if signal_hash else None,
+            quantity=q,
+            entry_price=entry_price,
+            entry_order_id=oid_i,
+            stop_loss_price=stop_loss_price,
+            recovered=recovered,
+        )
+
+    def get_open_position(self, symbol: str) -> sqlite3.Row | None:
+        """Spec alias."""
+        return self.get_open_position_by_symbol(symbol)
+
+    def get_position_by_signal(self, signal_id: int) -> sqlite3.Row | None:
+        """Spec alias."""
+        return self.get_open_position_by_signal(signal_id)
+
     def append_event(self, position_id: int, event_type: str, details: dict | None = None) -> None:
         now = _utc_now()
         with self._connect() as conn:
@@ -254,24 +370,57 @@ class PositionStore:
                 (order_id, now, row_id),
             )
 
-    def close_position(self, position_id: int, reason: str) -> None:
+    def close_position(
+        self,
+        position_id: int,
+        reason: str,
+        close_price: float | None = None,
+    ) -> None:
         now = _utc_now()
+        details = {"reason": reason}
+        if close_price is not None:
+            details["close_price"] = float(close_price)
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE exchange_positions
-                SET status = 'CLOSED', closed_at = ?, close_reason = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (now, reason, now, position_id),
-            )
+            if close_price is not None:
+                conn.execute(
+                    """
+                    UPDATE exchange_positions
+                    SET status = 'CLOSED', closed_at = ?, close_reason = ?, updated_at = ?,
+                        close_price = ?
+                    WHERE id = ?
+                    """,
+                    (now, reason, now, float(close_price), position_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE exchange_positions
+                    SET status = 'CLOSED', closed_at = ?, close_reason = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, reason, now, position_id),
+                )
             conn.execute(
                 """
                 INSERT INTO exchange_position_events (position_id, event_time, event_type, details_json)
                 VALUES (?, ?, ?, ?)
                 """,
-                (position_id, now, "POSITION_CLOSED", _json_dump({"reason": reason})),
+                (position_id, now, "POSITION_CLOSED", _json_dump(details)),
             )
+
+    def update_order_status(self, order_id: int, status: str) -> int:
+        """Spec API: update all rows matching Binance ``order_id``."""
+        now = _utc_now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE exchange_position_orders
+                SET status = ?, updated_at = ?
+                WHERE order_id = ?
+                """,
+                (status, now, int(order_id)),
+            )
+            return int(cur.rowcount or 0)
 
     def get_open_position_by_symbol(self, symbol: str) -> sqlite3.Row | None:
         with self._connect() as conn:

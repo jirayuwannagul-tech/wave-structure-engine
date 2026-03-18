@@ -1,5 +1,26 @@
 # Position management — Binance USDT-M testnet checklist
 
+## Spec API map (100% naming)
+
+| Spec | Implementation |
+|------|----------------|
+| `positions` / `position_orders` / `position_events` | SQLite **views** over `exchange_*` tables |
+| `get_exchange_info_cached(client, symbol)` | `execution.exchange_info.get_exchange_info_cached` |
+| `round_qty` | `round_qty` / `round_quantity` |
+| `round_quantity_clamped(..., reference_price=)` | After lot step, bump to **minQty** if notional OK |
+| `get_account_balance` | `BinanceFuturesClient.get_account_balance` (= `get_balance`) |
+| `place_market_entry` | `place_market_entry` (= `place_market_order`) |
+| `create_position_from_signal` | `PositionStore.create_position_from_signal` |
+| `get_open_position` / `get_position_by_signal` | Aliases on `PositionStore` |
+| `update_order_status(order_id, status)` | `PositionStore.update_order_status` |
+| `close_position(..., close_price)` | `PositionStore.close_position(..., close_price=)` |
+| `open_from_signal(row, account_equity_usdt=)` | `PositionManager.open_from_signal` |
+| `close_position_market(symbol, reason)` | `PositionManager.close_position_market` (= `close_symbol_cleanup`) |
+
+---
+
+# Position management — Binance USDT-M testnet checklist
+
 Real execution: **MARKET** entry, **STOP_MARKET** SL, **TAKE_PROFIT_MARKET** TP1/2/3 (reduce-only). No strategy filters (no confidence/indicator gating); safety only (exchange rules, kill switch, SL required when opening).
 
 ## Before enabling live orders
