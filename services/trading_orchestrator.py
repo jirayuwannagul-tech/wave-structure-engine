@@ -125,6 +125,33 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
         traceback.print_exc()
 
 
+def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -> None:
+    """Entry-only mode may create ACTIVE+entry_triggered_at directly during sync.
+
+    The lifecycle event that normally triggers OPEN_FROM_SIGNAL is produced by
+    `track_price_update()` only. To ensure real execution still happens when
+    the entry is detected during sync, enqueue open here as well.
+    """
+    try:
+        status = str(signal_row.get("status") or "").upper()
+    except Exception:
+        status = ""
+
+    if status != "ACTIVE":
+        return
+
+    entry_triggered_at = None
+    try:
+        entry_triggered_at = signal_row.get("entry_triggered_at")
+    except Exception:
+        entry_triggered_at = None
+
+    if not entry_triggered_at:
+        return
+
+    _maybe_run_exchange_execution(runtime_symbol, "ENTRY_TRIGGERED", signal_row)
+
+
 def _process_execution_queue(repository: WaveRepository) -> None:
     cfg = load_execution_config()
     if not cfg.enabled or not cfg.live_order_enabled or not cfg.credentials_ready:
@@ -591,7 +618,10 @@ def _refresh_runtime(
     if repository is not None:
         signal_ids = repository.sync_runtime(refreshed, current_price=current_price)
         for signal_id in signal_ids:
-            safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+            signal_row = repository.fetch_signal(signal_id)
+            safe_sync_signal(signal_row, sheets_logger)
+            if signal_row is not None:
+                _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
     if not _telegram_sheet_only_enabled():
         for analysis in refreshed.analyses:
             send_notification(
@@ -789,7 +819,10 @@ def run_orchestrator(
     for runtime in runtimes.values():
         signal_ids = repository.sync_runtime(runtime)
         for signal_id in signal_ids:
-            safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+            signal_row = repository.fetch_signal(signal_id)
+            safe_sync_signal(signal_row, sheets_logger)
+            if signal_row is not None:
+                _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
 
     print("Starting trading orchestrator...")
     for runtime in runtimes.values():
@@ -819,7 +852,10 @@ def run_orchestrator(
                     runtimes[runtime.symbol] = runtime
                     signal_ids = repository.sync_runtime(runtime)
                     for signal_id in signal_ids:
-                        safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
+                        signal_row = repository.fetch_signal(signal_id)
+                        safe_sync_signal(signal_row, sheets_logger)
+                        if signal_row is not None:
+                            _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
                 price = get_last_price(runtime.symbol)
                 price_updates[runtime.symbol] = price
                 ordered_runtimes.append(runtime)
