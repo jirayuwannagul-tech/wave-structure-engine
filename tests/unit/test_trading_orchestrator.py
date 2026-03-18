@@ -291,6 +291,7 @@ def test_process_market_update_refreshes_after_scenario_confirmation(monkeypatch
 
 
 def test_refresh_runtime_notification_summarizes_trade_levels(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_SHEET_ONLY", "false")
     runtime = OrchestratorRuntime(
         symbol="BTCUSDT",
         analyses=[],

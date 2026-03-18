@@ -24,6 +24,12 @@ OPEN_SIGNAL_STATUSES = {
     "PARTIAL_TP2",
 }
 
+_OPEN_STATUS_SQL = ",".join(f"'{s}'" for s in sorted(OPEN_SIGNAL_STATUSES))
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "") or "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -537,6 +543,34 @@ class WaveRepository:
             traceback.print_exc()
             return -1
 
+    def _signal_gate_blocks_new(self, conn: sqlite3.Connection, snapshot: dict) -> bool:
+        """When enabled, block INSERT of a new signal until open trades exit via SL or TP3.
+
+        Open = PENDING_ENTRY / ACTIVE / PARTIAL_TP*. Terminal exits (TP3_HIT, STOPPED, etc.)
+        are not open, so a new row is allowed after those.
+
+        - SIGNAL_GATE_TERMINAL_EXIT: master switch.
+        Behavior (when enabled): at most one open signal per symbol (across all timeframes).
+        This enforces: "เหลือแค่ 1 สัญญาณเปิดต่อเหรียญ (ทุก timeframe)" until SL or TP3.
+        """
+        if not _env_truthy("SIGNAL_GATE_TERMINAL_EXIT"):
+            return False
+
+        sym = (snapshot.get("symbol") or "").strip().upper()
+        if not sym:
+            return False
+
+        row = conn.execute(
+            f"""
+            SELECT id FROM signals
+            WHERE UPPER(TRIM(symbol)) = ?
+              AND status IN ({_OPEN_STATUS_SQL})
+            LIMIT 1
+            """,
+            (sym,),
+        ).fetchone()
+        return row is not None
+
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
         self.record_analysis_snapshot(analysis, current_price=current_price)
         snapshot = build_signal_snapshot(analysis)
@@ -588,6 +622,10 @@ class WaveRepository:
                     )
                     self._last_affected_signal_ids = [int(existing["id"])]
                     return int(existing["id"])
+
+                if self._signal_gate_blocks_new(conn, snapshot):
+                    self._last_affected_signal_ids = []
+                    return None
 
                 replaced_ids = self._replace_pending_signals(
                     conn,

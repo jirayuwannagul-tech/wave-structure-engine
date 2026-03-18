@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 
@@ -24,12 +25,22 @@ class AlertStateStore:
     # Persistence helpers
     # ------------------------------------------------------------------
 
-    def _load(self) -> dict[str, str]:
+    def _load(self) -> dict[str, object]:
         try:
             if self._path.exists():
                 data = json.loads(self._path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    return {str(k): str(v) for k, v in data.items()}
+                    # Backward compatible:
+                    # - old format: {"key": "STATE"}
+                    # - new format: {"key": {"state": "STATE", "ts": 1234567890.0}}
+                    cleaned: dict[str, object] = {}
+                    for k, v in data.items():
+                        key = str(k)
+                        if isinstance(v, dict) and "state" in v:
+                            cleaned[key] = {"state": str(v.get("state")), "ts": float(v.get("ts") or 0.0)}
+                        else:
+                            cleaned[key] = str(v)
+                    return cleaned
         except Exception as exc:
             print(f"[alert_state_store] Could not load state from {self._path}: {exc}")
         return {}
@@ -49,17 +60,44 @@ class AlertStateStore:
     # ------------------------------------------------------------------
 
     def get(self, key: str) -> str | None:
-        return self._states.get(key)
+        value = self._states.get(key)
+        if isinstance(value, dict):
+            return str(value.get("state")) if value.get("state") is not None else None
+        if value is None:
+            return None
+        return str(value)
 
     def set(self, key: str, state: str) -> None:
-        self._states[key] = state
+        self._states[key] = {"state": str(state), "ts": float(time.time())}
         self._save()
 
-    def should_alert(self, key: str, new_state: str) -> bool:
-        old_state = self._states.get(key)
-        if old_state == new_state:
+    def should_alert(self, key: str, new_state: str, *, cooldown_seconds: float = 0.0) -> bool:
+        """Return True when an alert should be emitted.
+
+        - Suppresses duplicates (same state as last time)
+        - Optional cooldown to prevent flapping (rapid toggling)
+        """
+        now = float(time.time())
+        new_state_s = str(new_state)
+
+        raw = self._states.get(key)
+        if isinstance(raw, dict):
+            old_state = str(raw.get("state")) if raw.get("state") is not None else None
+            last_ts = float(raw.get("ts") or 0.0)
+        else:
+            old_state = str(raw) if raw is not None else None
+            last_ts = 0.0
+
+        if old_state == new_state_s:
             return False
-        self._states[key] = new_state
+
+        if cooldown_seconds and (now - last_ts) < float(cooldown_seconds):
+            # Update state in-memory so we still converge, but don't alert yet.
+            self._states[key] = {"state": new_state_s, "ts": last_ts}
+            self._save()
+            return False
+
+        self._states[key] = {"state": new_state_s, "ts": now}
         self._save()
         return True
 

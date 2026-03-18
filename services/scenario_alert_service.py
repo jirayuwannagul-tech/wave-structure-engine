@@ -4,6 +4,7 @@ from scenarios.scenario_engine import Scenario
 from scenarios.scenario_state_machine import update_scenario_state
 from services.alert_state_store import AlertStateStore
 from services.notifier import send_notification
+import os
 
 
 def _fmt_value(value) -> str:
@@ -16,11 +17,11 @@ def _fmt_value(value) -> str:
     return str(value)
 
 
-def _build_scenario_alert_key(symbol: str, scenario: Scenario) -> str:
-    return (
-        f"{symbol}:SCENARIO:{scenario.name}:"
-        f"{scenario.bias}:{scenario.confirmation}:{scenario.invalidation}"
-    )
+def _build_scenario_alert_key(symbol: str, scenario: Scenario, timeframe: str | None) -> str:
+    # Important: keep this key stable across runs, otherwise small floating changes
+    # in computed levels will cause duplicate alerts.
+    tf = str(timeframe or "").strip().upper()
+    return f"{symbol}:{tf}:SCENARIO:{scenario.name}:{scenario.bias}"
 
 
 def check_scenario_and_alert(
@@ -31,9 +32,10 @@ def check_scenario_and_alert(
     timeframe: str | None = None,
 ):
     state = update_scenario_state(scenario, current_price)
-    key = _build_scenario_alert_key(symbol, scenario)
+    key = _build_scenario_alert_key(symbol, scenario, timeframe)
+    cooldown = float(os.getenv("SCENARIO_ALERT_COOLDOWN_SECONDS", "600") or 600)
 
-    if not store.should_alert(key, state):
+    if not store.should_alert(key, state, cooldown_seconds=cooldown):
         return state
 
     if state == "CONFIRMED":

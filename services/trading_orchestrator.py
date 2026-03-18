@@ -41,6 +41,15 @@ MARKET_DATA_SYNC_TIMEFRAMES = ("1W", "1D", "4H")
 MARKET_DATA_SYNC_INTERVAL_SECONDS = float(os.getenv("MARKET_DATA_SYNC_INTERVAL_SECONDS", "300"))
 
 
+def _env_truthy(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _telegram_sheet_only_enabled() -> bool:
+    # Default to sheet-only to avoid scenario/re-analysis spam unless explicitly disabled.
+    return _env_truthy("TELEGRAM_SHEET_ONLY", default="1")
+
+
 def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> None:
     """Binance futures testnet/live hooks: no strategy filters."""
     cfg = load_execution_config()
@@ -583,14 +592,15 @@ def _refresh_runtime(
         signal_ids = repository.sync_runtime(refreshed, current_price=current_price)
         for signal_id in signal_ids:
             safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
-    for analysis in refreshed.analyses:
-        send_notification(
-            f"🔄 {runtime.symbol} | Re-analysis Update\n\n"
-            f"Reason:\n• {reason.replace(', ', chr(10) + '• ')}\n\n"
-            f"{_format_analysis_summary(analysis)}",
-            timeframe=analysis.get("timeframe"),
-            symbol=runtime.symbol,
-        )
+    if not _telegram_sheet_only_enabled():
+        for analysis in refreshed.analyses:
+            send_notification(
+                f"🔄 {runtime.symbol} | Re-analysis Update\n\n"
+                f"Reason:\n• {reason.replace(', ', chr(10) + '• ')}\n\n"
+                f"{_format_analysis_summary(analysis)}",
+                timeframe=analysis.get("timeframe"),
+                symbol=runtime.symbol,
+            )
     return refreshed
 
 
@@ -700,22 +710,23 @@ def process_market_update(
     repository: WaveRepository | None = None,
     sheets_logger=None,
 ) -> OrchestratorRuntime:
-    for item in runtime.scenarios:
-        if isinstance(item, dict):
-            scenario = item.get("scenario")
-            timeframe = item.get("timeframe")
-        else:
-            scenario = item
-            timeframe = None
-        if scenario is None:
-            continue
-        check_scenario_and_alert(
-            scenario=scenario,
-            current_price=current_price,
-            store=store,
-            symbol=runtime.symbol,
-            timeframe=timeframe,
-        )
+    if not _telegram_sheet_only_enabled():
+        for item in runtime.scenarios:
+            if isinstance(item, dict):
+                scenario = item.get("scenario")
+                timeframe = item.get("timeframe")
+            else:
+                scenario = item
+                timeframe = None
+            if scenario is None:
+                continue
+            check_scenario_and_alert(
+                scenario=scenario,
+                current_price=current_price,
+                store=store,
+                symbol=runtime.symbol,
+                timeframe=timeframe,
+            )
 
     if repository is not None:
         lifecycle_events = repository.track_price_update(

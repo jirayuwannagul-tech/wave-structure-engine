@@ -210,6 +210,37 @@ def test_repository_time_stop_closes_stalled_trade(tmp_path):
     assert row["close_reason"] == "TIME_STOP"
 
 
+def test_signal_gate_blocks_second_plan_until_terminal_exit(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
+    second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0))
+
+    assert first_id is not None
+    assert second_id is None
+
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (first_id,)).fetchone()
+    assert row["status"] == "PENDING_ENTRY"
+
+    repo.track_price_update("BTCUSDT", 100.5)
+    repo.track_price_update("BTCUSDT", 130.0)
+    third_id = repo.sync_analysis(_analysis(entry=102.0, stop_loss=97.0))
+    assert third_id is not None
+    with repo._connect() as conn:
+        new_row = conn.execute("SELECT * FROM signals WHERE id = ?", (third_id,)).fetchone()
+    assert new_row["status"] == "PENDING_ENTRY"
+
+
+def test_signal_gate_blocks_other_timeframe_by_default_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    id_4h = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0))
+    id_1d = repo.sync_analysis(_analysis(timeframe="1D", entry=200.0, stop_loss=190.0))
+    assert id_4h is not None
+    assert id_1d is None
+
+
 def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))

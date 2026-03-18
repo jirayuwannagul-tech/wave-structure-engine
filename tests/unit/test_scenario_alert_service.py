@@ -40,12 +40,14 @@ def test_check_scenario_and_alert_uses_unique_key_per_level(monkeypatch, tmp_pat
         current_price=74100.0,
         store=store,
         symbol="BTCUSDT",
+        timeframe="1D",
     )
     state_4h = check_scenario_and_alert(
         scenario=scenario_4h,
         current_price=71800.0,
         store=store,
         symbol="BTCUSDT",
+        timeframe="4H",
     )
 
     assert state_1d == "CONFIRMED"
@@ -53,5 +55,5 @@ def test_check_scenario_and_alert_uses_unique_key_per_level(monkeypatch, tmp_pat
     assert len(sent) == 2
     assert sent[0][1]["symbol"] == "BTCUSDT"
     assert sent[1][1]["symbol"] == "BTCUSDT"
-    assert sent[0][1]["timeframe"] is None
-    assert sent[1][1]["timeframe"] is None
+    assert sent[0][1]["timeframe"] == "1D"
+    assert sent[1][1]["timeframe"] == "4H"
