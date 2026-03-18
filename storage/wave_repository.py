@@ -31,6 +31,15 @@ def _env_truthy(name: str) -> bool:
     return str(os.getenv(name, "") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _signals_entry_only_enabled() -> bool:
+    """When true, only persist signals after entry is triggered (no PENDING_ENTRY rows)."""
+    raw = os.getenv("SIGNALS_ENTRY_ONLY")
+    if raw is None or str(raw).strip() == "":
+        # Default to entry-only: user wants only actionable signals persisted/synced.
+        return True
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
@@ -623,6 +632,19 @@ class WaveRepository:
                     self._last_affected_signal_ids = [int(existing["id"])]
                     return int(existing["id"])
 
+                # Entry-only mode: do not persist non-actionable plans.
+                if _signals_entry_only_enabled():
+                    side = snapshot.get("side")
+                    entry = snapshot.get("entry_price")
+                    cp = snapshot.get("current_price")
+                    if side and entry is not None and cp is not None:
+                        if not self._entry_crossed(str(side), float(cp), float(entry)):
+                            self._last_affected_signal_ids = []
+                            return None
+                    else:
+                        self._last_affected_signal_ids = []
+                        return None
+
                 if self._signal_gate_blocks_new(conn, snapshot):
                     self._last_affected_signal_ids = []
                     return None
@@ -652,7 +674,7 @@ class WaveRepository:
                         snapshot["scenario_name"],
                         snapshot["bias"],
                         snapshot["side"],
-                        "PENDING_ENTRY",
+                        "ACTIVE" if _signals_entry_only_enabled() else "PENDING_ENTRY",
                         signal_hash,
                         snapshot["entry_price"],
                         snapshot["stop_loss"],
@@ -668,6 +690,28 @@ class WaveRepository:
                     ),
                 )
                 signal_id = int(cursor.lastrowid)
+
+                if _signals_entry_only_enabled():
+                    cp = snapshot.get("current_price")
+                    conn.execute(
+                        """
+                        UPDATE signals
+                        SET entry_triggered_at = ?,
+                            entry_triggered_price = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, cp, now, signal_id),
+                    )
+                    self._insert_event(
+                        conn,
+                        signal_id=signal_id,
+                        event_type="ENTRY_TRIGGERED",
+                        price=cp,
+                        details={"status": "ACTIVE", "source": "SYNC_ANALYSIS_ENTRY_ONLY"},
+                        event_time=now,
+                    )
+
                 self._insert_event(
                     conn,
                     signal_id=signal_id,

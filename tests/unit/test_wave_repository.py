@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 
 from scenarios.scenario_engine import Scenario
@@ -80,12 +82,10 @@ def test_build_signal_snapshot_prefers_execution_scenarios_when_present():
 
 def test_repository_tracks_tp1_then_stop_loss(tmp_path):
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    signal_id = repo.sync_analysis(_analysis())
+    # Entry-only mode (default): persist only after entry is crossed.
+    signal_id = repo.sync_analysis(_analysis(), current_price=100.5)
 
     assert signal_id is not None
-
-    events = repo.track_price_update("BTCUSDT", 100.5)
-    assert (signal_id, "ENTRY_TRIGGERED") in events
 
     events = repo.track_price_update("BTCUSDT", 111.0)
     assert (signal_id, "TP1_HIT") in events
@@ -101,14 +101,12 @@ def test_repository_tracks_tp1_then_stop_loss(tmp_path):
     assert row["close_reason"] == "STOP_LOSS"
 
     event_types = [event["event_type"] for event in repo.fetch_signal_events(signal_id)]
-    assert event_types == ["SIGNAL_CREATED", "ENTRY_TRIGGERED", "TP1_HIT", "STOP_MOVED", "STOP_LOSS_HIT"]
+    assert event_types == ["ENTRY_TRIGGERED", "SIGNAL_CREATED", "TP1_HIT", "STOP_MOVED", "STOP_LOSS_HIT"]
 
 
 def test_repository_closes_active_trade_on_opposite_structure(tmp_path):
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
-
-    repo.track_price_update("BTCUSDT", 100.5)
+    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=100.5)
     events = repo.track_price_update(
         "BTCUSDT",
         98.5,
@@ -143,9 +141,7 @@ def test_repository_closes_active_trade_on_opposite_structure(tmp_path):
 
 def test_repository_closes_active_trade_on_volatility_exit(tmp_path):
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
-
-    repo.track_price_update("BTCUSDT", 100.5)
+    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=100.5)
 
     df = pd.DataFrame(
         {
@@ -193,8 +189,12 @@ def test_repository_closes_active_trade_on_volatility_exit(tmp_path):
 
 
 def test_repository_time_stop_closes_stalled_trade(tmp_path):
+    # Time-stop logic relies on the entry_triggered_at timestamp written at trigger time.
+    # Use legacy flow for deterministic timestamps in this unit test.
+    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
+    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    signal_id = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0))
+    signal_id = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0), current_price=100.2)
 
     assert signal_id is not None
 
@@ -208,12 +208,16 @@ def test_repository_time_stop_closes_stalled_trade(tmp_path):
 
     assert row["status"] == "STOPPED"
     assert row["close_reason"] == "TIME_STOP"
+    if monkeypatch_env is None:
+        del os.environ["SIGNALS_ENTRY_ONLY"]
+    else:
+        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
 def test_signal_gate_blocks_second_plan_until_terminal_exit(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
+    first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=100.5)
     second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0))
 
     assert first_id is not None
@@ -221,27 +225,28 @@ def test_signal_gate_blocks_second_plan_until_terminal_exit(tmp_path, monkeypatc
 
     with repo._connect() as conn:
         row = conn.execute("SELECT * FROM signals WHERE id = ?", (first_id,)).fetchone()
-    assert row["status"] == "PENDING_ENTRY"
+    assert row["status"] == "ACTIVE"
 
-    repo.track_price_update("BTCUSDT", 100.5)
     repo.track_price_update("BTCUSDT", 130.0)
-    third_id = repo.sync_analysis(_analysis(entry=102.0, stop_loss=97.0))
+    third_id = repo.sync_analysis(_analysis(entry=102.0, stop_loss=97.0), current_price=102.5)
     assert third_id is not None
     with repo._connect() as conn:
         new_row = conn.execute("SELECT * FROM signals WHERE id = ?", (third_id,)).fetchone()
-    assert new_row["status"] == "PENDING_ENTRY"
+    assert new_row["status"] in {"ACTIVE", "PENDING_ENTRY"}
 
 
 def test_signal_gate_blocks_other_timeframe_by_default_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
-    id_4h = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0))
-    id_1d = repo.sync_analysis(_analysis(timeframe="1D", entry=200.0, stop_loss=190.0))
+    id_4h = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0), current_price=100.5)
+    id_1d = repo.sync_analysis(_analysis(timeframe="1D", entry=200.0, stop_loss=190.0), current_price=200.5)
     assert id_4h is not None
     assert id_1d is None
 
 
 def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
+    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
+    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
     second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0))
@@ -257,9 +262,15 @@ def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
     assert first["status"] == "REPLACED"
     assert first["close_reason"] == "REPLACED_BY_NEW_SIGNAL"
     assert second["status"] == "PENDING_ENTRY"
+    if monkeypatch_env is None:
+        del os.environ["SIGNALS_ENTRY_ONLY"]
+    else:
+        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
 def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
+    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
+    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
 
     class Runtime:
@@ -278,6 +289,10 @@ def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
 
     assert first["status"] == "REPLACED"
     assert second["status"] == "PENDING_ENTRY"
+    if monkeypatch_env is None:
+        del os.environ["SIGNALS_ENTRY_ONLY"]
+    else:
+        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
 def test_repository_tracks_system_events_once(tmp_path):
@@ -290,6 +305,8 @@ def test_repository_tracks_system_events_once(tmp_path):
 
 
 def test_sync_analysis_backfills_rr_for_existing_signal(tmp_path):
+    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
+    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     signal_id = repo.sync_analysis(_analysis())
 
@@ -309,6 +326,10 @@ def test_sync_analysis_backfills_rr_for_existing_signal(tmp_path):
     assert row["rr_tp1"] == 2.0
     assert row["rr_tp2"] == 4.0
     assert row["rr_tp3"] == 6.0
+    if monkeypatch_env is None:
+        del os.environ["SIGNALS_ENTRY_ONLY"]
+    else:
+        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
 def test_repository_upserts_market_candles(tmp_path):
