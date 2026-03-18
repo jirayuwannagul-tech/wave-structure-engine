@@ -315,7 +315,14 @@ def _build_identity_key(row_values: list[str]) -> tuple[str, ...]:
 
 
 def should_sync_signal_to_sheet(signal_row) -> bool:
-    status = str((signal_row or {}).get("status") or "").upper()
+    row = signal_row
+    try:
+        # sqlite3.Row behaves like Mapping but has no .get
+        if hasattr(row, "keys") and not isinstance(row, dict):
+            row = {k: row[k] for k in row.keys()}
+    except Exception:
+        pass
+    status = str((row or {}).get("status") or "").upper()
     return status in SYNCABLE_SIGNAL_STATUSES
 
 
@@ -410,10 +417,16 @@ class GoogleSheetsSignalLogger:
 def safe_sync_signal(signal_row, logger: GoogleSheetsSignalLogger | None) -> None:
     if logger is None or signal_row is None:
         return
-    if not should_sync_signal_to_sheet(signal_row):
+    row = signal_row
+    try:
+        if hasattr(row, "keys") and not isinstance(row, dict):
+            row = {k: row[k] for k in row.keys()}
+    except Exception:
+        row = signal_row
+    if not should_sync_signal_to_sheet(row):
         return
 
     try:
-        logger.upsert_signal(signal_row)
+        logger.upsert_signal(row)
     except Exception as exc:
         print(f"Google Sheets sync skipped: {exc}")
