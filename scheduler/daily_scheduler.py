@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,6 +8,31 @@ from zoneinfo import ZoneInfo
 from services.notifier import send_notification
 
 THAI_TZ = ZoneInfo("Asia/Bangkok")
+
+
+def _now_bangkok(now: datetime | None) -> datetime:
+    if now is None:
+        return datetime.now(THAI_TZ)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=THAI_TZ)
+    return now.astimezone(THAI_TZ)
+
+
+def in_daily_watch_window(now: datetime | None = None) -> bool:
+    """
+    Bangkok 07:05–07:59 — first orchestrator cycle in this window each day sends the reminder.
+    Optional: DAILY_WATCH_START_HOUR (default 7), DAILY_WATCH_START_MINUTE (5),
+    DAILY_WATCH_END_HOUR (default 7) — if end hour > start, extends window (e.g. catch-up until 08:30).
+    """
+    n = _now_bangkok(now)
+    sh = int(os.getenv("DAILY_WATCH_START_HOUR", "7"))
+    sm = int(os.getenv("DAILY_WATCH_START_MINUTE", "5"))
+    eh = int(os.getenv("DAILY_WATCH_END_HOUR", "7"))
+    em = int(os.getenv("DAILY_WATCH_END_MINUTE", "59"))
+    t = n.hour * 60 + n.minute
+    t0 = sh * 60 + sm
+    t1 = eh * 60 + em
+    return t0 <= t <= t1
 
 
 def _fmt_value(value) -> str:
@@ -137,6 +163,8 @@ def build_combined_daily_summary_message(
         rows.append(build_symbol_watch_message(runtime, current_price=price))
 
     return (
+        "⏰ แจ้งเตือนจับตาดูรายวัน (07:05 น. เวลาไทย)\n"
+        "────────────────\n"
         "Daily Watchlist\n"
         f"📅 {now.strftime('%Y-%m-%d')}\n\n"
         + "\n".join(rows)
@@ -193,15 +221,25 @@ def run_combined_daily_job(
     current_prices: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> None:
-    send_notification(
-        build_combined_daily_summary_message(
-            runtimes,
-            current_prices=current_prices,
-            now=now,
-        ),
-        topic_key="daily_summary",
-        include_layout=False,
+    msg = build_combined_daily_summary_message(
+        runtimes,
+        current_prices=current_prices,
+        now=now,
     )
+    # Prefer DAILY_WATCH_TOPIC_ID or TELEGRAM_TOPIC_ID so the ping lands in the same forum thread as 1D alerts.
+    raw_tid = (os.getenv("DAILY_WATCH_TOPIC_ID") or os.getenv("TELEGRAM_TOPIC_ID") or "").strip()
+    if raw_tid.split("#", 1)[0].strip().isdigit():
+        send_notification(
+            msg,
+            topic_id=int(raw_tid.split("#", 1)[0].strip()),
+            include_layout=False,
+        )
+    else:
+        send_notification(
+            msg,
+            topic_key="daily_summary",
+            include_layout=False,
+        )
 
 
 def maybe_run_daily_job(
@@ -241,17 +279,12 @@ def maybe_run_combined_daily_job(
     current_prices: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> bool:
-    if now is None:
-        now = datetime.now(THAI_TZ)
-    elif now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
-    else:
-        now = now.astimezone(THAI_TZ)
+    now = _now_bangkok(now)
 
-    if now.hour < 7 or (now.hour == 7 and now.minute < 5):
+    if not in_daily_watch_window(now):
         return False
 
-    event_key = f"DAILY_SUMMARY:{now.strftime('%Y-%m-%d')}"
+    event_key = f"DAILY_WATCH_0705:{now.strftime('%Y-%m-%d')}"
     if repository.has_system_event(event_key):
         return False
 

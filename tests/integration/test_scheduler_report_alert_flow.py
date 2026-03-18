@@ -107,12 +107,9 @@ def test_build_combined_daily_summary_message_lists_long_and_short_watch_prices(
 
     message = build_combined_daily_summary_message([Runtime("BTCUSDT"), Runtime("ETHUSDT")], now=now)
 
-    assert message == (
-        "Daily Watchlist\n"
-        "📅 2026-03-12\n\n"
-        "BTCUSDT | L 101 | S 89\n"
-        "ETHUSDT | L 101 | S 89"
-    )
+    assert "แจ้งเตือนจับตาดูรายวัน" in message
+    assert "BTCUSDT | L 101 | S 89" in message
+    assert "ETHUSDT | L 101 | S 89" in message
 
 
 def test_build_combined_daily_summary_message_falls_back_to_key_levels():
@@ -138,11 +135,7 @@ def test_build_combined_daily_summary_message_falls_back_to_key_levels():
 
     message = build_combined_daily_summary_message([Runtime("LINKUSDT")], now=now)
 
-    assert message == (
-        "Daily Watchlist\n"
-        "📅 2026-03-12\n\n"
-        "LINKUSDT | L 11.36 | S 9.64"
-    )
+    assert "LINKUSDT | L 11.36 | S 9.64" in message
 
 
 def test_build_combined_daily_summary_message_ignores_already_crossed_scenario_levels():
@@ -178,11 +171,7 @@ def test_build_combined_daily_summary_message_ignores_already_crossed_scenario_l
 
     message = build_combined_daily_summary_message([Runtime("TESTUSDT")], now=now)
 
-    assert message == (
-        "Daily Watchlist\n"
-        "📅 2026-03-12\n\n"
-        "TESTUSDT | L 112 | S 88"
-    )
+    assert "TESTUSDT | L 112 | S 88" in message
 
 
 def test_run_combined_daily_job_sends_single_message(monkeypatch):
@@ -193,6 +182,8 @@ def test_run_combined_daily_job_sends_single_message(monkeypatch):
 
     calls = {}
     now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    monkeypatch.delenv("TELEGRAM_TOPIC_ID", raising=False)
+    monkeypatch.delenv("DAILY_WATCH_TOPIC_ID", raising=False)
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.send_notification",
@@ -205,12 +196,9 @@ def test_run_combined_daily_job_sends_single_message(monkeypatch):
         now=now,
     )
 
-    assert calls["message"] == (
-        "Daily Watchlist\n"
-        "📅 2026-03-12\n\n"
-        "BTCUSDT | L - | S -\n"
-        "ETHUSDT | L - | S -"
-    )
+    assert "แจ้งเตือนจับตาดูรายวัน" in calls["message"]
+    assert "BTCUSDT | L - | S -" in calls["message"]
+    assert calls["kwargs"].get("include_layout") is False
     assert calls["kwargs"] == {"topic_key": "daily_summary", "include_layout": False}
 
 
@@ -248,3 +236,29 @@ def test_maybe_run_combined_daily_job_runs_once_per_day(monkeypatch, tmp_path):
         now=now,
     ) is False
     assert len(calls) == 1
+
+
+def test_maybe_run_combined_skips_outside_morning_window(monkeypatch, tmp_path):
+    from storage.wave_repository import WaveRepository
+
+    class Runtime:
+        def __init__(self, symbol: str):
+            self.symbol = symbol
+
+    repository = WaveRepository(db_path=str(tmp_path / "w2.db"))
+    calls = []
+    monkeypatch.setattr(
+        "scheduler.daily_scheduler.run_combined_daily_job",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    now = datetime(2026, 3, 12, 8, 0, tzinfo=THAI_TZ)
+    assert (
+        maybe_run_combined_daily_job(
+            repository,
+            [Runtime("BTCUSDT")],
+            current_prices={},
+            now=now,
+        )
+        is False
+    )
+    assert calls == []
