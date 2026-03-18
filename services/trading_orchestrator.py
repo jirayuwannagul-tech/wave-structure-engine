@@ -9,7 +9,7 @@ from analysis.price_level_watcher import Level
 from analysis.setup_filter import build_higher_timeframe_context, extract_trade_bias
 from analysis.wave_position import describe_current_leg
 from core.engine import build_timeframe_analysis
-from scheduler.daily_scheduler import maybe_run_combined_daily_job
+from scheduler.daily_scheduler import maybe_run_combined_daily_job, maybe_run_daily_scenario_job
 from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
 from services.google_sheets_sync import compute_signal_tracking, safe_sync_signal
@@ -828,6 +828,10 @@ def run_orchestrator(
                 repository=repository,
                 runtimes=ordered_runtimes,
                 current_prices=price_updates,
+            )
+            maybe_run_daily_scenario_job(
+                repository=repository,
+                runtimes=ordered_runtimes,
             )
 
             for runtime in ordered_runtimes:

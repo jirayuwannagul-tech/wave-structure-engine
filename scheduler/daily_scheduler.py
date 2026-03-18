@@ -6,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.notifier import send_notification
+from analysis.wave_position import describe_current_leg
 
 THAI_TZ = ZoneInfo("Asia/Bangkok")
 
@@ -242,6 +243,123 @@ def run_combined_daily_job(
         )
 
 
+def _daily_enabled(env_name: str, *, default: str = "0") -> bool:
+    return str(os.getenv(env_name, default) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _fmt_wave_name(position) -> str:
+    if position is None:
+        return "-"
+    try:
+        text = describe_current_leg(position)
+        return str(text) if text else "-"
+    except Exception:
+        # Fallbacks if a plain object/dict is passed
+        if isinstance(position, dict):
+            return str(position.get("position") or position.get("structure") or "-")
+        return str(getattr(position, "position", None) or getattr(position, "structure", None) or "-")
+
+
+def _pick_daily_analysis(runtime, timeframe: str) -> dict | None:
+    target = (timeframe or "").upper().strip()
+    analyses = list(getattr(runtime, "analyses", []) or [])
+    if not analyses:
+        return None
+    for a in analyses:
+        if (a.get("timeframe") or "").upper() == target:
+            return a
+    return analyses[0]
+
+
+def _pick_main_scenario(analysis: dict):
+    scenarios = analysis.get("execution_scenarios") or analysis.get("scenarios") or []
+    return scenarios[0] if scenarios else None
+
+
+def _support_resistance_from_scenario(scenario) -> tuple[float | None, float | None]:
+    if scenario is None:
+        return (None, None)
+    bias = (getattr(scenario, "bias", None) or "").upper()
+    confirm = getattr(scenario, "confirmation", None)
+    inval = getattr(scenario, "invalidation", None)
+    try:
+        confirm_f = float(confirm) if confirm is not None else None
+    except Exception:
+        confirm_f = None
+    try:
+        inval_f = float(inval) if inval is not None else None
+    except Exception:
+        inval_f = None
+
+    # One support / one resistance (no SL/TP):
+    # - Bullish: support=invalidation, resistance=confirmation
+    # - Bearish: support=confirmation, resistance=invalidation
+    if bias == "BEARISH":
+        return (confirm_f, inval_f)
+    return (inval_f, confirm_f)
+
+
+def build_daily_scenario_message(
+    runtimes: list,
+    *,
+    now: datetime | None = None,
+    timeframe: str | None = None,
+) -> str:
+    now = _now_bangkok(now)
+    tf = (timeframe or os.getenv("DAILY_SCENARIO_TIMEFRAME", "1D") or "1D").upper().strip()
+
+    rows: list[str] = []
+    for runtime in runtimes:
+        symbol = getattr(runtime, "symbol", None) or "BTCUSDT"
+        analysis = _pick_daily_analysis(runtime, tf)
+        if not analysis:
+            rows.append(f"{symbol}\n- แนวรับ: -\n- แนวต้าน: -\n- เฝ้าดู: -")
+            continue
+
+        scenario = _pick_main_scenario(analysis)
+        support, resistance = _support_resistance_from_scenario(scenario)
+        wave_name = _fmt_wave_name(analysis.get("position"))
+
+        rows.append(
+            "\n".join(
+                [
+                    f"{symbol}",
+                    f"- แนวรับ: {_fmt_value(support)}",
+                    f"- แนวต้าน: {_fmt_value(resistance)}",
+                    f"- เฝ้าดู: {wave_name}",
+                ]
+            )
+        )
+
+    return (
+        "📌 Scenario Update (หลังปิดแท่ง) — 07:05 (Asia/Bangkok)\n"
+        f"โฟกัส: แนวรับ/แนวต้าน (อย่างละ 1) + เฝ้าดู “ชื่อคลื่น” | TF: {tf}\n"
+        f"📅 {now.strftime('%Y-%m-%d')}\n\n"
+        + "\n\n".join(rows)
+    )
+
+
+def run_daily_scenario_job(
+    runtimes: list,
+    *,
+    now: datetime | None = None,
+) -> None:
+    msg = build_daily_scenario_message(runtimes, now=now)
+    raw_tid = (os.getenv("DAILY_SCENARIO_TOPIC_ID") or os.getenv("DAILY_WATCH_TOPIC_ID") or os.getenv("TELEGRAM_TOPIC_ID") or "").strip()
+    if raw_tid.split("#", 1)[0].strip().isdigit():
+        send_notification(
+            msg,
+            topic_id=int(raw_tid.split("#", 1)[0].strip()),
+            include_layout=False,
+        )
+    else:
+        send_notification(
+            msg,
+            topic_key="daily_summary",
+            include_layout=False,
+        )
+
+
 def maybe_run_daily_job(
     repository,
     runtime,
@@ -279,6 +397,8 @@ def maybe_run_combined_daily_job(
     current_prices: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> bool:
+    if not _daily_enabled("DAILY_WATCH_ENABLED", default="0"):
+        return False
     now = _now_bangkok(now)
 
     if not in_daily_watch_window(now):
@@ -299,6 +419,29 @@ def maybe_run_combined_daily_job(
             "symbols": [getattr(runtime, "symbol", None) or "BTCUSDT" for runtime in runtimes],
             "current_prices": current_prices or {},
         },
+    )
+    return True
+
+
+def maybe_run_daily_scenario_job(
+    repository,
+    runtimes: list,
+    now: datetime | None = None,
+) -> bool:
+    if not _daily_enabled("DAILY_SCENARIO_ENABLED", default="1"):
+        return False
+    now = _now_bangkok(now)
+    if not in_daily_watch_window(now):
+        return False
+
+    event_key = f"DAILY_SCENARIO_0705:{now.strftime('%Y-%m-%d')}"
+    if repository.has_system_event(event_key):
+        return False
+
+    run_daily_scenario_job(runtimes=runtimes, now=now)
+    repository.record_system_event(
+        event_key,
+        details={"symbols": [getattr(runtime, "symbol", None) or "BTCUSDT" for runtime in runtimes]},
     )
     return True
 

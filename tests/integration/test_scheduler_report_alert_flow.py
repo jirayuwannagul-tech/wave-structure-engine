@@ -175,6 +175,7 @@ def test_build_combined_daily_summary_message_ignores_already_crossed_scenario_l
 
 
 def test_run_combined_daily_job_sends_single_message(monkeypatch):
+    monkeypatch.setenv("DAILY_WATCH_ENABLED", "true")
     class Runtime:
         def __init__(self, symbol: str):
             self.symbol = symbol
@@ -203,6 +204,7 @@ def test_run_combined_daily_job_sends_single_message(monkeypatch):
 
 
 def test_maybe_run_combined_daily_job_runs_once_per_day(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAILY_WATCH_ENABLED", "true")
     calls = []
     repo_path = tmp_path / "wave.db"
 
@@ -239,6 +241,7 @@ def test_maybe_run_combined_daily_job_runs_once_per_day(monkeypatch, tmp_path):
 
 
 def test_maybe_run_combined_skips_outside_morning_window(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAILY_WATCH_ENABLED", "true")
     from storage.wave_repository import WaveRepository
 
     class Runtime:
