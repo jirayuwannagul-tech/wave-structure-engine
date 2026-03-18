@@ -140,19 +140,26 @@ def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -
     `track_price_update()` only. To ensure real execution still happens when
     the entry is detected during sync, enqueue open here as well.
     """
-    try:
-        status = str(signal_row.get("status") or "").upper()
-    except Exception:
-        status = ""
+    def _row_value(row, key):
+        # Support both plain dict and sqlite3.Row.
+        if isinstance(row, dict):
+            return row.get(key)
+        try:
+            if hasattr(row, "keys") and key in row.keys():
+                return row[key]
+        except Exception:
+            pass
+        try:
+            return row[key]  # type: ignore[index]
+        except Exception:
+            return None
+
+    status = str(_row_value(signal_row, "status") or "").upper()
 
     if status != "ACTIVE":
         return
 
-    entry_triggered_at = None
-    try:
-        entry_triggered_at = signal_row.get("entry_triggered_at")
-    except Exception:
-        entry_triggered_at = None
+    entry_triggered_at = _row_value(signal_row, "entry_triggered_at")
 
     if not entry_triggered_at:
         return
