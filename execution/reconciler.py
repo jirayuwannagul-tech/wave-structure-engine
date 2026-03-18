@@ -162,6 +162,101 @@ def _maybe_resize_stop_loss_qty(
         PositionManager(client, config, store).ensure_protection(symbol_u)
 
 
+def _reconcile_symbol_hedge(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    symbol_u: str,
+    config: ExecutionConfig | None,
+) -> dict[str, str | int | None]:
+    for row in list(store.list_open_positions_for_symbol(symbol_u)):
+        pid = int(row["id"])
+        pst = row["position_side_tag"]
+        if pst:
+            amt = client.get_position_leg_amt(symbol_u, str(pst))
+        else:
+            pos = client.get_position(symbol_u)
+            amt = _position_amt(pos)
+        if abs(amt) < 1e-12:
+            store.close_position(pid, "RECONCILE_EXCHANGE_FLAT")
+    for row in store.list_open_positions_for_symbol(symbol_u):
+        pid = int(row["id"])
+        _query_sync_protective_orders(client, store, pid, symbol_u)
+        pst = row["position_side_tag"]
+        if pst:
+            amt = client.get_position_leg_amt(symbol_u, str(pst))
+        else:
+            amt = _position_amt(client.get_position(symbol_u))
+        _maybe_resize_stop_loss_qty(client, store, config, symbol_u, row, amt)
+    if config is not None:
+        PositionManager(client, config, store).ensure_protection(symbol_u)
+    for row in store.list_open_positions_for_symbol(symbol_u):
+        pid = int(row["id"])
+        _query_sync_protective_orders(client, store, pid, symbol_u)
+        _sync_off_exchange_book(client, store, pid, symbol_u)
+
+    for r in client.get_position_risk() or []:
+        if str(r.get("symbol") or "").upper() != symbol_u:
+            continue
+        try:
+            amt = float(r.get("positionAmt") or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if abs(amt) < 1e-12:
+            continue
+        ps = str(r.get("positionSide") or "BOTH").upper()
+        if ps == "BOTH":
+            side = "LONG" if amt > 0 else "SHORT"
+            if store.has_open_position_for_symbol(symbol_u):
+                continue
+            qty = abs(amt)
+            entry_price = float(r.get("entryPrice") or 0)
+            sl_px = _emergency_sl_price(client, symbol_u, side, entry_price)
+            pid = store.create_position(
+                symbol=symbol_u,
+                side=side,
+                source_signal_id=None,
+                signal_hash=None,
+                quantity=qty,
+                entry_price=entry_price or None,
+                entry_order_id=None,
+                stop_loss_price=sl_px,
+                recovered=1,
+                position_side_tag=None,
+            )
+            store.append_event(pid, "RECOVERED_FROM_EXCHANGE", {"quantity": qty})
+            if config is not None:
+                PositionManager(client, config, store).ensure_protection(symbol_u)
+            return {"action": "recovered", "position_id": pid}
+        if store.has_open_leg_for_symbol(symbol_u, ps):
+            continue
+        qty = abs(amt)
+        try:
+            entry_price = float(r.get("entryPrice") or 0)
+        except (TypeError, ValueError):
+            entry_price = 0.0
+        sl_px = _emergency_sl_price(client, symbol_u, ps, entry_price)
+        pid = store.create_position(
+            symbol=symbol_u,
+            side=ps,
+            source_signal_id=None,
+            signal_hash=None,
+            quantity=qty,
+            entry_price=entry_price or None,
+            entry_order_id=None,
+            stop_loss_price=sl_px,
+            recovered=1,
+            position_side_tag=ps,
+        )
+        store.append_event(pid, "RECOVERED_FROM_EXCHANGE_HEDGE", {"leg": ps, "quantity": qty})
+        if config is not None:
+            PositionManager(client, config, store).ensure_protection(symbol_u)
+        return {"action": "recovered_hedge", "position_id": pid}
+
+    if store.list_open_positions_for_symbol(symbol_u):
+        return {"action": "still_open_hedge"}
+    return {"action": "none"}
+
+
 def reconcile_symbol(
     client: BinanceFuturesClient,
     store: PositionStore,
@@ -170,6 +265,12 @@ def reconcile_symbol(
 ) -> dict[str, str | int | None]:
     """Close stale DB rows; recover DB from exchange position; ensure SL on book."""
     symbol_u = symbol.upper()
+    rows_open = store.list_open_positions_for_symbol(symbol_u)
+    if config and config.hedge_position_mode and (
+        len(rows_open) > 1 or bool(rows_open and rows_open[0]["position_side_tag"])
+    ):
+        return _reconcile_symbol_hedge(client, store, symbol_u, config)
+
     row = store.get_open_position_by_symbol(symbol_u)
     pos = client.get_position(symbol_u)
     amt = _position_amt(pos)

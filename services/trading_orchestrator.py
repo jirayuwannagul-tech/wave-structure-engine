@@ -79,7 +79,7 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
             "OPPOSITE_STRUCTURE_HIT",
             "VOLATILITY_EXIT_HIT",
         ):
-            pm.close_symbol_cleanup(symbol, event_type)
+            pm.close_for_signal(signal_row, event_type)
     except Exception as exc:
         print(f"[orchestrator] exchange execution error: {exc}")
         traceback.print_exc()

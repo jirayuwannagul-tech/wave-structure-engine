@@ -15,7 +15,9 @@
 | `update_order_status(order_id, status)` | `PositionStore.update_order_status` |
 | `close_position(..., close_price)` | `PositionStore.close_position(..., close_price=)` |
 | `open_from_signal(row, account_equity_usdt=)` | `PositionManager.open_from_signal` |
-| `close_position_market(symbol, reason)` | `PositionManager.close_position_market` (= `close_symbol_cleanup`) |
+| `close_position_market(symbol, reason)` | `PositionManager.close_position_market` (= full-symbol `close_symbol_cleanup`) |
+| Close on signal exit | `PositionManager.close_for_signal(signal_row, reason)` (orchestrator) |
+| Portfolio / hedge | See [PORTFOLIO_EXECUTION.md](./PORTFOLIO_EXECUTION.md) |
 
 ---
 

@@ -15,7 +15,9 @@ from execution.exchange_info import (
     round_quantity_clamped,
     validate_order,
 )
+from execution.execution_health import record_execution_health
 from execution.models import ExecutionConfig
+from execution.portfolio_manager import evaluate_new_position
 from execution.signal_mapper import build_order_intent_from_signal
 from storage.position_store import PositionStore
 
@@ -70,6 +72,10 @@ def _position_amt_local(pos: dict | None) -> float:
         return 0.0
 
 
+def _position_side_param(config: ExecutionConfig, side_long_short: str) -> str | None:
+    return str(side_long_short).upper() if config.hedge_position_mode else None
+
+
 def _open_order_cids_and_sl_flag(client: BinanceFuturesClient, symbol: str) -> tuple[set[str], bool]:
     raw = client.get_open_orders(symbol) or []
     if not isinstance(raw, list):
@@ -87,6 +93,30 @@ def _open_order_cids_and_sl_flag(client: BinanceFuturesClient, symbol: str) -> t
     return cids, has_sl
 
 
+def _sl_on_book_for_row(
+    client: BinanceFuturesClient,
+    symbol: str,
+    config: ExecutionConfig,
+    position_side_tag: str | None,
+) -> bool:
+    raw = client.get_open_orders(symbol) or []
+    if not isinstance(raw, list):
+        return False
+    hedge = config.hedge_position_mode and position_side_tag
+    pst = (position_side_tag or "").upper()
+    for o in raw:
+        if str(o.get("type") or "").upper() != "STOP_MARKET":
+            continue
+        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+            continue
+        if not hedge:
+            return True
+        ops = str(o.get("positionSide") or "").upper()
+        if ops == pst:
+            return True
+    return False
+
+
 def _entry_duplicate_response(
     exc: BaseException,
     client: BinanceFuturesClient,
@@ -94,8 +124,9 @@ def _entry_duplicate_response(
     side: str,
     fallback_qty: float,
     fallback_price: float,
+    *,
+    hedge: bool = False,
 ) -> dict | None:
-    """If Binance reports duplicate client order id, synthesize response from position."""
     dup = False
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         try:
@@ -110,6 +141,25 @@ def _entry_duplicate_response(
         dup = "duplicate" in t or "-4116" in str(exc)
     if not dup:
         return None
+    if hedge:
+        amt = client.get_position_leg_amt(symbol, side)
+        if amt < 1e-12:
+            return None
+        want_long = side.upper() == "LONG"
+        if not want_long and side.upper() != "SHORT":
+            return None
+        ep = float(fallback_price)
+        pos = client.get_position(symbol)
+        if pos:
+            try:
+                ep = float(pos.get("entryPrice") or ep)
+            except (TypeError, ValueError):
+                pass
+        return {
+            "orderId": None,
+            "executedQty": str(amt),
+            "avgPrice": str(ep) if ep else str(fallback_price),
+        }
     pos = client.get_position(symbol)
     amt = _position_amt_local(pos)
     if abs(amt) < 1e-12:
@@ -128,6 +178,24 @@ def _entry_duplicate_response(
     }
 
 
+def _exchange_open_without_matching_db(
+    client: BinanceFuturesClient,
+    store: PositionStore,
+    symbol: str,
+    side: str,
+    config: ExecutionConfig,
+) -> bool:
+    if config.hedge_position_mode:
+        amt = client.get_position_leg_amt(symbol, side)
+        if amt <= 1e-12:
+            return False
+        return not store.has_open_leg_for_symbol(symbol, side)
+    pos = client.get_position(symbol)
+    if abs(_position_amt_local(pos)) <= 1e-12:
+        return False
+    return store.get_open_position_by_symbol(symbol) is None
+
+
 class PositionManager:
     def __init__(
         self,
@@ -144,71 +212,92 @@ class PositionManager:
         if not self.config.live_order_enabled:
             return {"ok": True, "skipped": "live_off"}
         symbol_u = symbol.upper()
-        row = self.store.get_open_position_by_symbol(symbol_u)
-        if row is None:
+        rows = self.store.list_open_positions_for_symbol(symbol_u)
+        if not rows:
             return {"ok": True, "skipped": "no_db_open"}
-        pos = self.client.get_position(symbol_u)
-        amt = _position_amt_local(pos)
-        if abs(amt) < 1e-12:
-            return {"ok": True, "skipped": "flat"}
-        _, has_sl = _open_order_cids_and_sl_flag(self.client, symbol_u)
-        if has_sl:
-            return {"ok": True, "skipped": "has_sl"}
-        side = "LONG" if amt > 0 else "SHORT"
-        exec_qty = round_quantity(self.client, symbol_u, abs(amt))
-        if exec_qty <= 0:
-            return {"ok": False, "error": "qty_zero"}
-        sl_raw = row["stop_loss_price"]
-        emergency = False
-        if sl_raw is None:
-            emergency = True
-            pct = float(os.getenv("RECOVERY_EMERGENCY_SL_PCT", "5")) / 100.0
-            try:
-                entry = float(pos.get("entryPrice") or row["entry_price"] or 0)
-            except (TypeError, ValueError):
-                entry = 0.0
-            if side == "LONG":
-                sl_px = round_price(self.client, symbol_u, entry * (1.0 - pct) if entry > 0 else entry)
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            pst = row["position_side_tag"]
+            if self.config.hedge_position_mode and pst:
+                amt = self.client.get_position_leg_amt(symbol_u, str(pst))
             else:
-                sl_px = round_price(self.client, symbol_u, entry * (1.0 + pct) if entry > 0 else entry)
-        else:
+                pos = self.client.get_position(symbol_u)
+                amt = _position_amt_local(pos)
+            if abs(amt) < 1e-12:
+                results.append({"position_id": int(row["id"]), "skipped": "flat"})
+                continue
+            if _sl_on_book_for_row(self.client, symbol_u, self.config, pst):
+                results.append({"position_id": int(row["id"]), "skipped": "has_sl"})
+                continue
+            side = str(row["side"]).upper()
+            exec_qty = round_quantity(self.client, symbol_u, abs(amt))
+            if exec_qty <= 0:
+                results.append({"position_id": int(row["id"]), "error": "qty_zero"})
+                continue
+            sl_raw = row["stop_loss_price"]
+            emergency = False
+            if sl_raw is None:
+                emergency = True
+                pct = float(os.getenv("RECOVERY_EMERGENCY_SL_PCT", "5")) / 100.0
+                try:
+                    entry = float(
+                        self.client.get_position(symbol_u).get("entryPrice")
+                        or row["entry_price"]
+                        or 0
+                    )
+                except (TypeError, ValueError):
+                    entry = 0.0
+                if side == "LONG":
+                    sl_px = round_price(
+                        self.client, symbol_u, entry * (1.0 - pct) if entry > 0 else entry
+                    )
+                else:
+                    sl_px = round_price(
+                        self.client, symbol_u, entry * (1.0 + pct) if entry > 0 else entry
+                    )
+            else:
+                try:
+                    sl_px = round_price(self.client, symbol_u, float(sl_raw))
+                except (TypeError, ValueError):
+                    results.append({"position_id": int(row["id"]), "error": "invalid_sl"})
+                    continue
             try:
-                sl_px = round_price(self.client, symbol_u, float(sl_raw))
+                sid = row["source_signal_id"]
+                signal_id = int(sid) if sid is not None else 0
             except (TypeError, ValueError):
-                return {"ok": False, "error": "invalid_stop_loss_price"}
-        try:
-            sid = row["source_signal_id"]
-            signal_id = int(sid) if sid is not None else 0
-        except (TypeError, ValueError):
-            signal_id = 0
-        cid_sl = (f"E{signal_id}SL"[:36]) if signal_id else None
-        try:
-            sl_resp = self.client.place_stop_market_reduce_only(
-                symbol=symbol_u,
-                side=side,
-                stop_price=sl_px,
-                quantity=exec_qty,
+                signal_id = 0
+            cid_sl = (f"E{signal_id}SL"[:36]) if signal_id else None
+            ps = _position_side_param(self.config, side)
+            try:
+                sl_resp = self.client.place_stop_market_reduce_only(
+                    symbol=symbol_u,
+                    side=side,
+                    stop_price=sl_px,
+                    quantity=exec_qty,
+                    client_order_id=cid_sl,
+                    position_side=ps,
+                )
+            except Exception as exc:
+                self.store.append_event(int(row["id"]), "SL_ENSURE_FAILED", {"error": str(exc)})
+                results.append({"position_id": int(row["id"]), "error": str(exc)})
+                continue
+            oid_sl = _order_id(sl_resp)
+            self.store.record_order(
+                int(row["id"]),
+                order_kind="SL",
+                order_id=oid_sl,
                 client_order_id=cid_sl,
+                side="SELL" if side == "LONG" else "BUY",
+                order_type="STOP_MARKET",
+                quantity=exec_qty,
+                stop_price=sl_px,
+                status="NEW",
             )
-        except Exception as exc:
-            self.store.append_event(int(row["id"]), "SL_ENSURE_FAILED", {"error": str(exc)})
-            return {"ok": False, "error": str(exc)}
-        oid_sl = _order_id(sl_resp)
-        self.store.record_order(
-            int(row["id"]),
-            order_kind="SL",
-            order_id=oid_sl,
-            client_order_id=cid_sl,
-            side="SELL" if side == "LONG" else "BUY",
-            order_type="STOP_MARKET",
-            quantity=exec_qty,
-            stop_price=sl_px,
-            status="NEW",
-        )
-        if emergency:
-            self.store.update_stop_loss_price(int(row["id"]), sl_px)
-        self.store.append_event(int(row["id"]), "SL_ENSURE_PLACED", {"emergency": emergency})
-        return {"ok": True, "placed": True, "emergency_sl": emergency}
+            if emergency:
+                self.store.update_stop_loss_price(int(row["id"]), sl_px)
+            self.store.append_event(int(row["id"]), "SL_ENSURE_PLACED", {"emergency": emergency})
+            results.append({"position_id": int(row["id"]), "placed": True, "emergency_sl": emergency})
+        return {"ok": True, "results": results}
 
     def open_from_signal(
         self,
@@ -221,12 +310,6 @@ class PositionManager:
 
         if self.store.has_open_position_for_signal(signal_id):
             return {"ok": True, "skipped": "already_open_for_signal"}
-        if self.store.has_open_position_for_symbol(symbol):
-            return {"ok": True, "skipped": "symbol_already_has_open_position"}
-
-        pos_chk = self.client.get_position(symbol)
-        if abs(_position_amt_local(pos_chk)) > 1e-12 and self.store.get_open_position_by_symbol(symbol) is None:
-            return {"ok": False, "error": "exchange_position_without_db_run_reconcile"}
 
         equity = (
             float(account_equity_usdt)
@@ -245,6 +328,27 @@ class PositionManager:
         except Exception as exc:
             return {"ok": False, "error": f"intent_failed:{exc}"}
 
+        side = intent.side.upper()
+        pst = _position_side_param(self.config, side)
+        block = evaluate_new_position(
+            store=self.store,
+            config=self.config,
+            equity_usdt=equity,
+            new_trade_risk_usdt=float(intent.risk_amount_usdt),
+            symbol=symbol,
+            position_side=side,
+        )
+        if block.get("skipped"):
+            record_execution_health(
+                "execution:last_portfolio_skip",
+                {"skipped": block["skipped"], "symbol": symbol, "signal_id": signal_id, **block},
+                db_path=self.store.db_path,
+            )
+            return {"ok": True, "skipped": block["skipped"], **{k: v for k, v in block.items() if k != "skipped"}}
+
+        if _exchange_open_without_matching_db(self.client, self.store, symbol, side, self.config):
+            return {"ok": False, "error": "exchange_position_without_db_run_reconcile"}
+
         entry_px = float(intent.entry_price)
         sl_px = round_price(self.client, symbol, float(intent.stop_loss))
         try:
@@ -261,16 +365,6 @@ class PositionManager:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        signal_hash = None
-        try:
-            if hasattr(signal_row, "keys") and "signal_hash" in signal_row.keys():
-                signal_hash = signal_row["signal_hash"]
-            elif isinstance(signal_row, dict):
-                signal_hash = signal_row.get("signal_hash")
-        except Exception:
-            pass
-
-        side = intent.side.upper()
         cid_entry = f"E{signal_id}EN"[:36]
         cid_sl = f"E{signal_id}SL"[:36]
 
@@ -287,14 +381,31 @@ class PositionManager:
                 side=side,
                 quantity=qty,
                 client_order_id=cid_entry,
+                position_side=pst,
             )
         except requests.HTTPError as exc:
-            entry_resp = _entry_duplicate_response(exc, self.client, symbol, side, qty, entry_px)
+            entry_resp = _entry_duplicate_response(
+                exc,
+                self.client,
+                symbol,
+                side,
+                qty,
+                entry_px,
+                hedge=self.config.hedge_position_mode,
+            )
             if entry_resp is None:
                 traceback.print_exc()
                 return {"ok": False, "error": f"entry_failed:{exc}"}
         except Exception as exc:
-            entry_resp = _entry_duplicate_response(exc, self.client, symbol, side, qty, entry_px)
+            entry_resp = _entry_duplicate_response(
+                exc,
+                self.client,
+                symbol,
+                side,
+                qty,
+                entry_px,
+                hedge=self.config.hedge_position_mode,
+            )
             if entry_resp is None:
                 traceback.print_exc()
                 return {"ok": False, "error": f"entry_failed:{exc}"}
@@ -318,12 +429,14 @@ class PositionManager:
             "avgPrice": avg_px,
             "orderId": oid_entry,
         }
+        pos_tag = str(side).upper() if self.config.hedge_position_mode else None
         pos_id = self.store.create_position_from_signal(
             signal_row,
             intent,
             entry_payload,
             stop_loss_price=sl_px,
             recovered=0,
+            position_side_tag=pos_tag,
         )
         row_entry = self.store.record_order(
             pos_id,
@@ -341,9 +454,13 @@ class PositionManager:
             self.store.update_order_exchange_id(row_entry, oid_entry)
 
         cids_open, has_sl_book = _open_order_cids_and_sl_flag(self.client, symbol)
-        if cid_sl in cids_open or has_sl_book:
+        if cid_sl in cids_open or (has_sl_book and not self.config.hedge_position_mode):
             if cid_sl not in cids_open and has_sl_book:
                 self.store.append_event(pos_id, "SL_ALREADY_ON_BOOK", {})
+        elif self.config.hedge_position_mode and _sl_on_book_for_row(
+            self.client, symbol, self.config, pos_tag
+        ):
+            self.store.append_event(pos_id, "SL_ALREADY_ON_BOOK", {})
         else:
             try:
                 sl_resp = self.client.place_stop_market_reduce_only(
@@ -352,6 +469,7 @@ class PositionManager:
                     stop_price=sl_px,
                     quantity=exec_qty,
                     client_order_id=cid_sl,
+                    position_side=pst,
                 )
                 oid_sl = _order_id(sl_resp)
                 row_sl = self.store.record_order(
@@ -405,6 +523,7 @@ class PositionManager:
                     stop_price=tp_px,
                     quantity=tp_qty,
                     client_order_id=cid,
+                    position_side=pst,
                 )
                 oid_tp = _order_id(tp_resp)
                 row_tp = self.store.record_order(
@@ -429,38 +548,141 @@ class PositionManager:
                 traceback.print_exc()
 
         self.store.append_event(pos_id, "PROTECTION_PLACED", {})
+        record_execution_health(
+            "execution:last_open_ok",
+            {"symbol": symbol, "signal_id": signal_id, "position_id": pos_id},
+            db_path=self.store.db_path,
+        )
         return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px}
 
+    def close_for_signal(self, signal_row: Any, reason: str) -> dict[str, Any]:
+        """Cancel this signal's protective orders and reduce-close the matching exchange leg."""
+        sym = str(signal_row["symbol"]).upper()
+        sid = int(signal_row["id"])
+        row = self.store.get_open_position_by_signal(sid)
+        if row is None:
+            return self.close_symbol_cleanup(sym, reason)
+
+        pid = int(row["id"])
+        side = str(row["side"]).upper()
+        pst = row["position_side_tag"]
+        ps = str(pst).upper() if pst else None
+
+        with self.store._connect() as conn:
+            oids = conn.execute(
+                """
+                SELECT DISTINCT order_id FROM exchange_position_orders
+                WHERE position_id = ? AND order_id IS NOT NULL
+                """,
+                (pid,),
+            ).fetchall()
+        for (oid,) in oids:
+            try:
+                self.client.cancel_order(symbol=sym, order_id=int(oid))
+            except Exception:
+                pass
+
+        if self.config.hedge_position_mode and ps:
+            leg = self.client.get_position_leg_amt(sym, ps)
+        else:
+            pos = self.client.get_position(sym)
+            leg = abs(_position_amt_local(pos))
+        try:
+            row_q = float(row["quantity"] or 0)
+        except (TypeError, ValueError):
+            row_q = 0.0
+        q = round_quantity(self.client, sym, min(row_q, leg))
+        if q > 0:
+            close_side = "SELL" if side == "LONG" else "BUY"
+            try:
+                self.client.place_market_reduce_only(
+                    symbol=sym,
+                    side=close_side,
+                    quantity=q,
+                    client_order_id=None,
+                    position_side=ps if self.config.hedge_position_mode else None,
+                )
+            except Exception as exc:
+                return {"ok": False, "error": str(exc), "position_id": pid}
+
+        close_px: float | None = None
+        pos = self.client.get_position(sym)
+        if pos:
+            for k in ("markPrice", "entryPrice", "lastPrice"):
+                v = pos.get(k)
+                if v not in (None, "", "0"):
+                    try:
+                        close_px = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        self.store.close_position(pid, reason, close_price=close_px)
+        record_execution_health(
+            "execution:last_close_ok",
+            {"symbol": sym, "signal_id": sid, "reason": reason},
+            db_path=self.store.db_path,
+        )
+        return {"ok": True, "position_id": pid}
+
     def close_symbol_cleanup(self, symbol: str, reason: str) -> dict[str, Any]:
-        """Cancel open reduce-only orders and market-close remaining position."""
+        """Cancel all symbol orders and market-close all exchange exposure; close DB rows."""
         symbol_u = symbol.upper()
-        open_row = self.store.get_open_position_by_symbol(symbol_u)
         try:
             self.client.cancel_all_orders(symbol=symbol_u)
         except Exception:
             pass
-        pos = self.client.get_position(symbol_u)
-        amt = 0.0
-        if pos:
-            try:
-                amt = float(pos.get("positionAmt") or 0)
-            except (TypeError, ValueError):
-                amt = 0.0
-        if abs(amt) > 0:
-            close_side = "SELL" if amt > 0 else "BUY"
-            q = round_quantity(self.client, symbol_u, abs(amt))
-            if q > 0:
+
+        if self.config.hedge_position_mode:
+            for row in self.client.get_position_risk() or []:
+                if str(row.get("symbol") or "").upper() != symbol_u:
+                    continue
+                try:
+                    amt = float(row.get("positionAmt") or 0)
+                except (TypeError, ValueError):
+                    amt = 0.0
+                if abs(amt) < 1e-12:
+                    continue
+                ps = str(row.get("positionSide") or "BOTH").upper()
+                q = round_quantity(self.client, symbol_u, abs(amt))
+                if q <= 0:
+                    continue
+                close_side = "SELL" if amt > 0 else "BUY"
+                leg_ps = None if ps == "BOTH" else ps
                 try:
                     self.client.place_market_reduce_only(
                         symbol=symbol_u,
                         side=close_side,
                         quantity=q,
                         client_order_id=None,
+                        position_side=leg_ps,
                     )
-                except Exception as exc:
-                    return {"ok": False, "error": str(exc)}
-        if open_row:
+                except Exception:
+                    pass
+        else:
+            pos = self.client.get_position(symbol_u)
+            amt = 0.0
+            if pos:
+                try:
+                    amt = float(pos.get("positionAmt") or 0)
+                except (TypeError, ValueError):
+                    amt = 0.0
+            if abs(amt) > 0:
+                close_side = "SELL" if amt > 0 else "BUY"
+                q = round_quantity(self.client, symbol_u, abs(amt))
+                if q > 0:
+                    try:
+                        self.client.place_market_reduce_only(
+                            symbol=symbol_u,
+                            side=close_side,
+                            quantity=q,
+                            client_order_id=None,
+                        )
+                    except Exception as exc:
+                        return {"ok": False, "error": str(exc)}
+
+        for open_row in self.store.list_open_positions_for_symbol(symbol_u):
             close_px: float | None = None
+            pos = self.client.get_position(symbol_u)
             if pos:
                 for k in ("markPrice", "entryPrice", "lastPrice"):
                     v = pos.get(k)

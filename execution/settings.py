@@ -74,4 +74,9 @@ def load_execution_config() -> ExecutionConfig:
         tp1_size_pct=tp1,
         tp2_size_pct=tp2,
         tp3_size_pct=tp3,
+        portfolio_max_open_positions=_env_int("PORTFOLIO_MAX_OPEN_POSITIONS", 100),
+        portfolio_max_risk_fraction=_env_float("PORTFOLIO_MAX_RISK_FRACTION", 1.0),
+        hedge_position_mode=_env_flag("BINANCE_HEDGE_POSITION_MODE", False),
+        http_max_retries=max(1, _env_int("BINANCE_HTTP_MAX_RETRIES", 3)),
+        http_retry_backoff_sec=max(0.1, _env_float("BINANCE_HTTP_RETRY_BACKOFF_SEC", 0.6)),
     )

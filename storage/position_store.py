@@ -104,6 +104,12 @@ class PositionStore:
             self._ensure_column(conn, "exchange_positions", "recovered", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "exchange_position_orders", "reduce_only", "INTEGER DEFAULT 1")
             self._ensure_column(conn, "exchange_positions", "close_price", "REAL")
+            self._ensure_column(
+                conn,
+                "exchange_positions",
+                "position_side_tag",
+                "TEXT",
+            )
             self._ensure_views(conn)
 
     def _ensure_views(self, conn: sqlite3.Connection) -> None:
@@ -131,7 +137,8 @@ class PositionStore:
                 entry_order_id,
                 stop_loss_price,
                 recovered,
-                close_price
+                close_price,
+                position_side_tag
             FROM exchange_positions;
             CREATE VIEW position_orders AS
             SELECT
@@ -194,6 +201,66 @@ class PositionStore:
             ).fetchone()
         return row is not None
 
+    def has_open_leg_for_symbol(self, symbol: str, leg: str) -> bool:
+        """Hedge mode: one OPEN row per (symbol, LONG|SHORT)."""
+        sym = symbol.upper()
+        ps = str(leg).upper()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM exchange_positions
+                WHERE symbol = ? AND status = 'OPEN'
+                  AND UPPER(IFNULL(position_side_tag, '')) = ?
+                LIMIT 1
+                """,
+                (sym, ps),
+            ).fetchone()
+        return row is not None
+
+    def count_open_positions(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM exchange_positions WHERE status = 'OPEN'",
+            ).fetchone()
+        return int(row["n"] or 0)
+
+    def aggregate_open_risk_estimate_usdt(self) -> float:
+        """Linear notional-at-SL estimate: qty * |entry - stop| per open row."""
+        total = 0.0
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT quantity, entry_price, stop_loss_price
+                FROM exchange_positions WHERE status = 'OPEN'
+                """,
+            ).fetchall()
+        for r in rows:
+            try:
+                q = abs(float(r["quantity"] or 0))
+            except (TypeError, ValueError):
+                continue
+            ep = r["entry_price"]
+            sl = r["stop_loss_price"]
+            if ep is None or sl is None:
+                continue
+            try:
+                total += q * abs(float(ep) - float(sl))
+            except (TypeError, ValueError):
+                pass
+        return total
+
+    def list_open_positions_for_symbol(self, symbol: str) -> list[sqlite3.Row]:
+        sym = symbol.upper()
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT * FROM exchange_positions
+                WHERE symbol = ? AND status = 'OPEN'
+                ORDER BY id ASC
+                """,
+                (sym,),
+            ).fetchall()
+
     def create_position(
         self,
         *,
@@ -206,16 +273,19 @@ class PositionStore:
         entry_order_id: int | None,
         stop_loss_price: float | None = None,
         recovered: int = 0,
+        position_side_tag: str | None = None,
     ) -> int:
         now = _utc_now()
+        pst = str(position_side_tag).upper() if position_side_tag else None
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO exchange_positions (
                     created_at, updated_at, symbol, side, status,
                     source_signal_id, signal_hash, quantity, entry_price,
-                    entry_order_id, opened_at, stop_loss_price, recovered
-                ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?)
+                    entry_order_id, opened_at, stop_loss_price, recovered,
+                    position_side_tag
+                ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     now,
@@ -230,6 +300,7 @@ class PositionStore:
                     now,
                     stop_loss_price,
                     int(recovered),
+                    pst,
                 ),
             )
             pid = int(cur.lastrowid)
@@ -250,6 +321,7 @@ class PositionStore:
         *,
         stop_loss_price: float | None = None,
         recovered: int = 0,
+        position_side_tag: str | None = None,
     ) -> int:
         """
         Spec API: open DB row from signal + intent + Binance entry response (executedQty, avgPrice, orderId).
@@ -292,6 +364,7 @@ class PositionStore:
             entry_order_id=oid_i,
             stop_loss_price=stop_loss_price,
             recovered=recovered,
+            position_side_tag=position_side_tag,
         )
 
     def get_open_position(self, symbol: str) -> sqlite3.Row | None:

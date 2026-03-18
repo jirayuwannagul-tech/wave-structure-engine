@@ -11,18 +11,14 @@ from typing import Any
 import requests
 
 
-def _btc_exchange_info() -> dict:
+def _symbol_exchange_block(symbol: str) -> dict:
     return {
-        "symbols": [
-            {
-                "symbol": "BTCUSDT",
-                "filters": [
-                    {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
-                    {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
-                    {"filterType": "MIN_NOTIONAL", "notional": "5"},
-                ],
-            }
-        ]
+        "symbol": symbol.upper(),
+        "filters": [
+            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+            {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
+            {"filterType": "MIN_NOTIONAL", "notional": "5"},
+        ],
     }
 
 
@@ -46,6 +42,29 @@ class FakeBinanceFuturesClient:
         self._next_oid = 1
         self._market_cids_seen: set[str] = set()
         self._fail_dup_cids = fail_duplicate_entry_client_ids or frozenset()
+        self._hedge: dict[str, dict[str, float]] = {}
+
+    def get_position_leg_amt(self, symbol: str, position_side: str) -> float:
+        sym = symbol.upper()
+        want = str(position_side).upper()
+        if sym in self._hedge and max(self._hedge[sym].values(), default=0) > 1e-12:
+            return float(self._hedge[sym].get(want, 0.0))
+        for row in self.get_position_risk():
+            if str(row.get("symbol") or "").upper() != sym:
+                continue
+            ps = str(row.get("positionSide") or "BOTH").upper()
+            try:
+                amt = float(row.get("positionAmt") or 0)
+            except (TypeError, ValueError):
+                amt = 0.0
+            if ps == "BOTH":
+                if want == "LONG" and amt > 1e-12:
+                    return amt
+                if want == "SHORT" and amt < -1e-12:
+                    return abs(amt)
+            elif ps == want:
+                return abs(amt)
+        return 0.0
 
     def get_balance(self) -> list[dict]:
         return [{"asset": "USDT", "availableBalance": "100000"}]
@@ -54,12 +73,29 @@ class FakeBinanceFuturesClient:
         return self.get_balance()
 
     def get_exchange_info(self, symbol: str | None = None) -> dict:
-        return _btc_exchange_info()
+        sym = (symbol or "BTCUSDT").upper()
+        return {"symbols": [_symbol_exchange_block(sym)]}
 
     def get_position_risk(self) -> list[dict]:
-        out = []
+        out: list[dict] = []
+        used_syms: set[str] = set()
+        for sym, legs in self._hedge.items():
+            ep = str(self._entry.get(sym, 50000.0))
+            for ps, sz in legs.items():
+                if sz < 1e-12:
+                    continue
+                amt_str = str(sz) if ps == "LONG" else str(-sz)
+                out.append(
+                    {
+                        "symbol": sym,
+                        "positionAmt": amt_str,
+                        "positionSide": ps,
+                        "entryPrice": ep,
+                    }
+                )
+                used_syms.add(sym)
         for sym, amt in self._amt.items():
-            if abs(amt) < 1e-12:
+            if sym in used_syms or abs(amt) < 1e-12:
                 continue
             out.append(
                 {
@@ -127,6 +163,7 @@ class FakeBinanceFuturesClient:
         side: str,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> dict[str, Any]:
         sym = symbol.upper()
         q = float(quantity)
@@ -136,14 +173,24 @@ class FakeBinanceFuturesClient:
         if cid:
             self._market_cids_seen.add(cid)
         is_long = side.upper() == "LONG"
-        cur = self._amt.get(sym, 0.0)
-        if is_long:
-            self._amt[sym] = cur + q
+        ep = 50000.0
+        if position_side:
+            self._hedge.setdefault(sym, {"LONG": 0.0, "SHORT": 0.0})
+            ps = str(position_side).upper()
+            if is_long:
+                self._hedge[sym]["LONG"] = self._hedge[sym].get("LONG", 0.0) + q
+            else:
+                self._hedge[sym]["SHORT"] = self._hedge[sym].get("SHORT", 0.0) + q
+            if sym not in self._entry:
+                self._entry[sym] = ep
         else:
-            self._amt[sym] = cur - q
-        ep = 50000.0 if is_long else 50000.0
-        if sym not in self._entry or abs(self._amt[sym]) < 1e-12:
-            self._entry[sym] = ep
+            cur = self._amt.get(sym, 0.0)
+            if is_long:
+                self._amt[sym] = cur + q
+            else:
+                self._amt[sym] = cur - q
+            if sym not in self._entry or abs(self._amt[sym]) < 1e-12:
+                self._entry[sym] = ep
         oid = self._alloc_oid()
         return {"orderId": oid, "executedQty": str(q), "avgPrice": str(self._entry.get(sym, ep))}
 
@@ -155,11 +202,12 @@ class FakeBinanceFuturesClient:
         stop_price: float,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> dict[str, Any]:
         sym = symbol.upper()
         oid = self._alloc_oid()
         exit_side = "SELL" if side.upper() == "LONG" else "BUY"
-        o = {
+        o: dict[str, Any] = {
             "orderId": oid,
             "symbol": sym,
             "type": "STOP_MARKET",
@@ -170,6 +218,8 @@ class FakeBinanceFuturesClient:
             "status": "NEW",
             "clientOrderId": client_order_id,
         }
+        if position_side:
+            o["positionSide"] = str(position_side).upper()
         self._orders.append(o)
         return {"orderId": oid}
 
@@ -181,11 +231,12 @@ class FakeBinanceFuturesClient:
         stop_price: float,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> dict[str, Any]:
         sym = symbol.upper()
         oid = self._alloc_oid()
         exit_side = "SELL" if side.upper() == "LONG" else "BUY"
-        o = {
+        o: dict[str, Any] = {
             "orderId": oid,
             "symbol": sym,
             "type": "TAKE_PROFIT_MARKET",
@@ -196,6 +247,8 @@ class FakeBinanceFuturesClient:
             "status": "NEW",
             "clientOrderId": client_order_id,
         }
+        if position_side:
+            o["positionSide"] = str(position_side).upper()
         self._orders.append(o)
         return {"orderId": oid}
 
@@ -206,14 +259,22 @@ class FakeBinanceFuturesClient:
         side: str,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> dict[str, Any]:
         sym = symbol.upper()
         q = float(quantity)
-        if side.upper() == "SELL":
+        if position_side and sym in self._hedge:
+            ps = str(position_side).upper()
+            legs = self._hedge[sym]
+            if side.upper() == "SELL" and ps == "LONG":
+                legs["LONG"] = max(0.0, legs.get("LONG", 0.0) - q)
+            elif side.upper() == "BUY" and ps == "SHORT":
+                legs["SHORT"] = max(0.0, legs.get("SHORT", 0.0) - q)
+        elif side.upper() == "SELL":
             self._amt[sym] = self._amt.get(sym, 0.0) - q
         else:
             self._amt[sym] = self._amt.get(sym, 0.0) + q
-        if abs(self._amt.get(sym, 0.0)) < 1e-12:
+        if sym in self._amt and abs(self._amt.get(sym, 0.0)) < 1e-12:
             self._amt[sym] = 0.0
         return {"orderId": self._alloc_oid()}
 

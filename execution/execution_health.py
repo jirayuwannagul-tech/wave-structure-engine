@@ -1,0 +1,55 @@
+"""Persist execution health markers into ``system_events`` (same DB as wave engine)."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
+import sqlite3
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def record_execution_health(
+    event_key: str,
+    details: dict,
+    *,
+    db_path: str | None = None,
+) -> None:
+    """
+    Upsert a row in system_events (event_key UNIQUE).
+    Keys: e.g. execution:last_open_ok, execution:last_portfolio_skip
+    """
+    db_path = db_path or os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+    path = Path(db_path)
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS system_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                event_key TEXT NOT NULL UNIQUE,
+                details_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO system_events (created_at, event_key, details_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT(event_key) DO UPDATE SET
+                created_at = excluded.created_at,
+                details_json = excluded.details_json
+            """,
+            (_utc_now(), event_key, json.dumps(details, sort_keys=True)),
+        )
+        conn.commit()
+    finally:
+        conn.close()

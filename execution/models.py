@@ -19,6 +19,12 @@ class ExecutionConfig:
     tp1_size_pct: float = 0.40
     tp2_size_pct: float = 0.30
     tp3_size_pct: float = 0.30
+    # Portfolio execution (caps only; no strategy filters)
+    portfolio_max_open_positions: int = 100
+    portfolio_max_risk_fraction: float = 1.0
+    hedge_position_mode: bool = False
+    http_max_retries: int = 3
+    http_retry_backoff_sec: float = 0.6
 
     @property
     def credentials_ready(self) -> bool:

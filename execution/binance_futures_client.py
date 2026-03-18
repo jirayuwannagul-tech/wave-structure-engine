@@ -11,6 +11,8 @@ import requests
 
 from execution.models import ExecutionConfig
 
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
 
 class BinanceFuturesClient:
     def __init__(self, config: ExecutionConfig):
@@ -48,15 +50,43 @@ class BinanceFuturesClient:
             payload.setdefault("recvWindow", self.config.recv_window)
             payload["signature"] = self._sign(payload)
 
-        response = requests.request(
-            method=method,
-            url=f"{self.config.base_url}{path}",
-            params=payload,
-            headers=self._headers() if (signed or self.config.api_key) else None,
-            timeout=15,
-        )
-        response.raise_for_status()
-        return response.json()
+        url = f"{self.config.base_url}{path}"
+        headers = self._headers() if (signed or self.config.api_key) else None
+        retries = max(1, int(self.config.http_max_retries))
+        backoff = float(self.config.http_retry_backoff_sec)
+        last_exc: BaseException | None = None
+        for attempt in range(retries):
+            try:
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    params=payload,
+                    headers=headers,
+                    timeout=(10, 30),
+                )
+                code = getattr(response, "status_code", 200)
+                if code in _RETRYABLE_STATUS and attempt + 1 < retries:
+                    time.sleep(backoff * (attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except requests.HTTPError as exc:
+                last_exc = exc
+                resp = exc.response
+                rc = getattr(resp, "status_code", None) if resp is not None else None
+                if rc in _RETRYABLE_STATUS and attempt + 1 < retries:
+                    time.sleep(backoff * (attempt + 1))
+                    continue
+                raise
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                last_exc = exc
+                if attempt + 1 < retries:
+                    time.sleep(backoff * (attempt + 1))
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("request failed")
 
     def _kill_switch_active(self) -> bool:
         raw = os.getenv("KILL_SWITCH", "0")
@@ -98,6 +128,27 @@ class BinanceFuturesClient:
             if str(row.get("symbol") or "").upper() == symbol_u:
                 return row
         return None
+
+    def get_position_leg_amt(self, symbol: str, position_side: str) -> float:
+        """Hedge mode: absolute size on LONG or SHORT leg. One-way BOTH uses net sign."""
+        sym = symbol.upper()
+        want = str(position_side).upper()
+        for row in self.get_position_risk() or []:
+            if str(row.get("symbol") or "").upper() != sym:
+                continue
+            ps = str(row.get("positionSide") or "BOTH").upper()
+            try:
+                amt = float(row.get("positionAmt") or 0)
+            except (TypeError, ValueError):
+                amt = 0.0
+            if ps == "BOTH":
+                if want == "LONG" and amt > 1e-12:
+                    return amt
+                if want == "SHORT" and amt < -1e-12:
+                    return abs(amt)
+            elif ps == want:
+                return abs(amt)
+        return 0.0
 
     def get_exchange_info(self, symbol: str | None = None) -> Any:
         params = {"symbol": symbol.upper()} if symbol else None
@@ -154,6 +205,7 @@ class BinanceFuturesClient:
         quantity: float,
         extra_params: dict | None = None,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> Any:
         self._ensure_trading_enabled()
         params: dict[str, Any] = {
@@ -166,6 +218,8 @@ class BinanceFuturesClient:
             params["newClientOrderId"] = client_order_id
         if extra_params:
             params.update(extra_params)
+        if position_side:
+            params["positionSide"] = str(position_side).upper()
         return self._request("POST", "/fapi/v1/order", params=params, signed=True)
 
     def place_market_order(
@@ -175,8 +229,10 @@ class BinanceFuturesClient:
         side: str,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> Any:
         order_side = self._entry_side(side)
+        ps = str(position_side).upper() if position_side else None
         return self._place_order(
             symbol=symbol,
             side=order_side,
@@ -184,6 +240,7 @@ class BinanceFuturesClient:
             quantity=quantity,
             extra_params=None,
             client_order_id=client_order_id,
+            position_side=ps,
         )
 
     def place_market_entry(
@@ -209,11 +266,13 @@ class BinanceFuturesClient:
         side: str,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> Any:
         """Close or reduce position: side must be BUY or SELL."""
         s = side.upper()
         if s not in {"BUY", "SELL"}:
             raise ValueError("place_market_reduce_only side must be BUY or SELL")
+        ps = str(position_side).upper() if position_side else None
         return self._place_order(
             symbol=symbol,
             side=s,
@@ -221,6 +280,7 @@ class BinanceFuturesClient:
             quantity=quantity,
             extra_params={"reduceOnly": "true"},
             client_order_id=client_order_id,
+            position_side=ps,
         )
 
     def place_stop_market_reduce_only(
@@ -231,6 +291,7 @@ class BinanceFuturesClient:
         stop_price: float,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> Any:
         """Place a STOP_MARKET reduce-only order used as protective stop loss."""
         order_side = self._exit_side(side)
@@ -239,6 +300,7 @@ class BinanceFuturesClient:
             "reduceOnly": "true",
             "workingType": "CONTRACT_PRICE",
         }
+        ps = str(position_side).upper() if position_side else None
         return self._place_order(
             symbol=symbol,
             side=order_side,
@@ -246,6 +308,7 @@ class BinanceFuturesClient:
             quantity=quantity,
             extra_params=extra,
             client_order_id=client_order_id,
+            position_side=ps,
         )
 
     def place_take_profit_market_reduce_only(
@@ -256,6 +319,7 @@ class BinanceFuturesClient:
         stop_price: float,
         quantity: float,
         client_order_id: str | None = None,
+        position_side: str | None = None,
     ) -> Any:
         """Place a TAKE_PROFIT_MARKET reduce-only order used as TP."""
         order_side = self._exit_side(side)
@@ -264,6 +328,7 @@ class BinanceFuturesClient:
             "reduceOnly": "true",
             "workingType": "CONTRACT_PRICE",
         }
+        ps = str(position_side).upper() if position_side else None
         return self._place_order(
             symbol=symbol,
             side=order_side,
@@ -271,4 +336,5 @@ class BinanceFuturesClient:
             quantity=quantity,
             extra_params=extra,
             client_order_id=client_order_id,
+            position_side=ps,
         )

@@ -18,6 +18,8 @@ htmlcov/
 .ruff_cache/
 secrets/
 storage/credentials.json
+storage/local_system_kpi_report.json
+storage/sheet_backups/
 state/
 alerts/
 charts/
