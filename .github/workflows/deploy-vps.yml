@@ -1,0 +1,29 @@
+# Manual deploy: Actions → Deploy VPS → Run workflow
+# Secrets (Settings → Secrets): VPS_HOST, VPS_USER, VPS_SSH_KEY (private PEM)
+# Optional: VPS_DEPLOY_PATH (default /root/wave-structure-engine)
+#
+name: Deploy VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH pull + pip + restart orchestrator
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            DP="${{ secrets.VPS_DEPLOY_PATH }}"
+            cd "${DP:-/root/wave-structure-engine}"
+            git fetch origin main
+            git reset --hard origin/main
+            if [ -d .venv ]; then .venv/bin/pip install -q -r requirements.txt; fi
+            sudo systemctl restart elliott-wave-orchestrator || true
+            git log -1 --oneline

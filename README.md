@@ -207,53 +207,39 @@ pytest -q
 
 ## GitHub to VPS
 
-Basic update flow for running this repo on a VPS:
-
-1. Clone the repository on the VPS
+**One-shot deploy from your laptop** (SSH key to VPS must work; set `VPS_HOST` in `.env` or export it):
 
 ```bash
-git clone https://github.com/jirayuwannagul-tech/wave-structure-engine.git
-cd wave-structure-engine
+chmod +x scripts/deploy_to_vps.sh
+set -a && source .env && set +a   # loads VPS_HOST, VPS_USER if present
+./scripts/deploy_to_vps.sh
 ```
 
-2. Create the virtual environment and install dependencies
+Defaults: `DEPLOY_PATH=/root/wave-structure-engine`, restarts `elliott-wave-orchestrator` (see `deploy/systemd/`).
+
+**Deploy from GitHub Actions:** add secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (private key PEM). Then **Actions → Deploy VPS → Run workflow**.
+
+---
+
+Initial VPS setup:
+
+1. Clone on the VPS (path should match systemd, e.g. `/root/wave-structure-engine`)
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/jirayuwannagul-tech/wave-structure-engine.git /root/wave-structure-engine
+cd /root/wave-structure-engine
 ```
 
-3. Pull the latest code when the repository is updated
+2. Virtualenv + deps
 
 ```bash
-git pull origin main
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-4. Run a quick check before starting the monitor
+3. Copy `.env` and `storage/credentials.json` on the server (never commit).
 
-```bash
-python main.py dry-run
-pytest -q
-```
-
-5. Start the live monitor or orchestrator
-
-```bash
-python main.py orchestrator
-```
-
-Recommended VPS workflow:
-
-- develop and test locally
-- push clean commits to GitHub
-- pull updates on the VPS
-- run `dry-run` before restarting the live process
-
-This repo currently assumes manual deployment.
-It does not include Docker, systemd, CI/CD, or auto-deploy by default.
+4. Install systemd units from `deploy/systemd/` and `systemctl enable --now elliott-wave-orchestrator`.
 
 ## Project Ceiling
 
