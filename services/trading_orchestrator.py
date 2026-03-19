@@ -231,6 +231,17 @@ def _process_execution_queue(repository: WaveRepository) -> None:
                 out = pm.open_from_signal(sig)
                 if not out.get("ok"):
                     raise RuntimeError(str(out))
+                if out.get("skipped"):
+                    record_execution_health(
+                        "execution:last_queue_open_skipped",
+                        {
+                            "task_id": tid,
+                            "signal_id": int(payload.get("signal_id") or 0),
+                            "symbol": str(payload.get("symbol") or ""),
+                            "skipped": out.get("skipped"),
+                        },
+                        db_path=store.db_path,
+                    )
             elif ttype == "CLOSE_FOR_SIGNAL":
                 sig = repository.fetch_signal(int(payload["signal_id"]))
                 if sig is None:
