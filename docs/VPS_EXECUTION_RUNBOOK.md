@@ -19,8 +19,8 @@ Use the **same** `WorkingDirectory` and `.env` as `elliott-wave-orchestrator.ser
 
 ### Entry alignment (signal vs Binance vs Sheet)
 
-- **`BINANCE_ENTRY_STYLE=market`** — fill price can slip vs planned `entry_price`; after fill the engine **rewrites `signals.entry_price` and `entry_triggered_price` to the Binance average** and **recalculates `rr_tp*`** so the Sheet row matches the exchange.
-- **`BINANCE_ENTRY_STYLE=signal_price`** — entry is a **LIMIT or STOP** at the signal entry so fill is usually **much closer** to the planned level (recommended if you want “same number” on chart, DB, and exchange).
+- **Default: `BINANCE_ENTRY_STYLE=signal_price`** — entry is a **LIMIT or STOP** at the signal entry and the queue keeps polling until fill, so Binance / SQLite / Sheet / Telegram can align to the **same filled entry**.
+- **`BINANCE_ENTRY_STYLE=market`** — fill price can slip vs planned `entry_price`; after fill the engine **rewrites `signals.entry_price` and `entry_triggered_price` to the Binance average** and **recalculates `rr_tp*`** so the Sheet row matches the exchange, but the fill can still differ from the planned line.
 
 ## 2. Deploy code
 

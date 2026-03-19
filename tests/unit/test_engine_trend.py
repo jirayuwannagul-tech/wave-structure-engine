@@ -185,3 +185,74 @@ def test_build_dataframe_analysis_keeps_display_scenarios_when_execution_prunes(
     assert raw_scenario in result["scenarios"]
     assert result["execution_scenarios"] == []
     assert raw_scenario in result["all_scenarios"]
+
+
+def test_build_dataframe_analysis_aligns_corrective_levels_to_inprogress_bias(monkeypatch):
+    df = pd.DataFrame(
+        {
+            "open_time": pd.date_range("2026-01-01", periods=8, freq="D"),
+            "open": [100] * 8,
+            "high": [102, 110, 106, 118, 112, 125, 120, 130],
+            "low": [98, 101, 99, 103, 101, 105, 103, 107],
+            "close": [101, 108, 104, 116, 110, 123, 118, 128],
+            "volume": [1000] * 8,
+        }
+    )
+    pivots = [
+        Pivot(index=1, price=100.0, type="L", timestamp=pd.Timestamp("2026-01-01")),
+        Pivot(index=2, price=120.0, type="H", timestamp=pd.Timestamp("2026-01-02")),
+        Pivot(index=3, price=108.0, type="L", timestamp=pd.Timestamp("2026-01-03")),
+        Pivot(index=4, price=130.0, type="H", timestamp=pd.Timestamp("2026-01-04")),
+    ]
+    captured = {}
+
+    class BearishCorrectiveLevels:
+        structure_type = "abc"
+        support = 90.0
+        resistance = 98.0
+        confirmation = 90.0
+        invalidation = 98.0
+        wave_start = 100.0
+        wave_end = 98.0
+        b_level = 90.0
+        c_level = 98.0
+
+    class InProgressBullishPosition:
+        structure = "ABC_CORRECTION"
+        position = "IN_WAVE_4"
+        bias = "BULLISH"
+        confidence = "medium"
+        wave_number = "4"
+        building_wave = True
+
+    monkeypatch.setattr("core.engine.detect_pivots", lambda data, **kwargs: pivots)
+    monkeypatch.setattr("core.engine.build_wave_sequence", lambda pivots, inprogress=None: {"current_leg": {}, "last_completed_leg": {}})
+    monkeypatch.setattr("core.engine.generate_wave_counts", lambda pivots, df=None: ["count"])
+    monkeypatch.setattr(
+        "core.engine.generate_labeled_wave_counts",
+        lambda pivots, timeframe, df=None: [{"pattern_type": "ABC_CORRECTION", "pattern": PatternStub(), "probability": 0.2, "confidence": 0.8, "indicator_context": {}}],
+    )
+    monkeypatch.setattr("core.engine.extract_pattern_key_levels", lambda pattern_type, pattern: BearishCorrectiveLevels())
+    monkeypatch.setattr("core.engine.build_wave_summary", lambda reports: {"current_wave": "ABC_CORRECTION"})
+    monkeypatch.setattr(
+        "core.engine.detect_wave_position",
+        lambda pattern_type=None, pattern=None, inprogress=None, **kw: InProgressBullishPosition(),
+    )
+
+    def _capture_projection(position, key_levels, **kwargs):
+        captured["confirmation"] = key_levels.confirmation
+        captured["invalidation"] = key_levels.invalidation
+        return ProjectionStub()
+
+    monkeypatch.setattr("core.engine.project_next_wave", _capture_projection)
+    monkeypatch.setattr("core.engine.generate_scenarios", lambda position, key_levels, projection, **kwargs: [])
+
+    build_dataframe_analysis(
+        symbol="BTCUSDT",
+        timeframe="4H",
+        df=df,
+        current_price=95.0,
+    )
+
+    assert captured["confirmation"] == 98.0
+    assert captured["invalidation"] == 90.0

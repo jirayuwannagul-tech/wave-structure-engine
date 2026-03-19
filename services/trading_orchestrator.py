@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import traceback
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import os
 
 from analysis.price_level_watcher import Level
@@ -50,6 +51,18 @@ def _telegram_sheet_only_enabled() -> bool:
     return _env_truthy("TELEGRAM_SHEET_ONLY", default="1")
 
 
+def _exchange_execution_enabled(cfg=None) -> bool:
+    cfg = cfg or load_execution_config()
+    if not cfg.enabled or not cfg.live_order_enabled or not cfg.credentials_ready:
+        return False
+    return str(os.getenv("KILL_SWITCH", "0")).strip().lower() not in {"1", "true", "yes", "on"}
+
+
+def _exchange_managed_signal_entry_enabled(cfg=None) -> bool:
+    cfg = cfg or load_execution_config()
+    return _exchange_execution_enabled(cfg) and str(getattr(cfg, "entry_style", "market") or "").lower() == "signal_price"
+
+
 def _push_signal_to_sheet_if_enabled(signal_id: int, db_path: str) -> None:
     """After Binance fill, push updated signal row (entry = avg fill) to Google Sheets if configured."""
     try:
@@ -67,8 +80,28 @@ def _push_signal_to_sheet_if_enabled(signal_id: int, db_path: str) -> None:
         print(f"[orchestrator] sheets sync after exchange fill: {exc}")
 
 
+def _notify_signal_entry_after_exchange_fill(signal_id: int, db_path: str) -> None:
+    try:
+        row = WaveRepository(db_path=db_path).fetch_signal(int(signal_id))
+        if row is None:
+            return
+        _push_signal_to_sheet_if_enabled(int(signal_id), db_path)
+        message = _build_signal_event_message(row, "ENTRY_TRIGGERED")
+        if message:
+            send_notification(
+                message,
+                timeframe=row["timeframe"],
+                symbol=row["symbol"],
+                include_layout=False,
+            )
+    except Exception as exc:
+        print(f"[orchestrator] entry notify after exchange fill: {exc}")
+
+
 def _signals_entry_only_enabled() -> bool:
     # Default to entry-only (no PENDING_ENTRY) unless explicitly disabled.
+    if _exchange_managed_signal_entry_enabled():
+        return False
     raw = os.getenv("SIGNALS_ENTRY_ONLY")
     if raw is None or str(raw).strip() == "":
         return True
@@ -79,19 +112,17 @@ def _signals_entry_only_enabled() -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> None:
+def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> dict:
     """Binance futures testnet/live hooks: no strategy filters."""
     cfg = load_execution_config()
-    if not cfg.enabled or not cfg.live_order_enabled or not cfg.credentials_ready:
-        return
-    if str(os.getenv("KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}:
-        return
+    if not _exchange_execution_enabled(cfg):
+        return {"ok": False, "skipped": "execution_off"}
     try:
         client = BinanceFuturesClient(cfg)
         store = PositionStore()
         pm = PositionManager(client, cfg, store)
         queue = ExecutionQueueStore(db_path=store.db_path)
-        if event_type == "ENTRY_TRIGGERED":
+        if event_type in ("ENTRY_TRIGGERED", "SIGNAL_CREATED"):
             eq_usdt = 0.0
             try:
                 bal = client.get_account_balance()
@@ -118,6 +149,7 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
                     {"type": "OPEN_FROM_SIGNAL", "signal_id": int(signal_row["id"]), "symbol": str(signal_row["symbol"]).upper()},
                     db_path=store.db_path,
                 )
+                return {"ok": True, "queued": True}
             else:
                 result = pm.open_from_signal(
                     signal_row,
@@ -126,8 +158,11 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
                 if not result.get("ok"):
                     print(f"[orchestrator] exchange open_from_signal: {result}")
                 elif not result.get("awaiting_entry_fill") and not result.get("skipped"):
-                    _push_signal_to_sheet_if_enabled(int(signal_row["id"]), store.db_path)
+                    _notify_signal_entry_after_exchange_fill(int(signal_row["id"]), store.db_path)
+                return result
         elif event_type in (
+            "STOP_LOSS_BEFORE_ENTRY",
+            "ENTRY_SKIPPED",
             "STOP_LOSS_HIT",
             "TP3_HIT",
             "TIME_STOP_HIT",
@@ -149,20 +184,18 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
                     {"type": "CLOSE_FOR_SIGNAL", "signal_id": int(signal_row["id"]), "symbol": str(signal_row["symbol"]).upper()},
                     db_path=store.db_path,
                 )
+                return {"ok": True, "queued": True}
             else:
-                pm.close_for_signal(signal_row, event_type)
+                return pm.close_for_signal(signal_row, event_type)
     except Exception as exc:
         print(f"[orchestrator] exchange execution error: {exc}")
         traceback.print_exc()
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "skipped": "noop"}
 
 
-def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -> None:
-    """Entry-only mode may create ACTIVE+entry_triggered_at directly during sync.
-
-    The lifecycle event that normally triggers OPEN_FROM_SIGNAL is produced by
-    `track_price_update()` only. To ensure real execution still happens when
-    the entry is detected during sync, enqueue open here as well.
-    """
+def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -> dict | None:
+    """Ensure synced signal rows still drive exchange execution when appropriate."""
     def _row_value(row, key):
         # Support both plain dict and sqlite3.Row.
         if isinstance(row, dict):
@@ -178,16 +211,24 @@ def _maybe_run_exchange_open_for_synced_entry(runtime_symbol: str, signal_row) -
             return None
 
     status = str(_row_value(signal_row, "status") or "").upper()
+    cfg = load_execution_config()
+
+    if _exchange_managed_signal_entry_enabled(cfg):
+        if status == "PENDING_ENTRY":
+            return _maybe_run_exchange_execution(runtime_symbol, "SIGNAL_CREATED", signal_row)
+        if status == "ACTIVE" and _row_value(signal_row, "entry_triggered_at"):
+            return _maybe_run_exchange_execution(runtime_symbol, "ENTRY_TRIGGERED", signal_row)
+        return None
 
     if status != "ACTIVE":
-        return
+        return None
 
     entry_triggered_at = _row_value(signal_row, "entry_triggered_at")
 
     if not entry_triggered_at:
-        return
+        return None
 
-    _maybe_run_exchange_execution(runtime_symbol, "ENTRY_TRIGGERED", signal_row)
+    return _maybe_run_exchange_execution(runtime_symbol, "ENTRY_TRIGGERED", signal_row)
 
 
 def _maybe_enqueue_open_for_any_active_synced_entries(
@@ -200,7 +241,7 @@ def _maybe_enqueue_open_for_any_active_synced_entries(
     When entry-only mode created ACTIVE+entry_triggered_at earlier, we
     still need to ensure we enqueue OPEN_FROM_SIGNAL for them.
     """
-    if not _signals_entry_only_enabled():
+    if not (_signals_entry_only_enabled() or _exchange_managed_signal_entry_enabled()):
         return
     try:
         active_rows = repository.fetch_active_signals(runtime_symbol)
@@ -209,6 +250,62 @@ def _maybe_enqueue_open_for_any_active_synced_entries(
 
     for row in active_rows:
         _maybe_run_exchange_open_for_synced_entry(runtime_symbol, row)
+
+
+def _reconcile_live_signal_state(repository: WaveRepository, sheets_logger=None) -> None:
+    cfg = load_execution_config()
+    if not _exchange_execution_enabled(cfg):
+        return
+
+    store = PositionStore()
+    grace_seconds = max(5, int(os.getenv("LIVE_SIGNAL_POSITION_GRACE_SECONDS", "90") or "90"))
+    now = datetime.now(UTC)
+    changed_ids: list[int] = []
+
+    try:
+        rows = repository.fetch_active_signals()
+    except Exception:
+        return
+
+    for row in rows:
+        signal_id = int(row["id"])
+        linked = store.get_open_position_by_signal(signal_id)
+        if linked is not None:
+            try:
+                position_entry = float(linked["entry_price"])
+                signal_entry = float(row["entry_price"])
+            except (TypeError, ValueError):
+                continue
+            if abs(position_entry - signal_entry) > 1e-9:
+                if repository.mark_signal_entry_filled_from_exchange(signal_id, position_entry):
+                    changed_ids.append(signal_id)
+            continue
+
+        entry_triggered_at = row["entry_triggered_at"]
+        if not entry_triggered_at:
+            continue
+        try:
+            triggered_dt = datetime.fromisoformat(str(entry_triggered_at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if triggered_dt.tzinfo is None:
+            triggered_dt = triggered_dt.replace(tzinfo=UTC)
+        if (now - triggered_dt).total_seconds() < grace_seconds:
+            continue
+
+        current_price = row["current_price"]
+        if repository.close_open_signal(
+            signal_id,
+            status="INVALIDATED",
+            close_reason="NO_EXCHANGE_POSITION",
+            current_price=float(current_price) if current_price is not None else None,
+            event_type="ENTRY_SKIPPED",
+        ):
+            changed_ids.append(signal_id)
+
+    if sheets_logger is not None:
+        for signal_id in changed_ids:
+            safe_sync_signal(repository.fetch_signal(signal_id), sheets_logger)
 
 
 def _process_execution_queue(repository: WaveRepository) -> None:
@@ -259,7 +356,7 @@ def _process_execution_queue(repository: WaveRepository) -> None:
                     )
                     continue
                 if out.get("ok") and not out.get("skipped"):
-                    _push_signal_to_sheet_if_enabled(int(payload["signal_id"]), store.db_path)
+                    _notify_signal_entry_after_exchange_fill(int(payload["signal_id"]), store.db_path)
                 if out.get("skipped"):
                     record_execution_health(
                         "execution:last_queue_open_skipped",
@@ -849,6 +946,9 @@ def process_market_update(
             signal_row = repository.fetch_signal(signal_id)
             if signal_row is None:
                 continue
+            if event_type == "ENTRY_TRIGGERED" and _exchange_execution_enabled():
+                _maybe_run_exchange_execution(runtime.symbol, event_type, signal_row)
+                continue
             safe_sync_signal(signal_row, sheets_logger)
             message = _build_signal_event_message(signal_row, event_type)
             if message:
@@ -910,6 +1010,7 @@ def run_orchestrator(
         if hasattr(repository, "fetch_recent_syncable_signals"):
             for row in repository.fetch_recent_syncable_signals(runtime.symbol, limit=3):
                 safe_sync_signal(row, sheets_logger)
+    _reconcile_live_signal_state(repository, sheets_logger=sheets_logger)
 
     print("Starting trading orchestrator...")
     for runtime in runtimes.values():
@@ -974,6 +1075,7 @@ def run_orchestrator(
                     )
 
             _reconcile_exchange_positions(symbols)
+            _reconcile_live_signal_state(repository, sheets_logger=sheets_logger)
 
             if once:
                 print("\n\n".join(snapshots))

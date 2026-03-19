@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 
+from analysis.trade_management import evaluate_live_entry_actionability
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.exchange_info import (
     round_price,
@@ -606,11 +607,35 @@ class PositionManager:
         try:
             from storage.wave_repository import WaveRepository
 
-            WaveRepository(db_path=self.store.db_path).update_signal_entry_to_exchange_average(
-                int(signal_id), ep
-            )
+            repo = WaveRepository(db_path=self.store.db_path)
+            if not repo.mark_signal_entry_filled_from_exchange(int(signal_id), ep):
+                repo.update_signal_entry_to_exchange_average(int(signal_id), ep)
         except Exception:
             pass
+
+    def _cancel_pending_entry_for_signal(self, signal_id: int, symbol: str) -> dict[str, Any] | None:
+        pend_key = _pending_entry_health_key(signal_id)
+        pend = read_execution_health(pend_key, db_path=self.store.db_path)
+        if not pend:
+            return None
+
+        oid = pend.get("order_id")
+        cid = pend.get("client_order_id")
+        try:
+            if oid is not None:
+                self.client.cancel_order(symbol=symbol, order_id=int(oid))
+            elif cid:
+                self.client.cancel_order(symbol=symbol, client_order_id=str(cid))
+        except Exception as exc:
+            return {"ok": False, "error": f"pending_entry_cancel:{exc}", "signal_id": int(signal_id)}
+
+        clear_execution_health(pend_key, db_path=self.store.db_path)
+        record_execution_health(
+            "execution:last_pending_entry_cancel",
+            {"symbol": symbol, "signal_id": int(signal_id)},
+            db_path=self.store.db_path,
+        )
+        return {"ok": True, "signal_id": int(signal_id), "pending_entry_canceled": True}
 
     def open_from_signal(
         self,
@@ -674,6 +699,60 @@ class PositionManager:
 
         entry_px = float(intent.entry_price)
         sl_px = round_price(self.client, symbol, float(intent.stop_loss))
+        live_mark = self.client.get_mark_price(symbol)
+        if live_mark is None or live_mark <= 0:
+            pos_hint = self.client.get_position(symbol)
+            live_mark = None
+            if pos_hint:
+                for key in ("markPrice", "lastPrice", "indexPrice", "entryPrice"):
+                    value = pos_hint.get(key)
+                    if value not in (None, "", "0"):
+                        try:
+                            live_mark = float(value)
+                            break
+                        except (TypeError, ValueError):
+                            pass
+        invalidation_price = None
+        try:
+            if isinstance(signal_row, dict):
+                invalidation_price = signal_row.get("invalidation_price")
+            elif hasattr(signal_row, "keys") and "invalidation_price" in signal_row.keys():
+                invalidation_price = signal_row["invalidation_price"]
+        except Exception:
+            invalidation_price = None
+        live_entry = evaluate_live_entry_actionability(
+            side=side,
+            planned_entry=entry_px,
+            stop_loss=sl_px,
+            current_price=live_mark,
+            entry_style=getattr(self.config, "entry_style", "market"),
+            invalidation_price=invalidation_price,
+        )
+        if not live_entry.actionable:
+            try:
+                from storage.wave_repository import WaveRepository
+
+                repo = WaveRepository(db_path=self.store.db_path)
+                reason = str(live_entry.reason or "entry_not_actionable").upper()
+                if reason in {"STOP_CROSSED", "INVALIDATION_CROSSED"}:
+                    repo.close_open_signal(
+                        signal_id,
+                        status="INVALIDATED",
+                        close_reason="STOP_LOSS_BEFORE_ENTRY",
+                        current_price=live_mark,
+                        event_type="STOP_LOSS_BEFORE_ENTRY",
+                    )
+                else:
+                    repo.close_open_signal(
+                        signal_id,
+                        status="INVALIDATED",
+                        close_reason=reason,
+                        current_price=live_mark,
+                        event_type="ENTRY_SKIPPED",
+                    )
+            except Exception:
+                pass
+            return {"ok": True, "skipped": f"signal_not_actionable:{live_entry.reason}"}
         risk_mult = 1.0
         try:
             risk_mult = float(block.get("risk_multiplier") or 1.0)
@@ -1119,7 +1198,13 @@ class PositionManager:
         sid = int(signal_row["id"])
         row = self.store.get_open_position_by_signal(sid)
         if row is None:
-            return self.close_symbol_cleanup(sym, reason)
+            pending = self._cancel_pending_entry_for_signal(sid, sym)
+            if pending is not None:
+                return pending
+            open_rows = self.store.list_open_positions_for_symbol(sym)
+            if len(open_rows) == 1 and open_rows[0]["source_signal_id"] is None:
+                return self.close_symbol_cleanup(sym, reason)
+            return {"ok": True, "skipped": "no_open_position_for_signal"}
 
         pid = int(row["id"])
         side = str(row["side"]).upper()

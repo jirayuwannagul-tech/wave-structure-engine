@@ -19,6 +19,15 @@ class EntryGuardDecision:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class LiveEntryDecision:
+    actionable: bool
+    reason: str | None = None
+    crossed: bool = False
+    stretch_r: float = 0.0
+    entry_style: str = "market"
+
+
 def _safe_float(value) -> float | None:
     if value is None:
         return None
@@ -58,6 +67,111 @@ def is_overextended_entry(
     max_stretch_r: float = MAX_ENTRY_STRETCH_R,
 ) -> bool:
     return entry_stretch_r(side, planned_entry, actual_entry, stop_loss) > max_stretch_r
+
+
+def normalize_entry_style(entry_style: str | None) -> str:
+    raw = str(entry_style or "market").strip().lower()
+    if raw in {"signal", "signal_price", "entry", "limit", "planned", "plan"}:
+        return "signal_price"
+    return "market"
+
+
+def _entry_crossed(side: str, current_price: float, planned_entry: float) -> bool:
+    if (side or "").upper() == "LONG":
+        return float(current_price) >= float(planned_entry)
+    return float(current_price) <= float(planned_entry)
+
+
+def _stop_crossed(side: str, current_price: float, stop_loss: float) -> bool:
+    if (side or "").upper() == "LONG":
+        return float(current_price) <= float(stop_loss)
+    return float(current_price) >= float(stop_loss)
+
+
+def _invalidation_crossed(side: str, current_price: float, invalidation_price: float) -> bool:
+    if (side or "").upper() == "LONG":
+        return float(current_price) < float(invalidation_price)
+    return float(current_price) > float(invalidation_price)
+
+
+def evaluate_live_entry_actionability(
+    *,
+    side: str,
+    planned_entry: float | None,
+    stop_loss: float | None,
+    current_price: float | None,
+    entry_style: str | None = "market",
+    invalidation_price: float | None = None,
+    max_stretch_r: float = MAX_ENTRY_STRETCH_R,
+) -> LiveEntryDecision:
+    planned = _safe_float(planned_entry)
+    stop = _safe_float(stop_loss)
+    current = _safe_float(current_price)
+    invalidation = _safe_float(invalidation_price)
+    style = normalize_entry_style(entry_style)
+    normalized_side = (side or "").upper()
+
+    if normalized_side not in {"LONG", "SHORT"}:
+        return LiveEntryDecision(False, reason="invalid_side", entry_style=style)
+    if planned is None or stop is None or current is None:
+        return LiveEntryDecision(False, reason="missing_live_entry_fields", entry_style=style)
+
+    if invalidation is not None and _invalidation_crossed(normalized_side, current, invalidation):
+        return LiveEntryDecision(False, reason="invalidation_crossed", entry_style=style)
+    if _stop_crossed(normalized_side, current, stop):
+        return LiveEntryDecision(False, reason="stop_crossed", entry_style=style)
+
+    crossed = _entry_crossed(normalized_side, current, planned)
+    stretch = entry_stretch_r(normalized_side, planned, current, stop)
+
+    if style == "signal_price":
+        if crossed:
+            return LiveEntryDecision(
+                False,
+                reason="already_crossed_for_signal_price",
+                crossed=True,
+                stretch_r=stretch,
+                entry_style=style,
+            )
+        return LiveEntryDecision(
+            True,
+            reason="waiting_confirmation",
+            crossed=False,
+            stretch_r=stretch,
+            entry_style=style,
+        )
+
+    if not crossed:
+        return LiveEntryDecision(
+            False,
+            reason="not_confirmed",
+            crossed=False,
+            stretch_r=stretch,
+            entry_style=style,
+        )
+
+    if is_overextended_entry(
+        normalized_side,
+        planned,
+        current,
+        stop,
+        max_stretch_r=max_stretch_r,
+    ):
+        return LiveEntryDecision(
+            False,
+            reason="overextended_entry",
+            crossed=True,
+            stretch_r=stretch,
+            entry_style=style,
+        )
+
+    return LiveEntryDecision(
+        True,
+        reason="confirmed",
+        crossed=True,
+        stretch_r=stretch,
+        entry_style=style,
+    )
 
 
 def trigger_candle_looks_fake(candle, side: str) -> bool:

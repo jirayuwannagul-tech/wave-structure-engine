@@ -14,7 +14,7 @@ No extra **signal filters** and no change to wave/signal **logic** — only exec
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `BINANCE_ENTRY_STYLE` | `market` | `market` — open with **MARKET** (fast; fill price can differ from signal `entry_price`). `signal_price` — place **LIMIT** or **STOP_MARKET** at the signal entry (from mark vs entry), then **SL/TP only after fill**. |
+| `BINANCE_ENTRY_STYLE` | `signal_price` | `signal_price` — place **LIMIT** or **STOP_MARKET** at the signal entry (from mark vs entry), then **SL/TP only after fill** so Binance / DB / Sheet / TG can share the same entry. `market` — open with **MARKET** (fast; fill price can differ from signal `entry_price`). |
 | `BINANCE_ENTRY_POLL_SECONDS` | `8` | When the queue runs `OPEN_FROM_SIGNAL` and entry is still resting, reschedule with this delay (does **not** increment failure attempts). |
 
 ## Position sizing
@@ -39,7 +39,7 @@ Lifecycle exits (`STOP_LOSS_HIT`, `TP3_HIT`, etc.) call **`close_for_signal(sign
 
 - **HTTP retries** on timeout / 429 / 5xx — `BINANCE_HTTP_MAX_RETRIES` (default `3`), `BINANCE_HTTP_RETRY_BACKOFF_SEC` (default `0.6`).
 - **Health markers** in `system_events` (same DB as `WAVE_DB_PATH`): `execution:last_open_ok`, `execution:last_portfolio_skip`, `execution:last_close_ok`.
-- **Order queue (optional)** — set `EXECUTION_QUEUE_ENABLED=1`. Orchestrator enqueues tasks and a per-cycle worker processes up to `EXECUTION_QUEUE_MAX_TASKS_PER_CYCLE` with retry/backoff.
+- **Order queue** — defaults to on when `BINANCE_ENTRY_STYLE=signal_price`; you can still force it with `EXECUTION_QUEUE_ENABLED=1`. Orchestrator enqueues tasks and a per-cycle worker processes up to `EXECUTION_QUEUE_MAX_TASKS_PER_CYCLE` with retry/backoff.
 - **Circuit breaker (optional)** — `EXECUTION_CIRCUIT_BREAKER_ENABLED=1` (default), opens after `EXECUTION_CIRCUIT_BREAKER_FAILURES` and cools down for `EXECUTION_CIRCUIT_BREAKER_COOLDOWN_SEC` (persisted in `system_events`).
 - **Drawdown de-risk (optional)** — `PORTFOLIO_DRAWDOWN_DE_RISK_ENABLED=1`: scales entry size by a risk multiplier based on equity drawdown vs peak.
 

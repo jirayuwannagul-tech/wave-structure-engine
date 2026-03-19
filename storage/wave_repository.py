@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from analysis.trade_management import (
+    evaluate_live_entry_actionability,
     managed_stop_after_target,
     time_stop_bars_for_timeframe,
     volatility_spike_against_position,
@@ -39,11 +40,41 @@ def _env_truthy(name: str) -> bool:
     return str(os.getenv(name, "") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_entry_style() -> str:
+    raw = (os.getenv("BINANCE_ENTRY_STYLE") or "signal_price").strip().lower()
+    if raw in {"market", "m", "immediate"}:
+        return "market"
+    if raw in {"signal", "signal_price", "entry", "limit", "planned", "plan"}:
+        return "signal_price"
+    return "signal_price"
+
+
+def _exchange_managed_signal_entry_enabled() -> bool:
+    """True when Binance owns the real fill timing for signal entries."""
+    return (
+        _env_truthy("BINANCE_EXECUTION_ENABLED")
+        and _env_truthy("BINANCE_LIVE_ORDER_ENABLED")
+        and _env_entry_style() == "signal_price"
+    )
+
+
 def _signals_entry_only_enabled() -> bool:
     """When true, only persist signals after entry is triggered (no PENDING_ENTRY rows)."""
+    if _exchange_managed_signal_entry_enabled():
+        # In signal-price execution mode we need a durable PENDING_ENTRY row so Binance can
+        # own the actual fill and we can align DB/Sheet/TG to that exchange fill.
+        return False
     raw = os.getenv("SIGNALS_ENTRY_ONLY")
     if raw is None or str(raw).strip() == "":
         # Default to entry-only: user wants only actionable signals persisted/synced.
+        return True
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _signal_gate_terminal_exit_enabled() -> bool:
+    raw = os.getenv("SIGNAL_GATE_TERMINAL_EXIT")
+    if raw is None or str(raw).strip() == "":
+        # Default to one open trade plan per symbol until it reaches a terminal exit.
         return True
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
@@ -97,12 +128,47 @@ def _execution_scenarios(analysis: dict) -> list:
     return list(analysis.get("scenarios") or [])
 
 
-def build_signal_snapshot(analysis: dict) -> dict | None:
+def _select_actionable_scenario(
+    analysis: dict,
+    *,
+    current_price: float | None = None,
+):
     scenarios = _execution_scenarios(analysis)
     if not scenarios:
         return None
 
-    scenario = scenarios[0]
+    current = _round_price(
+        current_price if current_price is not None else analysis.get("current_price")
+    )
+    entry_style = "signal_price" if _exchange_managed_signal_entry_enabled() else "market"
+    for scenario in scenarios:
+        bias = getattr(scenario, "bias", None)
+        side = _signal_side(bias)
+        if side is None:
+            continue
+        decision = evaluate_live_entry_actionability(
+            side=side,
+            planned_entry=getattr(scenario, "confirmation", None),
+            stop_loss=getattr(scenario, "stop_loss", None),
+            current_price=current,
+            entry_style=entry_style,
+            invalidation_price=getattr(scenario, "invalidation", None),
+        )
+        if decision.actionable:
+            return scenario
+        # Market-style setups can still be a valid pending plan before the
+        # confirmation level is crossed. We only want to discard stale or
+        # invalidated plans here.
+        if decision.reason == "not_confirmed" and decision.entry_style == "market":
+            return scenario
+    return None
+
+
+def build_signal_snapshot(analysis: dict, current_price: float | None = None) -> dict | None:
+    scenario = _select_actionable_scenario(analysis, current_price=current_price)
+    if scenario is None:
+        return None
+
     bias = getattr(scenario, "bias", None)
     side = _signal_side(bias)
     entry = _round_price(getattr(scenario, "confirmation", None))
@@ -150,7 +216,9 @@ def build_signal_snapshot(analysis: dict) -> dict | None:
         "position_label": getattr(position, "position", None),
         "position_bias": getattr(position, "bias", None),
         "analysis_summary": {
-            "current_price": _round_price(analysis.get("current_price")),
+            "current_price": _round_price(
+                current_price if current_price is not None else analysis.get("current_price")
+            ),
             "pattern_type": analysis.get("primary_pattern_type"),
             "scenario": _simplify_scenario(scenario),
             "rr_levels": rr_levels,
@@ -461,6 +529,46 @@ class WaveRepository:
                 (signal_id,),
             ).fetchone()
 
+    def close_open_signal(
+        self,
+        signal_id: int,
+        *,
+        status: str,
+        close_reason: str,
+        current_price: float | None = None,
+        event_time: str | None = None,
+        event_type: str,
+    ) -> bool:
+        now = event_time or _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status, current_price FROM signals WHERE id = ?",
+                (int(signal_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            prev_status = str(row["status"] or "").upper()
+            if prev_status not in OPEN_SIGNAL_STATUSES:
+                return False
+            try:
+                price_now = float(
+                    current_price
+                    if current_price is not None
+                    else row["current_price"]
+                )
+            except (TypeError, ValueError):
+                price_now = 0.0
+            self._close_signal(
+                conn,
+                signal_id=int(signal_id),
+                status=str(status).upper(),
+                close_reason=str(close_reason),
+                current_price=price_now,
+                event_time=now,
+                event_type=str(event_type).upper(),
+            )
+        return True
+
     def update_signal_entry_to_exchange_average(self, signal_id: int, avg_entry_price: float) -> bool:
         """After Binance entry fill: align signals.entry_price / entry_triggered_price with avg fill.
 
@@ -513,6 +621,86 @@ class WaveRepository:
                     int(signal_id),
                 ),
             )
+        return True
+
+    def mark_signal_entry_filled_from_exchange(
+        self,
+        signal_id: int,
+        avg_entry_price: float,
+        *,
+        event_time: str | None = None,
+    ) -> bool:
+        """Promote a pending signal to ACTIVE once Binance confirms the entry fill."""
+        try:
+            ae = float(avg_entry_price)
+        except (TypeError, ValueError):
+            return False
+        if ae <= 0:
+            return False
+
+        now = event_time or _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, side, stop_loss, tp1, tp2, tp3
+                FROM signals
+                WHERE id = ?
+                """,
+                (int(signal_id),),
+            ).fetchone()
+            if row is None:
+                return False
+
+            prev_status = str(row["status"] or "").upper()
+            if prev_status not in OPEN_SIGNAL_STATUSES:
+                return False
+
+            try:
+                sl = float(row["stop_loss"])
+            except (TypeError, ValueError):
+                return False
+
+            rr = calculate_rr_levels(
+                row["side"],
+                ae,
+                sl,
+                row["tp1"],
+                row["tp2"],
+                row["tp3"],
+            )
+            conn.execute(
+                """
+                UPDATE signals
+                SET status = CASE WHEN status = 'PENDING_ENTRY' THEN 'ACTIVE' ELSE status END,
+                    updated_at = ?,
+                    entry_price = ?,
+                    entry_triggered_price = ?,
+                    entry_triggered_at = COALESCE(entry_triggered_at, ?),
+                    rr_tp1 = ?,
+                    rr_tp2 = ?,
+                    rr_tp3 = ?
+                WHERE id = ?
+                """,
+                (
+                    now,
+                    ae,
+                    ae,
+                    now,
+                    rr.get("rr_tp1"),
+                    rr.get("rr_tp2"),
+                    rr.get("rr_tp3"),
+                    int(signal_id),
+                ),
+            )
+            if prev_status == "PENDING_ENTRY":
+                self._insert_event(
+                    conn,
+                    signal_id=int(signal_id),
+                    event_type="ENTRY_TRIGGERED",
+                    price=ae,
+                    details={"status": "ACTIVE", "source": "BINANCE_FILL"},
+                    event_time=now,
+                )
         return True
 
     def has_news_item(self, external_id: str) -> bool:
@@ -581,7 +769,7 @@ class WaveRepository:
             return int(cursor.lastrowid)
 
     def record_analysis_snapshot(self, analysis: dict, current_price: float | None = None) -> int:
-        snapshot = build_signal_snapshot(analysis)
+        snapshot = build_signal_snapshot(analysis, current_price=current_price)
         current = _round_price(current_price if current_price is not None else analysis.get("current_price"))
         payload = {
             "symbol": analysis.get("symbol"),
@@ -643,7 +831,7 @@ class WaveRepository:
         Behavior (when enabled): at most one open signal per symbol (across all timeframes).
         This enforces: "เหลือแค่ 1 สัญญาณเปิดต่อเหรียญ (ทุก timeframe)" until SL or TP3.
         """
-        if not _env_truthy("SIGNAL_GATE_TERMINAL_EXIT"):
+        if not _signal_gate_terminal_exit_enabled():
             return False
 
         sym = (snapshot.get("symbol") or "").strip().upper()
@@ -663,7 +851,7 @@ class WaveRepository:
 
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
         self.record_analysis_snapshot(analysis, current_price=current_price)
-        snapshot = build_signal_snapshot(analysis)
+        snapshot = build_signal_snapshot(analysis, current_price=current_price)
         if snapshot is None:
             self._last_affected_signal_ids = []
             return None
@@ -883,6 +1071,12 @@ class WaveRepository:
                                 event_type="STOP_LOSS_BEFORE_ENTRY",
                             )
                             events_created.append((signal_id, "STOP_LOSS_BEFORE_ENTRY"))
+                            continue
+
+                        if _exchange_managed_signal_entry_enabled():
+                            # In signal-price execution mode a pending Binance order controls the
+                            # real fill timing. Keep the signal pending until the exchange confirms
+                            # the fill so DB/Sheet/TG stay aligned to Binance.
                             continue
 
                         if self._entry_crossed(side, current, entry):

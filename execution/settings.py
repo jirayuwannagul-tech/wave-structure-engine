@@ -55,7 +55,7 @@ def _normalize_tp_allocations(tp1: float, tp2: float, tp3: float) -> tuple[float
 
 
 def _env_entry_style() -> str:
-    raw = (os.getenv("BINANCE_ENTRY_STYLE") or "market").strip().lower()
+    raw = (os.getenv("BINANCE_ENTRY_STYLE") or "signal_price").strip().lower()
     if raw in {"market", "m", "immediate"}:
         return "market"
     if raw in {
@@ -67,10 +67,11 @@ def _env_entry_style() -> str:
         "plan",
     }:
         return "signal_price"
-    return "market"
+    return "signal_price"
 
 
 def load_execution_config() -> ExecutionConfig:
+    entry_style = _env_entry_style()
     tp1 = _env_float("BINANCE_TP1_SIZE_PCT", 0.40)
     tp2 = _env_float("BINANCE_TP2_SIZE_PCT", 0.30)
     tp3 = _env_float("BINANCE_TP3_SIZE_PCT", 0.30)
@@ -108,7 +109,7 @@ def load_execution_config() -> ExecutionConfig:
         http_max_retries=max(1, _env_int("BINANCE_HTTP_MAX_RETRIES", 3)),
         http_retry_backoff_sec=max(0.1, _env_float("BINANCE_HTTP_RETRY_BACKOFF_SEC", 0.6)),
         allow_scale_in_same_leg=_env_flag("BINANCE_ALLOW_SCALE_IN_SAME_LEG", False),
-        execution_queue_enabled=_env_flag("EXECUTION_QUEUE_ENABLED", False),
+        execution_queue_enabled=_env_flag("EXECUTION_QUEUE_ENABLED", entry_style == "signal_price"),
         execution_queue_max_tasks_per_cycle=max(1, _env_int("EXECUTION_QUEUE_MAX_TASKS_PER_CYCLE", 10)),
         circuit_breaker_enabled=_env_flag("EXECUTION_CIRCUIT_BREAKER_ENABLED", True),
         circuit_breaker_failures=max(1, _env_int("EXECUTION_CIRCUIT_BREAKER_FAILURES", 5)),
@@ -117,5 +118,5 @@ def load_execution_config() -> ExecutionConfig:
         drawdown_start_fraction=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_START_FRACTION", 0.10)),
         drawdown_full_fraction=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_FULL_FRACTION", 0.30)),
         drawdown_min_risk_multiplier=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_MIN_RISK_MULTIPLIER", 0.25)),
-        entry_style=_env_entry_style(),
+        entry_style=entry_style,
     )

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from execution.execution_health import read_execution_health, record_execution_health
 from execution.fake_binance_client import FakeBinanceFuturesClient
 from execution.models import ExecutionConfig
 from execution.position_manager import PositionManager
@@ -128,7 +129,7 @@ def test_close_position_market_alias(temp_pm: PositionManager):
     assert temp_pm.store.get_open_position("BTCUSDT") is None
 
 
-def test_signal_price_long_uses_limit_when_mark_above_entry(temp_pm: PositionManager):
+def test_signal_price_long_skips_already_crossed_entry(temp_pm: PositionManager):
     client = temp_pm.client
     client.seed_mark_price("BTCUSDT", 52000.0)
     pm = PositionManager(client, replace(temp_pm.config, entry_style="signal_price"), temp_pm.store)
@@ -146,16 +147,7 @@ def test_signal_price_long_uses_limit_when_mark_above_entry(temp_pm: PositionMan
     }
     out = pm.open_from_signal(signal_row)
     assert out["ok"] is True
-    with pm.store._connect() as conn:
-        row = conn.execute(
-            """
-            SELECT order_type FROM exchange_position_orders
-            WHERE order_kind='ENTRY' AND position_id=?
-            """,
-            (out["position_id"],),
-        ).fetchone()
-    assert row is not None
-    assert row[0] == "LIMIT"
+    assert out["skipped"] == "signal_not_actionable:already_crossed_for_signal_price"
 
 
 def test_signal_price_long_uses_stop_when_mark_below_entry(temp_pm: PositionManager):
@@ -168,7 +160,7 @@ def test_signal_price_long_uses_stop_when_mark_below_entry(temp_pm: PositionMana
         "timeframe": "1D",
         "side": "LONG",
         "entry_price": 50000.0,
-        "stop_loss": 49000.0,
+        "stop_loss": 47000.0,
         "tp1": 51000.0,
         "tp2": 52000.0,
         "tp3": 53000.0,
@@ -305,5 +297,46 @@ def test_ensure_protection_places_sl_and_tp_after_backfill_from_signals():
             and str(o.get("side") or "").upper() == "SELL"
         ]
         assert len(tps) >= 1
+    finally:
+        os.unlink(path)
+
+
+def test_close_for_signal_cancels_pending_entry_without_symbol_cleanup():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = PositionStore(db_path=path)
+    client = FakeBinanceFuturesClient()
+    pm = PositionManager(client, _cfg(), store)
+    try:
+        client._orders.append(
+            {
+                "orderId": 777,
+                "symbol": "BTCUSDT",
+                "type": "LIMIT",
+                "side": "BUY",
+                "origQty": "0.1",
+                "reduceOnly": False,
+                "status": "NEW",
+                "clientOrderId": "E123EN",
+            }
+        )
+        record_execution_health(
+            "execution:pending_entry:123",
+            {
+                "order_id": 777,
+                "symbol": "BTCUSDT",
+                "client_order_id": "E123EN",
+                "order_type": "LIMIT",
+                "status": "NEW",
+            },
+            db_path=path,
+        )
+
+        out = pm.close_for_signal({"id": 123, "symbol": "BTCUSDT"}, "ENTRY_SKIPPED")
+
+        assert out["ok"] is True
+        assert out["pending_entry_canceled"] is True
+        assert client.get_open_orders("BTCUSDT") == []
+        assert read_execution_health("execution:pending_entry:123", db_path=path) is None
     finally:
         os.unlink(path)

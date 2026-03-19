@@ -28,7 +28,8 @@ def test_load_execution_config_from_env(monkeypatch):
     assert config.tp2_size_pct == 0.3
     assert config.tp3_size_pct == 0.3
     assert config.tp_allocation_total == 1.0
-    assert config.entry_style == "market"
+    assert config.entry_style == "signal_price"
+    assert config.execution_queue_enabled is True
 
 
 def test_entry_style_signal_price(monkeypatch):
@@ -38,3 +39,4 @@ def test_entry_style_signal_price(monkeypatch):
     monkeypatch.setenv("BINANCE_ENTRY_STYLE", "signal_price")
     cfg = load_execution_config()
     assert cfg.entry_style == "signal_price"
+    assert cfg.execution_queue_enabled is True

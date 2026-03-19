@@ -6,7 +6,7 @@ from analysis.candle_pattern import detect_candle_patterns
 from analysis.fibonacci_confluence import build_fib_levels_from_swing, find_confluence_zones
 from analysis.future_projection import project_next_wave
 from analysis.inprogress_detector import detect_inprogress_wave
-from analysis.key_levels import extract_pattern_key_levels
+from analysis.key_levels import align_corrective_key_levels_to_bias, extract_pattern_key_levels
 from analysis.multi_count_engine import (
     generate_labeled_wave_counts,
     generate_wave_counts,
@@ -244,6 +244,16 @@ def build_dataframe_analysis(
             position.building_wave = bool(current_leg.get("building", getattr(position, "building_wave", False)))
             position.position = current_leg_position or getattr(position, "position", None)
             position.structure = merged_structure or getattr(position, "structure", None)
+
+    if key_levels is not None and (position.structure or "").upper() in {
+        "ABC_CORRECTION",
+        "CORRECTION",
+        "FLAT",
+        "EXPANDED_FLAT",
+        "RUNNING_FLAT",
+        "WXY",
+    }:
+        key_levels = align_corrective_key_levels_to_bias(key_levels, position.bias)
 
     # Build Fibonacci confluence zones from recent significant swings
     confluence_zones = []

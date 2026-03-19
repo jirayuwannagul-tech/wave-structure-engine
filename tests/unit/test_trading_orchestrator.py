@@ -408,6 +408,8 @@ def test_refresh_runtime_keeps_existing_alert_state(monkeypatch):
 
 def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    monkeypatch.setenv("BINANCE_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("BINANCE_LIVE_ORDER_ENABLED", "false")
     repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
     analysis = {
         "symbol": "BTCUSDT",
@@ -466,6 +468,8 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
 
 def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    monkeypatch.setenv("BINANCE_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("BINANCE_LIVE_ORDER_ENABLED", "false")
     repository = WaveRepository(db_path=str(tmp_path / "wave.db"))
     analysis = {
         "symbol": "BTCUSDT",

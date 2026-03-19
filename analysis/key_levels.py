@@ -26,14 +26,16 @@ def _make_corrective_key_levels(
     end,
 ) -> KeyLevels:
     direction = (direction or "").lower()
+    low = min(float(middle.price), float(end.price))
+    high = max(float(middle.price), float(end.price))
 
     if direction == "bullish":
         return KeyLevels(
             structure_type=structure_type,
-            support=end.price,
-            resistance=middle.price,
-            invalidation=end.price,
-            confirmation=middle.price,
+            support=low,
+            resistance=high,
+            invalidation=low,
+            confirmation=high,
             wave_start=start.price,
             wave_end=end.price,
             b_level=middle.price,
@@ -42,14 +44,66 @@ def _make_corrective_key_levels(
 
     return KeyLevels(
         structure_type=structure_type,
-        support=middle.price,
-        resistance=end.price,
-        invalidation=end.price,
-        confirmation=middle.price,
+        support=low,
+        resistance=high,
+        invalidation=high,
+        confirmation=low,
         wave_start=start.price,
         wave_end=end.price,
         b_level=middle.price,
         c_level=end.price,
+    )
+
+
+def align_corrective_key_levels_to_bias(
+    key_levels: KeyLevels | None,
+    bias: str | None,
+) -> KeyLevels | None:
+    if key_levels is None:
+        return None
+
+    normalized_bias = (bias or "").upper()
+    if normalized_bias not in {"BULLISH", "BEARISH"}:
+        return key_levels
+
+    anchors = [
+        value
+        for value in (
+            key_levels.support,
+            key_levels.resistance,
+            key_levels.b_level,
+            key_levels.c_level,
+        )
+        if value is not None
+    ]
+    if not anchors:
+        return key_levels
+
+    low = float(min(anchors))
+    high = float(max(anchors))
+    if normalized_bias == "BULLISH":
+        return KeyLevels(
+            structure_type=key_levels.structure_type,
+            support=low,
+            resistance=high,
+            invalidation=low,
+            confirmation=high,
+            wave_start=key_levels.wave_start,
+            wave_end=key_levels.wave_end,
+            b_level=key_levels.b_level,
+            c_level=key_levels.c_level,
+        )
+
+    return KeyLevels(
+        structure_type=key_levels.structure_type,
+        support=low,
+        resistance=high,
+        invalidation=high,
+        confirmation=low,
+        wave_start=key_levels.wave_start,
+        wave_end=key_levels.wave_end,
+        b_level=key_levels.b_level,
+        c_level=key_levels.c_level,
     )
 
 

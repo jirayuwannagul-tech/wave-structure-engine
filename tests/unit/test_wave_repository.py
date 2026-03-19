@@ -20,12 +20,13 @@ def _analysis(
     entry: float = 100.0,
     stop_loss: float = 95.0,
     targets: list[float] | None = None,
+    current_price: float = 99.0,
 ):
     return {
         "symbol": "BTCUSDT",
         "timeframe": timeframe,
         "primary_pattern_type": pattern_type,
-        "current_price": 99.0,
+        "current_price": current_price,
         "position": PositionStub(),
         "scenarios": [
             Scenario(
@@ -79,6 +80,65 @@ def test_build_signal_snapshot_prefers_execution_scenarios_when_present():
     assert snapshot["scenario_name"] == "Exec Bearish"
     assert snapshot["side"] == "SHORT"
     assert snapshot["entry_price"] == 98.0
+
+
+def test_build_signal_snapshot_skips_overextended_market_scenario(monkeypatch):
+    monkeypatch.delenv("BINANCE_EXECUTION_ENABLED", raising=False)
+    monkeypatch.delenv("BINANCE_LIVE_ORDER_ENABLED", raising=False)
+    monkeypatch.setenv("BINANCE_ENTRY_STYLE", "market")
+
+    snapshot = build_signal_snapshot(
+        _analysis(entry=100.0, stop_loss=95.0, current_price=109.0)
+    )
+
+    assert snapshot is None
+
+
+def test_build_signal_snapshot_skips_already_crossed_signal_price_scenario(monkeypatch):
+    monkeypatch.setenv("BINANCE_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("BINANCE_LIVE_ORDER_ENABLED", "true")
+    monkeypatch.setenv("BINANCE_ENTRY_STYLE", "signal_price")
+
+    snapshot = build_signal_snapshot(
+        _analysis(entry=100.0, stop_loss=95.0, current_price=101.0)
+    )
+
+    assert snapshot is None
+
+
+def test_build_signal_snapshot_uses_next_actionable_execution_scenario(monkeypatch):
+    monkeypatch.setenv("BINANCE_ENTRY_STYLE", "market")
+    analysis = _analysis(current_price=100.5)
+    analysis["execution_scenarios"] = [
+        Scenario(
+            name="Stale Bullish",
+            condition="test",
+            interpretation="test",
+            target="test",
+            bias="BULLISH",
+            invalidation=95.0,
+            confirmation=90.0,
+            stop_loss=88.0,
+            targets=[95.0, 98.0, 101.0],
+        ),
+        Scenario(
+            name="Fresh Bearish",
+            condition="test",
+            interpretation="test",
+            target="test",
+            bias="BEARISH",
+            invalidation=106.0,
+            confirmation=100.4,
+            stop_loss=106.0,
+            targets=[99.0, 98.0, 97.0],
+        ),
+    ]
+
+    snapshot = build_signal_snapshot(analysis)
+
+    assert snapshot is not None
+    assert snapshot["scenario_name"] == "Fresh Bearish"
+    assert snapshot["side"] == "SHORT"
 
 
 def test_repository_tracks_tp1_then_stop_loss(tmp_path):
@@ -245,9 +305,41 @@ def test_signal_gate_blocks_other_timeframe_by_default_when_enabled(tmp_path, mo
     assert id_1d is None
 
 
-def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
-    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
-    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
+def test_exchange_managed_signal_entry_stays_pending_until_exchange_fill(tmp_path, monkeypatch):
+    monkeypatch.setenv("BINANCE_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("BINANCE_LIVE_ORDER_ENABLED", "true")
+    monkeypatch.setenv("BINANCE_ENTRY_STYLE", "signal_price")
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+
+    signal_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=99.0)
+
+    assert signal_id is not None
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+    assert row["status"] == "PENDING_ENTRY"
+    assert row["entry_triggered_at"] is None
+
+    events = repo.track_price_update("BTCUSDT", 100.5)
+    assert events == []
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+    assert row["status"] == "PENDING_ENTRY"
+
+    assert repo.mark_signal_entry_filled_from_exchange(signal_id, 100.2) is True
+    with repo._connect() as conn:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+    assert row["status"] == "ACTIVE"
+    assert row["entry_price"] == 100.2
+    assert row["entry_triggered_price"] == 100.2
+    assert row["entry_triggered_at"] is not None
+
+    event_types = [event["event_type"] for event in repo.fetch_signal_events(signal_id)]
+    assert event_types == ["SIGNAL_CREATED", "ENTRY_TRIGGERED"]
+
+
+def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "false")
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0))
     second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0))
@@ -263,15 +355,11 @@ def test_repository_replaces_pending_signal_on_same_timeframe(tmp_path):
     assert first["status"] == "REPLACED"
     assert first["close_reason"] == "REPLACED_BY_NEW_SIGNAL"
     assert second["status"] == "PENDING_ENTRY"
-    if monkeypatch_env is None:
-        del os.environ["SIGNALS_ENTRY_ONLY"]
-    else:
-        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
-def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
-    monkeypatch_env = os.environ.get("SIGNALS_ENTRY_ONLY")
-    os.environ["SIGNALS_ENTRY_ONLY"] = "false"
+def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "false")
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
 
     class Runtime:
@@ -290,10 +378,6 @@ def test_sync_runtime_returns_replaced_and_new_signal_ids(tmp_path):
 
     assert first["status"] == "REPLACED"
     assert second["status"] == "PENDING_ENTRY"
-    if monkeypatch_env is None:
-        del os.environ["SIGNALS_ENTRY_ONLY"]
-    else:
-        os.environ["SIGNALS_ENTRY_ONLY"] = monkeypatch_env
 
 
 def test_repository_tracks_system_events_once(tmp_path):

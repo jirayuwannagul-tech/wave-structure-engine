@@ -253,6 +253,7 @@ class BinanceFuturesClient:
             "side": side,
             "type": type_,
             "quantity": quantity,
+            "newOrderRespType": "RESULT",
         }
         if client_order_id:
             params["newClientOrderId"] = client_order_id

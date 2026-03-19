@@ -1,4 +1,5 @@
 from analysis.key_levels import (
+    align_corrective_key_levels_to_bias,
     extract_abc_key_levels,
     extract_diagonal_key_levels,
     extract_flat_key_levels,
@@ -71,6 +72,29 @@ def test_extract_impulse_key_levels_bearish():
     assert levels.resistance == 80
     assert levels.invalidation == 100
     assert levels.confirmation == 60
+
+
+def test_align_corrective_key_levels_to_bias_uses_trade_direction():
+    levels = align_corrective_key_levels_to_bias(
+        extract_abc_key_levels(
+            ABCPattern(
+                a=Pivot(index=1, price=100.0, type="H", timestamp="2026-01-01"),
+                b=Pivot(index=2, price=90.0, type="L", timestamp="2026-01-02"),
+                c=Pivot(index=3, price=98.0, type="H", timestamp="2026-01-03"),
+                direction="bearish",
+                ab_length=10.0,
+                bc_length=8.0,
+                bc_vs_ab_ratio=0.8,
+            )
+        ),
+        "BULLISH",
+    )
+
+    assert levels is not None
+    assert levels.support == 90.0
+    assert levels.resistance == 98.0
+    assert levels.invalidation == 90.0
+    assert levels.confirmation == 98.0
 
 
 def test_extract_pattern_key_levels_for_wxy():
