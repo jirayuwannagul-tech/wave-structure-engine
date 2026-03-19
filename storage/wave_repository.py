@@ -570,10 +570,7 @@ class WaveRepository:
         return True
 
     def update_signal_entry_to_exchange_average(self, signal_id: int, avg_entry_price: float) -> bool:
-        """After Binance entry fill: align signals.entry_price / entry_triggered_price with avg fill.
-
-        Recalculates rr_tp1/2/3 from the new entry so Google Sheet rows stay consistent with the exchange.
-        """
+        """Store the actual exchange fill without mutating the original trade plan."""
         try:
             ae = float(avg_entry_price)
         except (TypeError, ValueError):
@@ -583,40 +580,22 @@ class WaveRepository:
         now = _utc_now()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT side, stop_loss, tp1, tp2, tp3 FROM signals WHERE id = ?",
+                "SELECT id FROM signals WHERE id = ?",
                 (int(signal_id),),
             ).fetchone()
             if row is None:
                 return False
-            try:
-                sl = float(row["stop_loss"])
-            except (TypeError, ValueError):
-                return False
-            rr = calculate_rr_levels(
-                row["side"],
-                ae,
-                sl,
-                row["tp1"],
-                row["tp2"],
-                row["tp3"],
-            )
             conn.execute(
                 """
                 UPDATE signals
-                SET entry_price = ?,
-                    entry_triggered_price = ?,
-                    rr_tp1 = ?,
-                    rr_tp2 = ?,
-                    rr_tp3 = ?,
+                SET entry_triggered_price = ?,
+                    entry_triggered_at = COALESCE(entry_triggered_at, ?),
                     updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     ae,
-                    ae,
-                    rr.get("rr_tp1"),
-                    rr.get("rr_tp2"),
-                    rr.get("rr_tp3"),
+                    now,
                     now,
                     int(signal_id),
                 ),
@@ -630,7 +609,7 @@ class WaveRepository:
         *,
         event_time: str | None = None,
     ) -> bool:
-        """Promote a pending signal to ACTIVE once Binance confirms the entry fill."""
+        """Promote a pending signal to ACTIVE while preserving the original plan levels."""
         try:
             ae = float(avg_entry_price)
         except (TypeError, ValueError):
@@ -642,7 +621,7 @@ class WaveRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT status, side, stop_loss, tp1, tp2, tp3
+                SELECT status
                 FROM signals
                 WHERE id = ?
                 """,
@@ -654,41 +633,19 @@ class WaveRepository:
             prev_status = str(row["status"] or "").upper()
             if prev_status not in OPEN_SIGNAL_STATUSES:
                 return False
-
-            try:
-                sl = float(row["stop_loss"])
-            except (TypeError, ValueError):
-                return False
-
-            rr = calculate_rr_levels(
-                row["side"],
-                ae,
-                sl,
-                row["tp1"],
-                row["tp2"],
-                row["tp3"],
-            )
             conn.execute(
                 """
                 UPDATE signals
                 SET status = CASE WHEN status = 'PENDING_ENTRY' THEN 'ACTIVE' ELSE status END,
                     updated_at = ?,
-                    entry_price = ?,
                     entry_triggered_price = ?,
-                    entry_triggered_at = COALESCE(entry_triggered_at, ?),
-                    rr_tp1 = ?,
-                    rr_tp2 = ?,
-                    rr_tp3 = ?
+                    entry_triggered_at = COALESCE(entry_triggered_at, ?)
                 WHERE id = ?
                 """,
                 (
                     now,
                     ae,
-                    ae,
                     now,
-                    rr.get("rr_tp1"),
-                    rr.get("rr_tp2"),
-                    rr.get("rr_tp3"),
                     int(signal_id),
                 ),
             )
@@ -866,7 +823,11 @@ class WaveRepository:
         try:
             with self._connect() as conn:
                 existing = conn.execute(
-                    "SELECT id, status FROM signals WHERE signal_hash = ?",
+                    """
+                    SELECT id, status, tp1, tp2, tp3, rr_tp1, rr_tp2, rr_tp3, analysis_summary_json
+                    FROM signals
+                    WHERE signal_hash = ?
+                    """,
                     (signal_hash,),
                 ).fetchone()
 
@@ -876,13 +837,13 @@ class WaveRepository:
                         UPDATE signals
                         SET updated_at = ?,
                             current_price = ?,
-                            tp1 = ?,
-                            tp2 = ?,
-                            tp3 = ?,
-                            rr_tp1 = ?,
-                            rr_tp2 = ?,
-                            rr_tp3 = ?,
-                            analysis_summary_json = ?
+                            tp1 = COALESCE(tp1, ?),
+                            tp2 = COALESCE(tp2, ?),
+                            tp3 = COALESCE(tp3, ?),
+                            rr_tp1 = COALESCE(rr_tp1, ?),
+                            rr_tp2 = COALESCE(rr_tp2, ?),
+                            rr_tp3 = COALESCE(rr_tp3, ?),
+                            analysis_summary_json = COALESCE(analysis_summary_json, ?)
                         WHERE id = ?
                         """,
                         (

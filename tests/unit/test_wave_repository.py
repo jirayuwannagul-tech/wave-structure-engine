@@ -329,7 +329,7 @@ def test_exchange_managed_signal_entry_stays_pending_until_exchange_fill(tmp_pat
     with repo._connect() as conn:
         row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
     assert row["status"] == "ACTIVE"
-    assert row["entry_price"] == 100.2
+    assert row["entry_price"] == 100.0
     assert row["entry_triggered_price"] == 100.2
     assert row["entry_triggered_at"] is not None
 
@@ -461,6 +461,6 @@ def test_update_signal_entry_to_exchange_average(tmp_path, monkeypatch):
     assert sid is not None
     assert repo.update_signal_entry_to_exchange_average(int(sid), 101.25) is True
     row = repo.fetch_signal(int(sid))
-    assert float(row["entry_price"]) == pytest.approx(101.25)
+    assert float(row["entry_price"]) == pytest.approx(100.0)
     assert float(row["entry_triggered_price"]) == pytest.approx(101.25)
     assert row["rr_tp1"] is not None

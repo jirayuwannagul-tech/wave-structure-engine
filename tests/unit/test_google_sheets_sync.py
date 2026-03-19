@@ -110,7 +110,7 @@ def test_build_signal_sheet_row_formats_trade_journal_columns():
     )
 
     assert row == [
-        "2026-03-12",
+        "2026-03-12 07:15:00",
         "BTCUSDT",
         "4H",
         "SHORT",
