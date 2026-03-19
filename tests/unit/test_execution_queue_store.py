@@ -26,3 +26,21 @@ def test_execution_queue_store_enqueue_dedupe_fetch_mark():
     finally:
         os.unlink(path)
 
+
+def test_execution_queue_enqueue_reopens_after_failed():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        q = ExecutionQueueStore(db_path=path)
+        tid1 = q.enqueue("OPEN_FROM_SIGNAL", {"signal_id": 9}, dedupe_key="open:9")
+        assert tid1 is not None
+        q.mark_running(int(tid1))
+        q.mark_failed(int(tid1), error="entry_failed:test")
+        tid2 = q.enqueue("OPEN_FROM_SIGNAL", {"signal_id": 9}, dedupe_key="open:9")
+        assert tid2 == int(tid1)
+        row = q.fetch_ready(limit=5)
+        assert len(row) == 1
+        assert str(row[0]["status"]).upper() == "PENDING"
+    finally:
+        os.unlink(path)
+

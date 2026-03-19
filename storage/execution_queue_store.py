@@ -75,19 +75,61 @@ class ExecutionQueueStore:
             )
 
     def enqueue(self, task_type: str, payload: dict[str, Any], *, dedupe_key: str | None = None) -> int | None:
+        """Insert a task. If ``dedupe_key`` collides with an existing row:
+
+        - **FAILED** → reset to ``PENDING`` with the new payload so opens can retry after a fix.
+        - **PENDING / RETRY / RUNNING** → return ``None`` (already queued).
+        - **DONE** → return ``None`` (already completed; idempotent skip).
+        """
         now = _utc_now()
+        payload_json = json.dumps(payload, sort_keys=True)
+        tt = str(task_type)
         with self._connect() as conn:
+            if dedupe_key:
+                row = conn.execute(
+                    """
+                    SELECT id, status FROM execution_queue
+                    WHERE dedupe_key = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (dedupe_key,),
+                ).fetchone()
+                if row is not None:
+                    st = str(row["status"] or "").upper()
+                    rid = int(row["id"])
+                    if st == "FAILED":
+                        conn.execute(
+                            """
+                            UPDATE execution_queue
+                            SET status='PENDING',
+                                attempts=0,
+                                next_run_at=NULL,
+                                last_error=NULL,
+                                updated_at=?,
+                                task_type=?,
+                                payload_json=?
+                            WHERE id=?
+                            """,
+                            (now, tt, payload_json, rid),
+                        )
+                        return rid
+                    if st in ("PENDING", "RETRY", "RUNNING"):
+                        return None
+                    if st == "DONE":
+                        return None
             try:
                 cur = conn.execute(
                     """
                     INSERT INTO execution_queue (created_at, updated_at, task_type, dedupe_key, payload_json, status)
                     VALUES (?, ?, ?, ?, ?, 'PENDING')
                     """,
-                    (now, now, str(task_type), dedupe_key, json.dumps(payload, sort_keys=True)),
+                    (now, now, tt, dedupe_key, payload_json),
                 )
                 return int(cur.lastrowid)
             except sqlite3.IntegrityError:
-                return None
+                # Rare race: another writer inserted same dedupe_key first.
+                return self.enqueue(task_type, payload, dedupe_key=dedupe_key)
 
     def fetch_ready(self, limit: int = 10) -> list[sqlite3.Row]:
         now = datetime.now(UTC)
