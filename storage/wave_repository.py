@@ -461,6 +461,60 @@ class WaveRepository:
                 (signal_id,),
             ).fetchone()
 
+    def update_signal_entry_to_exchange_average(self, signal_id: int, avg_entry_price: float) -> bool:
+        """After Binance entry fill: align signals.entry_price / entry_triggered_price with avg fill.
+
+        Recalculates rr_tp1/2/3 from the new entry so Google Sheet rows stay consistent with the exchange.
+        """
+        try:
+            ae = float(avg_entry_price)
+        except (TypeError, ValueError):
+            return False
+        if ae <= 0:
+            return False
+        now = _utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT side, stop_loss, tp1, tp2, tp3 FROM signals WHERE id = ?",
+                (int(signal_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                sl = float(row["stop_loss"])
+            except (TypeError, ValueError):
+                return False
+            rr = calculate_rr_levels(
+                row["side"],
+                ae,
+                sl,
+                row["tp1"],
+                row["tp2"],
+                row["tp3"],
+            )
+            conn.execute(
+                """
+                UPDATE signals
+                SET entry_price = ?,
+                    entry_triggered_price = ?,
+                    rr_tp1 = ?,
+                    rr_tp2 = ?,
+                    rr_tp3 = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    ae,
+                    ae,
+                    rr.get("rr_tp1"),
+                    rr.get("rr_tp2"),
+                    rr.get("rr_tp3"),
+                    now,
+                    int(signal_id),
+                ),
+            )
+        return True
+
     def has_news_item(self, external_id: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(

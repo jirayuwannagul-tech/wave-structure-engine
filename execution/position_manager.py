@@ -589,6 +589,23 @@ class PositionManager:
             tp_results.append(self._ensure_take_profits_for_row(symbol_u, row, amt, open_orders))
         return {"ok": True, "results": results, "tp": tp_results}
 
+    def _sync_signal_entry_after_binance_fill(self, signal_id: int, avg_entry: float) -> None:
+        """Keep SQLite `signals` (and thus Google Sheet) entry aligned with Binance avg fill."""
+        try:
+            ep = float(avg_entry)
+        except (TypeError, ValueError):
+            return
+        if ep <= 0:
+            return
+        try:
+            from storage.wave_repository import WaveRepository
+
+            WaveRepository(db_path=self.store.db_path).update_signal_entry_to_exchange_average(
+                int(signal_id), ep
+            )
+        except Exception:
+            pass
+
     def open_from_signal(
         self,
         signal_row: Any,
@@ -967,6 +984,14 @@ class PositionManager:
             )
             if use_signal_price and pend_key:
                 clear_execution_health(pend_key, db_path=self.store.db_path)
+            row_sync = self.store.get_open_leg_position(symbol, side)
+            if row_sync is not None and row_sync.get("entry_price") is not None:
+                try:
+                    self._sync_signal_entry_after_binance_fill(signal_id, float(row_sync["entry_price"]))
+                except (TypeError, ValueError):
+                    pass
+            else:
+                self._sync_signal_entry_after_binance_fill(signal_id, avg_px)
             return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px, "scale_in": True}
 
         raw_orders = self.client.get_open_orders(symbol) or []
@@ -1079,6 +1104,7 @@ class PositionManager:
         )
         if use_signal_price and pend_key:
             clear_execution_health(pend_key, db_path=self.store.db_path)
+        self._sync_signal_entry_after_binance_fill(signal_id, avg_px)
         return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px}
 
     def close_for_signal(self, signal_row: Any, reason: str) -> dict[str, Any]:

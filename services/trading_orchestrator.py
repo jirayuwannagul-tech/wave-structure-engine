@@ -50,6 +50,23 @@ def _telegram_sheet_only_enabled() -> bool:
     return _env_truthy("TELEGRAM_SHEET_ONLY", default="1")
 
 
+def _push_signal_to_sheet_if_enabled(signal_id: int, db_path: str) -> None:
+    """After Binance fill, push updated signal row (entry = avg fill) to Google Sheets if configured."""
+    try:
+        from services.google_sheets_sync import GoogleSheetsSignalLogger, safe_sync_signal
+
+        logger = GoogleSheetsSignalLogger.from_env()
+        if logger is None:
+            return
+        repo = WaveRepository(db_path=db_path)
+        row = repo.fetch_signal(int(signal_id))
+        if row is None:
+            return
+        safe_sync_signal(row, logger)
+    except Exception as exc:
+        print(f"[orchestrator] sheets sync after exchange fill: {exc}")
+
+
 def _signals_entry_only_enabled() -> bool:
     # Default to entry-only (no PENDING_ENTRY) unless explicitly disabled.
     raw = os.getenv("SIGNALS_ENTRY_ONLY")
@@ -108,6 +125,8 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> N
                 )
                 if not result.get("ok"):
                     print(f"[orchestrator] exchange open_from_signal: {result}")
+                elif not result.get("awaiting_entry_fill") and not result.get("skipped"):
+                    _push_signal_to_sheet_if_enabled(int(signal_row["id"]), store.db_path)
         elif event_type in (
             "STOP_LOSS_HIT",
             "TP3_HIT",
@@ -239,6 +258,8 @@ def _process_execution_queue(repository: WaveRepository) -> None:
                         note="awaiting_entry_fill",
                     )
                     continue
+                if out.get("ok") and not out.get("skipped"):
+                    _push_signal_to_sheet_if_enabled(int(payload["signal_id"]), store.db_path)
                 if out.get("skipped"):
                     record_execution_health(
                         "execution:last_queue_open_skipped",

@@ -1,6 +1,7 @@
 import os
 
 import pandas as pd
+import pytest
 
 from scenarios.scenario_engine import Scenario
 from storage.wave_repository import WaveRepository, build_signal_snapshot
@@ -364,3 +365,18 @@ def test_repository_upserts_market_candles(tmp_path):
         ).fetchone()
 
     assert row["close"] == 202.0
+
+
+def test_update_signal_entry_to_exchange_average(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "0")
+    db = str(tmp_path / "w.db")
+    repo = WaveRepository(db_path=db)
+    sid = repo.sync_analysis(
+        _analysis(entry=100.0, stop_loss=95.0, targets=[110.0, 120.0, 130.0]),
+    )
+    assert sid is not None
+    assert repo.update_signal_entry_to_exchange_average(int(sid), 101.25) is True
+    row = repo.fetch_signal(int(sid))
+    assert float(row["entry_price"]) == pytest.approx(101.25)
+    assert float(row["entry_triggered_price"]) == pytest.approx(101.25)
+    assert row["rr_tp1"] is not None
