@@ -38,6 +38,15 @@ set -a && source .env && set +a
 .venv/bin/python scripts/ensure_position_protections.py
 ```
 
+## 3b. See which `signal_id` the DB links to each open position (Sheet has no id column)
+
+```bash
+set -a && source .env && set +a
+.venv/bin/python scripts/report_execution_state.py
+```
+
+Compare `source_signal_id` / `signal_row` to your Sheet row using **symbol + timeframe + side + entry** (the `wave_log` tab does not store SQLite `signals.id`).
+
 ## 4. Refresh Sheet from DB (optional)
 
 After a fill or manual DB fix:
