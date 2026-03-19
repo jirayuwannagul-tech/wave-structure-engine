@@ -176,6 +176,25 @@ def test_google_sheets_logger_upserts_existing_signal_row():
     assert worksheet.rows[1][_column("win_rate_pct")] == "33.33"
 
 
+def test_google_sheets_logger_matches_existing_row_when_sheet_reformats_time():
+    worksheet = FakeWorksheet()
+    logger = GoogleSheetsSignalLogger(
+        spreadsheet_id="test",
+        credentials_path="storage/credentials.json",
+        worksheet_name="wave_log",
+        worksheet=worksheet,
+    )
+
+    reformatted = build_signal_sheet_row(_signal_row(status="ACTIVE"))
+    reformatted[0] = "2026-03-12 7:15:00"
+    worksheet.rows.append(reformatted)
+
+    logger.upsert_signal(_signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00"))
+
+    assert len(worksheet.rows) == 2
+    assert worksheet.rows[1][_column("result")] == "TP1_THEN_SL"
+
+
 def test_compute_signal_tracking_time_stop_without_sl_mark():
     tracking = compute_signal_tracking(
         _signal_row(

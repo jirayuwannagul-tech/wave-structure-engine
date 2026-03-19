@@ -312,15 +312,33 @@ def build_signal_sheet_row(signal_row) -> list[str]:
     ]
 
 
+def _normalize_identity_value(index: int, value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if index == 0:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt).strftime(fmt)
+            except ValueError:
+                continue
+    if index in {4, 5, 6, 7, 8}:
+        try:
+            return _normalize_price(text)
+        except (TypeError, ValueError):
+            return text
+    return text
+
+
 def _build_identity_key(row_values: list[str]) -> tuple[str, ...]:
     mode = (os.getenv("GOOGLE_SHEETS_DEDUPE_MODE", "full_plan") or "").strip().lower()
     # full_plan (default): keep separate rows for different SL/TP plans (date,symbol,timeframe,side,entry,sl,tp1,tp2,tp3)
     if mode in {"full_plan", "plan", "default", ""}:
-        return tuple(row_values[:9])
+        return tuple(_normalize_identity_value(idx, value) for idx, value in enumerate(row_values[:9]))
     # latest_per_symbol: one row per (symbol,timeframe,side) to avoid duplicates on sheet
     if mode in {"latest_per_symbol", "symbol_timeframe", "symbol_timeframe_side"}:
-        return (row_values[1], row_values[2], row_values[3])
-    return tuple(row_values[:9])
+        return tuple(str(value or "").strip() for value in row_values[1:4])
+    return tuple(_normalize_identity_value(idx, value) for idx, value in enumerate(row_values[:9]))
 
 
 def should_sync_signal_to_sheet(signal_row) -> bool:
