@@ -16,6 +16,7 @@ def _signal_row(
     tp3_hit_at=None,
     close_reason=None,
     current_price=None,
+    managed_stop_loss=None,
 ):
     return {
         "created_at": "2026-03-12T00:15:00+00:00",
@@ -36,6 +37,7 @@ def _signal_row(
         "tp3_hit_at": tp3_hit_at,
         "close_reason": close_reason if close_reason is not None else ("STOP_LOSS" if status == "STOPPED" else None),
         "current_price": current_price if current_price is not None else 68977.91,
+        "managed_stop_loss": managed_stop_loss,
     }
 
 
@@ -99,6 +101,20 @@ def test_compute_signal_tracking_marks_targets_and_stop_loss():
         "realized_rr": "-0.5232",
         "win_rate_pct": "33.33",
     }
+
+
+def test_compute_signal_tracking_uses_managed_stop_loss_without_rewriting_plan():
+    tracking = compute_signal_tracking(
+        _signal_row(
+            status="STOPPED",
+            tp1_hit_at="2026-03-12T01:00:00+00:00",
+            managed_stop_loss=68977.91,
+        )
+    )
+
+    assert tracking["result"] == "TP1_THEN_SL"
+    assert tracking["realized_rr"] == "0.078"
+    assert tracking["win_rate_pct"] == "33.33"
 
 
 def test_build_signal_sheet_row_formats_trade_journal_columns():

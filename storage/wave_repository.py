@@ -311,6 +311,7 @@ class WaveRepository:
                     signal_hash TEXT NOT NULL UNIQUE,
                     entry_price REAL NOT NULL,
                     stop_loss REAL NOT NULL,
+                    managed_stop_loss REAL,
                     tp1 REAL,
                     tp2 REAL,
                     tp3 REAL,
@@ -401,6 +402,7 @@ class WaveRepository:
             self._ensure_column(conn, "signals", "rr_tp1", "REAL")
             self._ensure_column(conn, "signals", "rr_tp2", "REAL")
             self._ensure_column(conn, "signals", "rr_tp3", "REAL")
+            self._ensure_column(conn, "signals", "managed_stop_loss", "REAL")
 
     def _ensure_column(
         self,
@@ -1011,6 +1013,8 @@ class WaveRepository:
                     status = row["status"]
                     entry = float(row["entry_price"])
                     stop_loss = float(row["stop_loss"])
+                    managed_stop_loss = row["managed_stop_loss"]
+                    live_stop_loss = float(managed_stop_loss) if managed_stop_loss is not None else stop_loss
                     tp1 = row["tp1"]
                     tp2 = row["tp2"]
                     tp3 = row["tp3"]
@@ -1095,33 +1099,35 @@ class WaveRepository:
                             self._mark_target_hit(conn, signal_id, "TP1", current, now, "PARTIAL_TP1")
                             moved_stop = managed_stop_after_target(
                                 side=side,
-                                current_stop=stop_loss,
+                                current_stop=live_stop_loss,
                                 entry_price=float(row["entry_triggered_price"] or entry),
                                 tp1=tp1,
                                 target_label="TP1",
                             )
-                            if moved_stop != stop_loss:
+                            if moved_stop != live_stop_loss:
                                 self._update_stop_loss(conn, signal_id, moved_stop, now)
                             events_created.append((signal_id, "TP1_HIT"))
                             row = self._refresh_row(conn, signal_id)
                             status = row["status"]
-                            stop_loss = float(row["stop_loss"])
+                            managed_stop_loss = row["managed_stop_loss"]
+                            live_stop_loss = float(managed_stop_loss) if managed_stop_loss is not None else float(row["stop_loss"])
 
                         if tp2 is not None and row["tp2_hit_at"] is None and self._target_crossed(side, current, float(tp2)):
                             self._mark_target_hit(conn, signal_id, "TP2", current, now, "PARTIAL_TP2")
                             moved_stop = managed_stop_after_target(
                                 side=side,
-                                current_stop=stop_loss,
+                                current_stop=live_stop_loss,
                                 entry_price=float(row["entry_triggered_price"] or entry),
                                 tp1=tp1,
                                 target_label="TP2",
                             )
-                            if moved_stop != stop_loss:
+                            if moved_stop != live_stop_loss:
                                 self._update_stop_loss(conn, signal_id, moved_stop, now)
                             events_created.append((signal_id, "TP2_HIT"))
                             row = self._refresh_row(conn, signal_id)
                             status = row["status"]
-                            stop_loss = float(row["stop_loss"])
+                            managed_stop_loss = row["managed_stop_loss"]
+                            live_stop_loss = float(managed_stop_loss) if managed_stop_loss is not None else float(row["stop_loss"])
 
                         if tp3 is not None and row["tp3_hit_at"] is None and self._target_crossed(side, current, float(tp3)):
                             self._mark_target_hit(conn, signal_id, "TP3", current, now, "TP3_HIT")
@@ -1137,7 +1143,7 @@ class WaveRepository:
                             events_created.append((signal_id, "TP3_HIT"))
                             continue
 
-                        if self._stop_crossed(side, current, stop_loss):
+                        if self._stop_crossed(side, current, live_stop_loss):
                             self._close_signal(
                                 conn,
                                 signal_id=signal_id,
@@ -1365,7 +1371,7 @@ class WaveRepository:
         conn.execute(
             """
             UPDATE signals
-            SET stop_loss = ?,
+            SET managed_stop_loss = ?,
                 updated_at = ?
             WHERE id = ?
             """,

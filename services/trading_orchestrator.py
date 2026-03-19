@@ -851,6 +851,8 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     scenario_name = _signal_value("scenario_name")
     entry_price = _signal_value("entry_price")
     stop_loss = _signal_value("stop_loss")
+    managed_stop_loss = _signal_value("managed_stop_loss")
+    display_stop_loss = managed_stop_loss if managed_stop_loss not in (None, "") else stop_loss
     tp1 = _signal_value("tp1")
     tp2 = _signal_value("tp2")
     tp3 = _signal_value("tp3")
@@ -899,7 +901,7 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
         f"• Status: {_humanize_token(status)}",
         f"• Side: {_format_trade_side(side)}",
         f"• Entry: {_fmt_value(entry_price)}",
-        f"• SL: {_fmt_value(stop_loss)}{sl_mark}",
+        f"• SL: {_fmt_value(display_stop_loss)}{sl_mark}",
         _optional_level_line("TP1", tp1, f"{tp1_mark}{_rr_suffix(rr_tp1)}"),
         _optional_level_line("TP2", tp2, f"{tp2_mark}{_rr_suffix(rr_tp2)}"),
         _optional_level_line("TP3", tp3, f"{tp3_mark}{_rr_suffix(rr_tp3)}"),

@@ -157,7 +157,8 @@ def test_repository_tracks_tp1_then_stop_loss(tmp_path):
     with repo._connect() as conn:
         row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
     assert row["status"] == "STOPPED"
-    assert row["stop_loss"] == 100.5
+    assert row["stop_loss"] == 95.0
+    assert row["managed_stop_loss"] == 100.5
     assert row["tp1_hit_at"] is not None
     assert row["close_reason"] == "STOP_LOSS"
 

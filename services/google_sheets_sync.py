@@ -205,7 +205,9 @@ def _residual_exit_rr(signal_row, close_reason: str) -> float | None:
     if close_reason in {"TIME_STOP", "PROTECTIVE_EXIT", "OPPOSITE_STRUCTURE", "VOLATILITY_EXIT"}:
         return _rr_from_exit_price(signal_row, _to_float(_field(signal_row, "current_price")))
     if close_reason in {"STOP_LOSS", "STOP_LOSS_BEFORE_ENTRY"}:
-        return _rr_from_exit_price(signal_row, _to_float(_field(signal_row, "stop_loss")))
+        managed_stop = _to_float(_field(signal_row, "managed_stop_loss"))
+        stop_price = managed_stop if managed_stop is not None else _to_float(_field(signal_row, "stop_loss"))
+        return _rr_from_exit_price(signal_row, stop_price)
     return None
 
 
