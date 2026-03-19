@@ -84,7 +84,7 @@ This system is not:
 
 ### Binance position management (testnet)
 
-Market entry + `STOP_MARKET` SL + `TAKE_PROFIT_MARKET` TP1/2/3 (reduce-only). Wired from orchestrator lifecycle events **without** strategy filters (no confidence/indicator gating). See **[docs/POSITION_MGMT_TESTNET_CHECKLIST.md](docs/POSITION_MGMT_TESTNET_CHECKLIST.md)** before enabling live testnet orders.
+Market entry + `STOP_MARKET` SL + `TAKE_PROFIT_MARKET` TP1/2/3 (reduce-only). Wired from orchestrator lifecycle events **without** strategy filters (no confidence/indicator gating). See **[docs/POSITION_MGMT_TESTNET_CHECKLIST.md](docs/POSITION_MGMT_TESTNET_CHECKLIST.md)** before enabling live testnet orders. VPS env + entry/Sheet alignment: **[docs/VPS_EXECUTION_RUNBOOK.md](docs/VPS_EXECUTION_RUNBOOK.md)**.
 
 ## Requirements
 
