@@ -7,7 +7,7 @@ import os
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.exchange_info import round_price, round_quantity
 from execution.models import ExecutionConfig
-from execution.position_manager import PositionManager
+from execution.position_manager import PositionManager, exit_order_side_for_position
 from storage.position_store import PositionStore
 
 
@@ -116,12 +116,19 @@ def _maybe_resize_stop_loss_qty(
     if pos_qty <= 0:
         return
     orders = client.get_open_orders(symbol_u) or []
+    close_side = exit_order_side_for_position(str(row["side"]))
+    pst = row["position_side_tag"]
     sls: list[dict] = []
     for o in orders:
         if str(o.get("type") or "").upper() != "STOP_MARKET":
             continue
         if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
             continue
+        if str(o.get("side") or "").upper() != close_side:
+            continue
+        if config.hedge_position_mode and pst:
+            if str(o.get("positionSide") or "").upper() != str(pst).upper():
+                continue
         sls.append(o)
     if not sls:
         return
@@ -288,20 +295,33 @@ def reconcile_symbol(
         except (TypeError, ValueError):
             entry_price = 0.0
         orders = client.get_open_orders(symbol_u) or []
+        close_side = exit_order_side_for_position(side)
         sl_px: float | None = None
+        tp1_px: float | None = None
+        tp2_px: float | None = None
+        tp3_px: float | None = None
         for o in orders:
-            if str(o.get("type") or "").upper() != "STOP_MARKET":
+            oside = str(o.get("side") or "").upper()
+            if oside != close_side:
                 continue
             ro = str(o.get("reduceOnly") or "").lower()
             if ro not in ("true", "1"):
                 continue
+            ot = str(o.get("type") or "").upper()
             try:
                 sp = float(o.get("stopPrice") or 0)
             except (TypeError, ValueError):
                 sp = 0.0
-            if sp > 0:
+            if ot == "STOP_MARKET" and sp > 0 and sl_px is None:
                 sl_px = sp
-                break
+            elif ot == "TAKE_PROFIT_MARKET" and sp > 0:
+                cid = str(o.get("clientOrderId") or "")
+                if "TP2" in cid:
+                    tp2_px = tp2_px or sp
+                elif "TP3" in cid:
+                    tp3_px = tp3_px or sp
+                else:
+                    tp1_px = tp1_px or sp
         if sl_px is None:
             sl_px = _emergency_sl_price(client, symbol_u, side, entry_price)
         pid = store.create_position(
@@ -314,11 +334,19 @@ def reconcile_symbol(
             entry_order_id=None,
             stop_loss_price=sl_px,
             recovered=1,
+            tp1_price=tp1_px,
+            tp2_price=tp2_px,
+            tp3_price=tp3_px,
         )
         store.append_event(pid, "RECOVERED_FROM_EXCHANGE", {"quantity": qty, "entry_price": entry_price})
-        close_side = "SELL" if side == "LONG" else "BUY"
         for o in orders:
             ot = str(o.get("type") or "").upper()
+            oside = str(o.get("side") or "").upper()
+            if oside != close_side:
+                continue
+            ro = str(o.get("reduceOnly") or "").lower()
+            if ro not in ("true", "1"):
+                continue
             if ot == "STOP_MARKET":
                 try:
                     oid = int(o["orderId"]) if o.get("orderId") is not None else None

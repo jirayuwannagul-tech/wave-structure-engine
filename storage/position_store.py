@@ -307,6 +307,23 @@ class PositionStore:
                 (sym,),
             ).fetchall()
 
+    def list_open_symbols(self) -> list[str]:
+        """Distinct symbols with at least one OPEN row in exchange_positions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT symbol FROM exchange_positions
+                WHERE status = 'OPEN'
+                ORDER BY symbol ASC
+                """
+            ).fetchall()
+        out: list[str] = []
+        for r in rows:
+            s = r["symbol"]
+            if s:
+                out.append(str(s).upper())
+        return out
+
     def create_position(
         self,
         *,
@@ -616,6 +633,44 @@ class PositionStore:
                 SET stop_loss_price = ?, updated_at = ? WHERE id = ?
                 """,
                 (stop_loss_price, now, position_id),
+            )
+
+    def update_protection_prices(
+        self,
+        position_id: int,
+        *,
+        stop_loss_price: float | None = None,
+        tp1_price: float | None = None,
+        tp2_price: float | None = None,
+        tp3_price: float | None = None,
+        source_signal_id: int | None = None,
+    ) -> None:
+        """Patch SL/TP levels and optional signal link; only non-None fields are updated."""
+        sets: list[str] = []
+        vals: list[Any] = []
+        if stop_loss_price is not None:
+            sets.append("stop_loss_price = ?")
+            vals.append(float(stop_loss_price))
+        if tp1_price is not None:
+            sets.append("tp1_price = ?")
+            vals.append(float(tp1_price))
+        if tp2_price is not None:
+            sets.append("tp2_price = ?")
+            vals.append(float(tp2_price))
+        if tp3_price is not None:
+            sets.append("tp3_price = ?")
+            vals.append(float(tp3_price))
+        if source_signal_id is not None:
+            sets.append("source_signal_id = ?")
+            vals.append(int(source_signal_id))
+        if not sets:
+            return
+        now = _utc_now()
+        vals.extend([now, int(position_id)])
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE exchange_positions SET {', '.join(sets)}, updated_at = ? WHERE id = ?",
+                tuple(vals),
             )
 
     def update_position_order_row_status(self, order_row_id: int, status: str) -> None:

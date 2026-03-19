@@ -204,3 +204,106 @@ def test_entry_duplicate_response_reads_position_from_exchange():
     assert out is not None
     assert float(out["executedQty"]) == pytest.approx(0.02)
     assert float(out["avgPrice"]) == pytest.approx(48000.0)
+
+
+def test_open_from_signal_places_sl_when_foreign_stop_wrong_exit_side(temp_pm: PositionManager):
+    """Reduce-only STOP on book must match exit side; wrong side must not skip SL."""
+    c = temp_pm.client
+    c._orders.append(
+        {
+            "orderId": 99001,
+            "symbol": "BTCUSDT",
+            "type": "STOP_MARKET",
+            "side": "BUY",
+            "stopPrice": "40000",
+            "origQty": "0.1",
+            "reduceOnly": True,
+            "status": "NEW",
+            "clientOrderId": "ALIEN_SL",
+        }
+    )
+    signal_row = {
+        "id": 4242,
+        "symbol": "BTCUSDT",
+        "timeframe": "1D",
+        "side": "LONG",
+        "entry_price": 50000.0,
+        "stop_loss": 49000.0,
+        "tp1": 51000.0,
+        "tp2": None,
+        "tp3": None,
+        "signal_hash": "h4242",
+    }
+    out = temp_pm.open_from_signal(signal_row)
+    assert out["ok"] is True
+    sl_sell = [
+        o
+        for o in c.get_open_orders("BTCUSDT")
+        if o.get("type") == "STOP_MARKET" and str(o.get("side") or "").upper() == "SELL"
+    ]
+    assert len(sl_sell) >= 1
+
+
+def test_ensure_protection_places_sl_and_tp_after_backfill_from_signals():
+    import sqlite3
+
+    from storage.wave_repository import WaveRepository
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = PositionStore(db_path=path)
+    WaveRepository(db_path=path)
+    client = FakeBinanceFuturesClient()
+    cfg = _cfg()
+    pm = PositionManager(client, cfg, store)
+    try:
+        client.seed_position("BTCUSDT", 0.1, 50000.0)
+        store.create_position(
+            symbol="BTCUSDT",
+            side="LONG",
+            source_signal_id=None,
+            signal_hash=None,
+            quantity=0.1,
+            entry_price=50000.0,
+            entry_order_id=None,
+            stop_loss_price=49000.0,
+            recovered=1,
+        )
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                """
+                INSERT INTO signals (
+                    created_at, updated_at, symbol, timeframe, side, status,
+                    signal_hash, entry_price, stop_loss, tp1, tp2, tp3
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2025-01-01T00:00:00+00:00",
+                    "2025-01-01T00:00:00+00:00",
+                    "BTCUSDT",
+                    "1D",
+                    "LONG",
+                    "ACTIVE",
+                    "sig77",
+                    50000.0,
+                    49000.0,
+                    51000.0,
+                    52000.0,
+                    53000.0,
+                ),
+            )
+            conn.commit()
+        out = pm.ensure_protection("BTCUSDT")
+        assert out["ok"] is True
+        row = store.get_open_position_by_symbol("BTCUSDT")
+        assert row is not None
+        assert row["tp1_price"] is not None
+        tps = [
+            o
+            for o in client.get_open_orders("BTCUSDT")
+            if o.get("type") == "TAKE_PROFIT_MARKET"
+            and str(o.get("side") or "").upper() == "SELL"
+        ]
+        assert len(tps) >= 1
+    finally:
+        os.unlink(path)

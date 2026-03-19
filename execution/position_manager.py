@@ -84,43 +84,100 @@ def _pid_cid(position_id: int, suffix: str) -> str:
     return f"P{int(position_id)}{suffix}"[:36]
 
 
-def _open_order_cids_and_sl_flag(client: BinanceFuturesClient, symbol: str) -> tuple[set[str], bool]:
-    raw = client.get_open_orders(symbol) or []
-    if not isinstance(raw, list):
-        return set(), False
-    cids: set[str] = set()
-    has_sl = False
-    for o in raw:
+def exit_order_side_for_position(position_side_long_short: str) -> str:
+    """Binance order *side* that closes a LONG/SHORT futures position (reduce-only exit)."""
+    return "SELL" if str(position_side_long_short).upper() == "LONG" else "BUY"
+
+
+def _open_order_client_ids_from_orders(orders: list[Any]) -> set[str]:
+    out: set[str] = set()
+    for o in orders:
         cid = o.get("clientOrderId")
         if cid:
-            cids.add(str(cid))
-        if str(o.get("type") or "").upper() == "STOP_MARKET":
-            ro = str(o.get("reduceOnly") or "").lower()
-            if ro in ("true", "1"):
-                has_sl = True
-    return cids, has_sl
+            out.add(str(cid))
+    return out
 
 
-def _sl_on_book_for_row(
+def _hedge_order_matches_leg(
+    config: ExecutionConfig,
+    position_side_tag: str | None,
+    order: dict[str, Any],
+) -> bool:
+    if not (config.hedge_position_mode and position_side_tag):
+        return True
+    pst = str(position_side_tag).upper()
+    ops = str(order.get("positionSide") or "").upper()
+    return ops == pst
+
+
+def stop_loss_reduce_on_book_from_orders(
+    orders: list[Any],
+    config: ExecutionConfig,
+    *,
+    position_side: str,
+    position_side_tag: str | None,
+) -> bool:
+    """True if a reduce-only STOP_MARKET exists that would close *this* leg (exit side + hedge tag)."""
+    exit_side = exit_order_side_for_position(position_side)
+    for o in orders:
+        if str(o.get("type") or "").upper() != "STOP_MARKET":
+            continue
+        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+            continue
+        if str(o.get("side") or "").upper() != exit_side:
+            continue
+        if not _hedge_order_matches_leg(config, position_side_tag, o):
+            continue
+        return True
+    return False
+
+
+def stop_loss_reduce_on_book_for_position(
     client: BinanceFuturesClient,
     symbol: str,
     config: ExecutionConfig,
+    *,
+    position_side: str,
     position_side_tag: str | None,
 ) -> bool:
     raw = client.get_open_orders(symbol) or []
     if not isinstance(raw, list):
         return False
-    hedge = config.hedge_position_mode and position_side_tag
-    pst = (position_side_tag or "").upper()
-    for o in raw:
-        if str(o.get("type") or "").upper() != "STOP_MARKET":
+    return stop_loss_reduce_on_book_from_orders(
+        raw,
+        config,
+        position_side=position_side,
+        position_side_tag=position_side_tag,
+    )
+
+
+def take_profit_reduce_on_book_from_orders(
+    client: BinanceFuturesClient,
+    symbol: str,
+    config: ExecutionConfig,
+    orders: list[Any],
+    *,
+    position_side: str,
+    position_side_tag: str | None,
+    stop_price: float,
+) -> bool:
+    exit_side = exit_order_side_for_position(position_side)
+    want_px = round_price(client, symbol, float(stop_price))
+    for o in orders:
+        if str(o.get("type") or "").upper() != "TAKE_PROFIT_MARKET":
             continue
         if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
             continue
-        if not hedge:
-            return True
-        ops = str(o.get("positionSide") or "").upper()
-        if ops == pst:
+        if str(o.get("side") or "").upper() != exit_side:
+            continue
+        if not _hedge_order_matches_leg(config, position_side_tag, o):
+            continue
+        try:
+            sp = float(o.get("stopPrice") or 0)
+        except (TypeError, ValueError):
+            continue
+        sp_r = round_price(client, symbol, sp)
+        if sp_r == want_px:
             return True
     return False
 
@@ -252,15 +309,188 @@ class PositionManager:
         self.config = config
         self.store = store or PositionStore()
 
+    def _backfill_open_targets_from_active_signals(self, symbol_u: str) -> None:
+        """Fill missing TP/SL/signal link on OPEN rows from matching ACTIVE-family signals."""
+        try:
+            from storage.wave_repository import WaveRepository
+        except Exception:
+            return
+        try:
+            active = WaveRepository(db_path=self.store.db_path).fetch_active_signals(symbol_u)
+        except Exception:
+            return
+        if not active:
+            return
+        for row in self.store.list_open_positions_for_symbol(symbol_u):
+            side = str(row["side"]).upper()
+            sym_r = str(row["symbol"]).upper()
+            candidates = [
+                s
+                for s in active
+                if str(s["symbol"] or "").upper() == sym_r and str(s["side"] or "").upper() == side
+            ]
+            if not candidates:
+                continue
+            sig = max(candidates, key=lambda s: int(s["id"]))
+            pid = int(row["id"])
+            updates: dict[str, Any] = {}
+            if row["tp1_price"] is None and sig["tp1"] is not None:
+                try:
+                    updates["tp1_price"] = float(sig["tp1"])
+                except (TypeError, ValueError):
+                    pass
+            if row["tp2_price"] is None and sig["tp2"] is not None:
+                try:
+                    updates["tp2_price"] = float(sig["tp2"])
+                except (TypeError, ValueError):
+                    pass
+            if row["tp3_price"] is None and sig["tp3"] is not None:
+                try:
+                    updates["tp3_price"] = float(sig["tp3"])
+                except (TypeError, ValueError):
+                    pass
+            if row["stop_loss_price"] is None and sig["stop_loss"] is not None:
+                try:
+                    updates["stop_loss_price"] = float(sig["stop_loss"])
+                except (TypeError, ValueError):
+                    pass
+            if row["source_signal_id"] is None:
+                updates["source_signal_id"] = int(sig["id"])
+            if updates:
+                self.store.update_protection_prices(pid, **updates)
+                self.store.append_event(
+                    pid,
+                    "TARGETS_BACKFILLED_FROM_SIGNAL",
+                    {"signal_id": int(sig["id"])},
+                )
+
+    def _ensure_take_profits_for_row(
+        self,
+        symbol_u: str,
+        row: Any,
+        amt: float,
+        open_orders: list[Any],
+    ) -> dict[str, Any]:
+        """Place missing TAKE_PROFIT_MARKET reduce-only orders from DB TP levels vs exchange size."""
+        pid = int(row["id"])
+        side = str(row["side"]).upper()
+        pst = row["position_side_tag"]
+        ps = _position_side_param(self.config, side)
+        if not isinstance(open_orders, list):
+            open_orders = []
+        open_ids: set[int] = set()
+        cids = _open_order_client_ids_from_orders(open_orders)
+        for o in open_orders:
+            oid = o.get("orderId")
+            if oid is not None:
+                try:
+                    open_ids.add(int(oid))
+                except (TypeError, ValueError):
+                    pass
+        try:
+            sid = row["source_signal_id"]
+            signal_id = int(sid) if sid is not None else 0
+        except (TypeError, ValueError):
+            signal_id = 0
+        exec_qty = round_quantity(self.client, symbol_u, abs(amt))
+        if exec_qty <= 0:
+            return {"position_id": pid, "skipped": "qty_zero"}
+        tp_levels = [
+            ("TP1", row["tp1_price"], float(self.config.tp1_size_pct)),
+            ("TP2", row["tp2_price"], float(self.config.tp2_size_pct)),
+            ("TP3", row["tp3_price"], float(self.config.tp3_size_pct)),
+        ]
+        valid = [(lab, px, w) for lab, px, w in tp_levels if px is not None and w > 0]
+        if not valid:
+            return {"position_id": pid, "skipped": "no_tp_levels"}
+        wsum = sum(w for _, _, w in valid)
+        placed_qty = 0.0
+        level_results: list[dict[str, Any]] = []
+        for j, (label, tp_px_raw, w) in enumerate(valid):
+            if j == len(valid) - 1:
+                tp_qty = round_quantity(self.client, symbol_u, exec_qty - placed_qty)
+            else:
+                tp_qty = round_quantity(
+                    self.client, symbol_u, exec_qty * (w / wsum) if wsum > 0 else 0
+                )
+            placed_qty = round_quantity(self.client, symbol_u, placed_qty + tp_qty)
+            if tp_qty <= 0:
+                continue
+            tp_px = round_price(self.client, symbol_u, float(tp_px_raw))
+            cid_primary = (f"E{signal_id}{label}"[:36]) if signal_id else None
+            cid_fallback = _pid_cid(pid, label)
+            expected_cids = {c for c in (cid_primary, cid_fallback) if c}
+            if any(c in cids for c in expected_cids):
+                level_results.append({"level": label, "skipped": "cid_on_book"})
+                continue
+            if take_profit_reduce_on_book_from_orders(
+                self.client,
+                symbol_u,
+                self.config,
+                open_orders,
+                position_side=side,
+                position_side_tag=pst,
+                stop_price=tp_px,
+            ):
+                level_results.append({"level": label, "skipped": "price_on_book"})
+                continue
+            db_skip = False
+            for rord in self.store.list_open_protective_orders(pid):
+                if str(rord["order_kind"]) != label:
+                    continue
+                if str(rord["status"] or "") == "NEW" and rord["order_id"] is not None:
+                    try:
+                        if int(rord["order_id"]) in open_ids:
+                            db_skip = True
+                            break
+                    except (TypeError, ValueError):
+                        pass
+            if db_skip:
+                level_results.append({"level": label, "skipped": "db_new_on_book"})
+                continue
+            use_cid = cid_primary or cid_fallback
+            try:
+                tp_resp = self.client.place_take_profit_market_reduce_only(
+                    symbol=symbol_u,
+                    side=side,
+                    stop_price=tp_px,
+                    quantity=tp_qty,
+                    client_order_id=use_cid,
+                    position_side=ps,
+                )
+                oid_tp = _order_id(tp_resp)
+                row_tp = self.store.record_order(
+                    pid,
+                    order_kind=label,
+                    order_id=oid_tp,
+                    client_order_id=use_cid,
+                    side=exit_order_side_for_position(side),
+                    order_type="TAKE_PROFIT_MARKET",
+                    quantity=tp_qty,
+                    stop_price=tp_px,
+                    status="NEW",
+                )
+                if oid_tp:
+                    self.store.update_order_exchange_id(row_tp, oid_tp)
+                if use_cid:
+                    cids.add(use_cid)
+                level_results.append({"level": label, "placed": True, "order_id": oid_tp})
+            except Exception as exc:
+                self.store.append_event(pid, f"{label}_ENSURE_FAILED", {"error": str(exc)})
+                level_results.append({"level": label, "error": str(exc)})
+        return {"position_id": pid, "tp_levels": level_results}
+
     def ensure_protection(self, symbol: str) -> dict[str, Any]:
-        """If DB has OPEN and exchange has size but no reduce-only STOP_MARKET, place SL."""
+        """Backfill TP/SL from signals if needed; ensure reduce-only SL; ensure TP ladders."""
         if not self.config.live_order_enabled:
             return {"ok": True, "skipped": "live_off"}
         symbol_u = symbol.upper()
+        self._backfill_open_targets_from_active_signals(symbol_u)
         rows = self.store.list_open_positions_for_symbol(symbol_u)
         if not rows:
             return {"ok": True, "skipped": "no_db_open"}
         results: list[dict[str, Any]] = []
+        tp_results: list[dict[str, Any]] = []
         for row in rows:
             pst = row["position_side_tag"]
             if self.config.hedge_position_mode and pst:
@@ -271,78 +501,93 @@ class PositionManager:
             if abs(amt) < 1e-12:
                 results.append({"position_id": int(row["id"]), "skipped": "flat"})
                 continue
-            if _sl_on_book_for_row(self.client, symbol_u, self.config, pst):
+            open_orders = self.client.get_open_orders(symbol_u) or []
+            if not isinstance(open_orders, list):
+                open_orders = []
+            side_row = str(row["side"]).upper()
+            if stop_loss_reduce_on_book_from_orders(
+                open_orders,
+                self.config,
+                position_side=side_row,
+                position_side_tag=pst,
+            ):
                 results.append({"position_id": int(row["id"]), "skipped": "has_sl"})
-                continue
-            side = str(row["side"]).upper()
-            exec_qty = round_quantity(self.client, symbol_u, abs(amt))
-            if exec_qty <= 0:
-                results.append({"position_id": int(row["id"]), "error": "qty_zero"})
-                continue
-            sl_raw = row["stop_loss_price"]
-            emergency = False
-            if sl_raw is None:
-                emergency = True
-                pct = float(os.getenv("RECOVERY_EMERGENCY_SL_PCT", "5")) / 100.0
-                try:
-                    entry = float(
-                        self.client.get_position(symbol_u).get("entryPrice")
-                        or row["entry_price"]
-                        or 0
-                    )
-                except (TypeError, ValueError):
-                    entry = 0.0
-                if side == "LONG":
-                    sl_px = round_price(
-                        self.client, symbol_u, entry * (1.0 - pct) if entry > 0 else entry
-                    )
-                else:
-                    sl_px = round_price(
-                        self.client, symbol_u, entry * (1.0 + pct) if entry > 0 else entry
-                    )
             else:
-                try:
-                    sl_px = round_price(self.client, symbol_u, float(sl_raw))
-                except (TypeError, ValueError):
-                    results.append({"position_id": int(row["id"]), "error": "invalid_sl"})
-                    continue
-            try:
-                sid = row["source_signal_id"]
-                signal_id = int(sid) if sid is not None else 0
-            except (TypeError, ValueError):
-                signal_id = 0
-            cid_sl = (f"E{signal_id}SL"[:36]) if signal_id else None
-            ps = _position_side_param(self.config, side)
-            try:
-                sl_resp = self.client.place_stop_market_reduce_only(
-                    symbol=symbol_u,
-                    side=side,
-                    stop_price=sl_px,
-                    quantity=exec_qty,
-                    client_order_id=cid_sl,
-                    position_side=ps,
-                )
-            except Exception as exc:
-                self.store.append_event(int(row["id"]), "SL_ENSURE_FAILED", {"error": str(exc)})
-                results.append({"position_id": int(row["id"]), "error": str(exc)})
-                continue
-            oid_sl = _order_id(sl_resp)
-            self.store.record_order(
-                int(row["id"]),
-                order_kind="SL",
-                order_id=oid_sl,
-                client_order_id=cid_sl,
-                side="SELL" if side == "LONG" else "BUY",
-                order_type="STOP_MARKET",
-                quantity=exec_qty,
-                stop_price=sl_px,
-                status="NEW",
-            )
-            if emergency:
-                self.store.update_stop_loss_price(int(row["id"]), sl_px)
-            self.store.append_event(int(row["id"]), "SL_ENSURE_PLACED", {"emergency": emergency})
-            results.append({"position_id": int(row["id"]), "placed": True, "emergency_sl": emergency})
-        return {"ok": True, "results": results}
+                side = side_row
+                exec_qty = round_quantity(self.client, symbol_u, abs(amt))
+                if exec_qty <= 0:
+                    results.append({"position_id": int(row["id"]), "error": "qty_zero"})
+                else:
+                    sl_raw = row["stop_loss_price"]
+                    emergency = False
+                    if sl_raw is None:
+                        emergency = True
+                        pct = float(os.getenv("RECOVERY_EMERGENCY_SL_PCT", "5")) / 100.0
+                        try:
+                            entry = float(
+                                self.client.get_position(symbol_u).get("entryPrice")
+                                or row["entry_price"]
+                                or 0
+                            )
+                        except (TypeError, ValueError):
+                            entry = 0.0
+                        if side == "LONG":
+                            sl_px = round_price(
+                                self.client, symbol_u, entry * (1.0 - pct) if entry > 0 else entry
+                            )
+                        else:
+                            sl_px = round_price(
+                                self.client, symbol_u, entry * (1.0 + pct) if entry > 0 else entry
+                            )
+                    else:
+                        try:
+                            sl_px = round_price(self.client, symbol_u, float(sl_raw))
+                        except (TypeError, ValueError):
+                            results.append({"position_id": int(row["id"]), "error": "invalid_sl"})
+                            sl_px = None
+                    if sl_px is not None:
+                        try:
+                            sid = row["source_signal_id"]
+                            signal_id = int(sid) if sid is not None else 0
+                        except (TypeError, ValueError):
+                            signal_id = 0
+                        cid_sl = (f"E{signal_id}SL"[:36]) if signal_id else None
+                        ps = _position_side_param(self.config, side)
+                        try:
+                            sl_resp = self.client.place_stop_market_reduce_only(
+                                symbol=symbol_u,
+                                side=side,
+                                stop_price=sl_px,
+                                quantity=exec_qty,
+                                client_order_id=cid_sl,
+                                position_side=ps,
+                            )
+                        except Exception as exc:
+                            self.store.append_event(int(row["id"]), "SL_ENSURE_FAILED", {"error": str(exc)})
+                            results.append({"position_id": int(row["id"]), "error": str(exc)})
+                        else:
+                            oid_sl = _order_id(sl_resp)
+                            self.store.record_order(
+                                int(row["id"]),
+                                order_kind="SL",
+                                order_id=oid_sl,
+                                client_order_id=cid_sl,
+                                side="SELL" if side == "LONG" else "BUY",
+                                order_type="STOP_MARKET",
+                                quantity=exec_qty,
+                                stop_price=sl_px,
+                                status="NEW",
+                            )
+                            if emergency:
+                                self.store.update_stop_loss_price(int(row["id"]), sl_px)
+                            self.store.append_event(
+                                int(row["id"]), "SL_ENSURE_PLACED", {"emergency": emergency}
+                            )
+                            results.append(
+                                {"position_id": int(row["id"]), "placed": True, "emergency_sl": emergency}
+                            )
+            tp_results.append(self._ensure_take_profits_for_row(symbol_u, row, amt, open_orders))
+        return {"ok": True, "results": results, "tp": tp_results}
 
     def open_from_signal(
         self,
@@ -724,14 +969,19 @@ class PositionManager:
                 clear_execution_health(pend_key, db_path=self.store.db_path)
             return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px, "scale_in": True}
 
-        cids_open, has_sl_book = _open_order_cids_and_sl_flag(self.client, symbol)
-        if cid_sl in cids_open or (has_sl_book and not self.config.hedge_position_mode):
-            if cid_sl not in cids_open and has_sl_book:
+        raw_orders = self.client.get_open_orders(symbol) or []
+        if not isinstance(raw_orders, list):
+            raw_orders = []
+        cids_open = _open_order_client_ids_from_orders(raw_orders)
+        has_sl_strict = stop_loss_reduce_on_book_from_orders(
+            raw_orders,
+            self.config,
+            position_side=side,
+            position_side_tag=pos_tag,
+        )
+        if cid_sl in cids_open or has_sl_strict:
+            if cid_sl not in cids_open and has_sl_strict:
                 self.store.append_event(pos_id, "SL_ALREADY_ON_BOOK", {})
-        elif self.config.hedge_position_mode and _sl_on_book_for_row(
-            self.client, symbol, self.config, pos_tag
-        ):
-            self.store.append_event(pos_id, "SL_ALREADY_ON_BOOK", {})
         else:
             try:
                 sl_resp = self.client.place_stop_market_reduce_only(
@@ -772,7 +1022,10 @@ class PositionManager:
         valid_tps = [(lab, px, w) for lab, px, w in tps if px is not None and w > 0]
         wsum = sum(w for _, _, w in valid_tps)
         placed_qty = 0.0
-        cids_open, _ = _open_order_cids_and_sl_flag(self.client, symbol)
+        raw_orders_tp = self.client.get_open_orders(symbol) or []
+        if not isinstance(raw_orders_tp, list):
+            raw_orders_tp = []
+        cids_open = _open_order_client_ids_from_orders(raw_orders_tp)
         for j, (label, tp_raw, w) in enumerate(valid_tps):
             if j == len(valid_tps) - 1:
                 tp_qty = round_quantity(self.client, symbol, exec_qty - placed_qty)

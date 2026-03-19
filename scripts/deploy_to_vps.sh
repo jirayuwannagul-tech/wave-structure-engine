@@ -39,6 +39,14 @@ if systemctl cat "${SYSTEMD_SERVICE}.service" &>/dev/null; then
   sudo systemctl restart "${SYSTEMD_SERVICE}" || true
   sudo systemctl --no-pager status "${SYSTEMD_SERVICE}" || true
 fi
+# Optional: place SL/TP on already-open positions (no market close). Set ENSURE_PROTECTIONS=1 when calling this script.
+if [[ "${ENSURE_PROTECTIONS:-0}" == "1" ]] && [[ -d .venv ]]; then
+  echo ">>> ENSURE_PROTECTIONS=1: running scripts/ensure_position_protections.py"
+  set -a
+  [[ -f .env ]] && source .env
+  set +a
+  .venv/bin/python scripts/ensure_position_protections.py || true
+fi
 echo ">>> Done. HEAD: \$(git log -1 --oneline)"
 EOF
 

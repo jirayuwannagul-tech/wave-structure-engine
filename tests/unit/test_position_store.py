@@ -37,3 +37,25 @@ def test_position_store_creates_tables_and_open_close(temp_store: PositionStore)
     with temp_store._connect() as conn:
         n = conn.execute("SELECT COUNT(*) FROM exchange_position_events WHERE position_id = ?", (pid,)).fetchone()[0]
     assert n >= 2
+
+
+def test_list_open_symbols_distinct(temp_store: PositionStore):
+    temp_store.create_position(
+        symbol="ethusdt",
+        side="LONG",
+        source_signal_id=10,
+        signal_hash="a",
+        quantity=1.0,
+        entry_price=1.0,
+        entry_order_id=1,
+    )
+    temp_store.create_position(
+        symbol="BTCUSDT",
+        side="SHORT",
+        source_signal_id=11,
+        signal_hash="b",
+        quantity=1.0,
+        entry_price=1.0,
+        entry_order_id=2,
+    )
+    assert temp_store.list_open_symbols() == ["BTCUSDT", "ETHUSDT"]
