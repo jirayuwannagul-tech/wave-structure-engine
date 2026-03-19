@@ -1,5 +1,6 @@
 import os
 import tempfile
+from dataclasses import replace
 
 import pytest
 
@@ -125,6 +126,66 @@ def test_close_position_market_alias(temp_pm: PositionManager):
     temp_pm.open_from_signal(signal_row)
     assert temp_pm.close_position_market("BTCUSDT", "TIME_STOP_HIT")["ok"] is True
     assert temp_pm.store.get_open_position("BTCUSDT") is None
+
+
+def test_signal_price_long_uses_limit_when_mark_above_entry(temp_pm: PositionManager):
+    client = temp_pm.client
+    client.seed_mark_price("BTCUSDT", 52000.0)
+    pm = PositionManager(client, replace(temp_pm.config, entry_style="signal_price"), temp_pm.store)
+    signal_row = {
+        "id": 99,
+        "symbol": "BTCUSDT",
+        "timeframe": "1D",
+        "side": "LONG",
+        "entry_price": 50000.0,
+        "stop_loss": 49000.0,
+        "tp1": 51000.0,
+        "tp2": 52000.0,
+        "tp3": 53000.0,
+        "signal_hash": "h99",
+    }
+    out = pm.open_from_signal(signal_row)
+    assert out["ok"] is True
+    with pm.store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT order_type FROM exchange_position_orders
+            WHERE order_kind='ENTRY' AND position_id=?
+            """,
+            (out["position_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "LIMIT"
+
+
+def test_signal_price_long_uses_stop_when_mark_below_entry(temp_pm: PositionManager):
+    client = temp_pm.client
+    client.seed_mark_price("BTCUSDT", 48000.0)
+    pm = PositionManager(client, replace(temp_pm.config, entry_style="signal_price"), temp_pm.store)
+    signal_row = {
+        "id": 100,
+        "symbol": "BTCUSDT",
+        "timeframe": "1D",
+        "side": "LONG",
+        "entry_price": 50000.0,
+        "stop_loss": 49000.0,
+        "tp1": 51000.0,
+        "tp2": 52000.0,
+        "tp3": 53000.0,
+        "signal_hash": "h100",
+    }
+    out = pm.open_from_signal(signal_row)
+    assert out["ok"] is True
+    with pm.store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT order_type FROM exchange_position_orders
+            WHERE order_kind='ENTRY' AND position_id=?
+            """,
+            (out["position_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "STOP_MARKET"
 
 
 def test_entry_duplicate_response_reads_position_from_exchange():

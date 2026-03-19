@@ -24,6 +24,14 @@ OPEN_SIGNAL_STATUSES = {
     "PARTIAL_TP2",
 }
 
+SYNCABLE_SIGNAL_STATUSES = {
+    "ACTIVE",
+    "PARTIAL_TP1",
+    "PARTIAL_TP2",
+    "TP3_HIT",
+    "STOPPED",
+}
+
 _OPEN_STATUS_SQL = ",".join(f"'{s}'" for s in sorted(OPEN_SIGNAL_STATUSES))
 
 
@@ -419,6 +427,25 @@ class WaveRepository:
 
         with self._connect() as conn:
             return conn.execute(query, params).fetchall()
+
+    def fetch_recent_syncable_signals(self, symbol: str, limit: int = 20) -> list[sqlite3.Row]:
+        """Fetch recent signals that can be safely upserted to Google Sheets.
+
+        This is used to recover sheet state if lifecycle tracking missed an event.
+        """
+        limit = max(1, int(limit))
+        in_sql = ",".join("?" for _ in sorted(SYNCABLE_SIGNAL_STATUSES))
+        params: list = [symbol.upper(), *sorted(SYNCABLE_SIGNAL_STATUSES), limit]
+        query = f"""
+            SELECT *
+            FROM signals
+            WHERE symbol = ?
+              AND status IN ({in_sql})
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            return conn.execute(query, tuple(params)).fetchall()
 
     def fetch_signal_events(self, signal_id: int) -> list[sqlite3.Row]:
         with self._connect() as conn:

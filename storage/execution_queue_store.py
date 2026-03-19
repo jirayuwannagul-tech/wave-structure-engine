@@ -120,6 +120,20 @@ class ExecutionQueueStore:
                 (now, int(task_id)),
             )
 
+    def mark_defer(self, task_id: int, *, backoff_seconds: float, note: str = "") -> None:
+        """Reschedule without incrementing attempts (e.g. limit entry still resting)."""
+        now_dt = datetime.now(UTC).replace(microsecond=0)
+        next_dt = now_dt + timedelta(seconds=float(backoff_seconds))
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE execution_queue
+                SET status='RETRY', updated_at=?, next_run_at=?, last_error=?
+                WHERE id=?
+                """,
+                (now_dt.isoformat(), next_dt.isoformat(), str(note)[:500], int(task_id)),
+            )
+
     def mark_retry(self, task_id: int, *, error: str, backoff_seconds: float) -> None:
         now_dt = datetime.now(UTC).replace(microsecond=0)
         next_dt = now_dt + timedelta(seconds=float(backoff_seconds))

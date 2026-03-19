@@ -43,6 +43,7 @@ class FakeBinanceFuturesClient:
         self._market_cids_seen: set[str] = set()
         self._fail_dup_cids = fail_duplicate_entry_client_ids or frozenset()
         self._hedge: dict[str, dict[str, float]] = {}
+        self._mark_price: dict[str, float] = {}
 
     def get_position_leg_amt(self, symbol: str, position_side: str) -> float:
         sym = symbol.upper()
@@ -75,6 +76,13 @@ class FakeBinanceFuturesClient:
     def get_exchange_info(self, symbol: str | None = None) -> dict:
         sym = (symbol or "BTCUSDT").upper()
         return {"symbols": [_symbol_exchange_block(sym)]}
+
+    def get_mark_price(self, symbol: str) -> float | None:
+        sym = symbol.upper()
+        return float(self._mark_price.get(sym, 50000.0))
+
+    def seed_mark_price(self, symbol: str, price: float) -> None:
+        self._mark_price[symbol.upper()] = float(price)
 
     def get_position_risk(self) -> list[dict]:
         out: list[dict] = []
@@ -156,14 +164,15 @@ class FakeBinanceFuturesClient:
         resp.json = _json  # type: ignore[method-assign]
         raise requests.HTTPError(response=resp)
 
-    def place_market_order(
+    def _apply_entry_fill(
         self,
         *,
         symbol: str,
         side: str,
         quantity: float,
-        client_order_id: str | None = None,
-        position_side: str | None = None,
+        client_order_id: str | None,
+        position_side: str | None,
+        fill_price: float,
     ) -> dict[str, Any]:
         sym = symbol.upper()
         q = float(quantity)
@@ -173,7 +182,7 @@ class FakeBinanceFuturesClient:
         if cid:
             self._market_cids_seen.add(cid)
         is_long = side.upper() == "LONG"
-        ep = 50000.0
+        ep = float(fill_price)
         if position_side:
             self._hedge.setdefault(sym, {"LONG": 0.0, "SHORT": 0.0})
             ps = str(position_side).upper()
@@ -192,7 +201,69 @@ class FakeBinanceFuturesClient:
             if sym not in self._entry or abs(self._amt[sym]) < 1e-12:
                 self._entry[sym] = ep
         oid = self._alloc_oid()
-        return {"orderId": oid, "executedQty": str(q), "avgPrice": str(self._entry.get(sym, ep))}
+        return {
+            "orderId": oid,
+            "executedQty": str(q),
+            "avgPrice": str(ep),
+            "status": "FILLED",
+        }
+
+    def place_market_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        client_order_id: str | None = None,
+        position_side: str | None = None,
+    ) -> dict[str, Any]:
+        return self._apply_entry_fill(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            client_order_id=client_order_id,
+            position_side=position_side,
+            fill_price=50000.0,
+        )
+
+    def place_limit_entry_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        client_order_id: str | None = None,
+        position_side: str | None = None,
+        time_in_force: str = "GTC",
+    ) -> dict[str, Any]:
+        return self._apply_entry_fill(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            client_order_id=client_order_id,
+            position_side=position_side,
+            fill_price=float(price),
+        )
+
+    def place_stop_market_entry_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        client_order_id: str | None = None,
+        position_side: str | None = None,
+    ) -> dict[str, Any]:
+        return self._apply_entry_fill(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            client_order_id=client_order_id,
+            position_side=position_side,
+            fill_price=float(stop_price),
+        )
 
     def place_stop_market_reduce_only(
         self,

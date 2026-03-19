@@ -10,6 +10,13 @@ No extra **signal filters** and no change to wave/signal **logic** — only exec
 | `PORTFOLIO_MAX_RISK_FRACTION` | `1.0` | If `≤ 0.999`, sum of *(estimated risk of all OPEN rows + new trade)* must be ≤ `equity × fraction`. Risk per row ≈ `qty × \|entry − stop\|`. Set e.g. `0.35` for ~35% equity cap. |
 | `PORTFOLIO_PAUSE_NEW_ENTRIES` | `0` | If `1` / `true`, all new opens return `skipped` (soft). |
 
+## Entry price vs Binance
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `BINANCE_ENTRY_STYLE` | `market` | `market` — open with **MARKET** (fast; fill price can differ from signal `entry_price`). `signal_price` — place **LIMIT** or **STOP_MARKET** at the signal entry (from mark vs entry), then **SL/TP only after fill**. |
+| `BINANCE_ENTRY_POLL_SECONDS` | `8` | When the queue runs `OPEN_FROM_SIGNAL` and entry is still resting, reschedule with this delay (does **not** increment failure attempts). |
+
 ## Multi-position
 
 - **One-way (default)** — At most one OPEN position per symbol (unchanged behaviour).

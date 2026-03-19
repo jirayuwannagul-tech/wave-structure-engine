@@ -231,6 +231,14 @@ def _process_execution_queue(repository: WaveRepository) -> None:
                 out = pm.open_from_signal(sig)
                 if not out.get("ok"):
                     raise RuntimeError(str(out))
+                if out.get("awaiting_entry_fill"):
+                    poll_sec = float(os.getenv("BINANCE_ENTRY_POLL_SECONDS", "8") or "8")
+                    queue.mark_defer(
+                        tid,
+                        backoff_seconds=max(2.0, poll_sec),
+                        note="awaiting_entry_fill",
+                    )
+                    continue
                 if out.get("skipped"):
                     record_execution_health(
                         "execution:last_queue_open_skipped",
@@ -876,6 +884,11 @@ def run_orchestrator(
             if signal_row is not None:
                 _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
         _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
+        # Recovery sync (startup only): upsert a small window of syncable rows.
+        # Kept small to avoid blocking service startup on Google Sheets latency.
+        if hasattr(repository, "fetch_recent_syncable_signals"):
+            for row in repository.fetch_recent_syncable_signals(runtime.symbol, limit=3):
+                safe_sync_signal(row, sheets_logger)
 
     print("Starting trading orchestrator...")
     for runtime in runtimes.values():

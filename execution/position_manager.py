@@ -15,7 +15,11 @@ from execution.exchange_info import (
     round_quantity_clamped,
     validate_order,
 )
-from execution.execution_health import record_execution_health
+from execution.execution_health import (
+    clear_execution_health,
+    read_execution_health,
+    record_execution_health,
+)
 from execution.models import ExecutionConfig
 from execution.portfolio_manager import evaluate_new_position
 from execution.signal_mapper import build_order_intent_from_signal
@@ -182,6 +186,43 @@ def _entry_duplicate_response(
     }
 
 
+def _pending_entry_health_key(signal_id: int) -> str:
+    return f"execution:pending_entry:{int(signal_id)}"
+
+
+def _entry_response_status(resp: Any) -> str:
+    if not isinstance(resp, dict):
+        return ""
+    return str(resp.get("status") or "").upper()
+
+
+def _normalize_filled_entry_from_query(q: dict[str, Any]) -> dict[str, Any]:
+    eq = q.get("executedQty")
+    if eq in (None, "", "0"):
+        eq = q.get("cumQty")
+    ap = q.get("avgPrice") or q.get("price")
+    return {
+        "orderId": q.get("orderId"),
+        "executedQty": str(eq or 0),
+        "avgPrice": ap,
+        "status": "FILLED",
+    }
+
+
+def _signal_price_entry_kind(side: str, mark: float, entry: float) -> tuple[str, float]:
+    """Pick LIMIT vs STOP_MARKET so the order rests until price reaches *entry* (rounded)."""
+    ep = float(entry)
+    m = float(mark)
+    rel = max(1e-12, abs(ep) * 1e-9)
+    if side.upper() == "LONG":
+        if m > ep + rel:
+            return "LIMIT", ep
+        return "STOP_MARKET", ep
+    if m < ep - rel:
+        return "LIMIT", ep
+    return "STOP_MARKET", ep
+
+
 def _exchange_open_without_matching_db(
     client: BinanceFuturesClient,
     store: PositionStore,
@@ -308,7 +349,11 @@ class PositionManager:
         signal_row: Any,
         account_equity_usdt: float | None = None,
     ) -> dict[str, Any]:
-        """Market entry + STOP_MARKET SL + TAKE_PROFIT_MARKET TP1/2/3. No strategy filters."""
+        """Open from signal: MARKET (default) or signal entry (LIMIT / STOP_MARKET) + SL/TP.
+
+        When ``entry_style`` is ``signal_price``, entry rests until fill; caller should poll
+        (execution queue uses ``mark_defer``) and SL/TP are placed only after fill.
+        """
         signal_id = int(signal_row["id"])
         symbol = str(signal_row["symbol"]).upper()
 
@@ -395,41 +440,144 @@ class PositionManager:
         except Exception as exc:
             return {"ok": False, "error": f"margin_leverage:{exc}"}
 
+        use_signal_price = str(getattr(self.config, "entry_style", "market") or "market").lower() == "signal_price"
+        pend_key = _pending_entry_health_key(signal_id) if use_signal_price else ""
         entry_resp: dict | None = None
-        try:
-            entry_resp = self.client.place_market_order(
-                symbol=symbol,
-                side=side,
-                quantity=qty,
-                client_order_id=cid_entry,
-                position_side=pst,
-            )
-        except requests.HTTPError as exc:
-            entry_resp = _entry_duplicate_response(
-                exc,
-                self.client,
-                symbol,
-                side,
-                qty,
-                entry_px,
-                hedge=self.config.hedge_position_mode,
-            )
-            if entry_resp is None:
-                traceback.print_exc()
-                return {"ok": False, "error": f"entry_failed:{exc}"}
-        except Exception as exc:
-            entry_resp = _entry_duplicate_response(
-                exc,
-                self.client,
-                symbol,
-                side,
-                qty,
-                entry_px,
-                hedge=self.config.hedge_position_mode,
-            )
-            if entry_resp is None:
-                traceback.print_exc()
-                return {"ok": False, "error": f"entry_failed:{exc}"}
+        entry_order_label = "MARKET"
+
+        if use_signal_price and pend_key:
+            pend = read_execution_health(pend_key, db_path=self.store.db_path)
+            oid_pend = pend.get("order_id") if pend else None
+            if oid_pend is not None:
+                try:
+                    oid_i = int(oid_pend)
+                except (TypeError, ValueError):
+                    oid_i = None
+                if oid_i is not None:
+                    try:
+                        q = self.client.query_order(symbol=symbol, order_id=oid_i)
+                    except Exception as exc:
+                        return {"ok": False, "error": f"pending_entry_query:{exc}"}
+                    if isinstance(q, dict):
+                        st = _entry_response_status(q)
+                        if st in ("NEW", "PARTIALLY_FILLED"):
+                            return {
+                                "ok": True,
+                                "awaiting_entry_fill": True,
+                                "order_id": oid_i,
+                                "status": st,
+                            }
+                        if st == "FILLED":
+                            clear_execution_health(pend_key, db_path=self.store.db_path)
+                            entry_resp = _normalize_filled_entry_from_query(q)
+                            entry_order_label = str((pend or {}).get("order_type") or "LIMIT")
+                        elif st in ("CANCELED", "EXPIRED", "REJECTED"):
+                            clear_execution_health(pend_key, db_path=self.store.db_path)
+                            entry_resp = None
+                        else:
+                            return {"ok": False, "error": f"pending_entry_unknown_status:{st}"}
+
+        if entry_resp is None:
+            try:
+                if use_signal_price:
+                    mark = self.client.get_mark_price(symbol)
+                    if mark is None or mark <= 0:
+                        pos_hint = self.client.get_position(symbol)
+                        mark = None
+                        if pos_hint:
+                            for k in ("markPrice", "lastPrice", "indexPrice"):
+                                v = pos_hint.get(k)
+                                if v not in (None, "", "0"):
+                                    try:
+                                        mark = float(v)
+                                        break
+                                    except (TypeError, ValueError):
+                                        pass
+                    if mark is None or mark <= 0:
+                        return {"ok": False, "error": "missing_mark_price_for_signal_entry"}
+
+                    ex_px = round_price(self.client, symbol, float(entry_px))
+                    kind, trig = _signal_price_entry_kind(side, float(mark), float(ex_px))
+                    trig_r = round_price(self.client, symbol, float(trig))
+
+                    if kind == "LIMIT":
+                        entry_resp = self.client.place_limit_entry_order(
+                            symbol=symbol,
+                            side=side,
+                            quantity=qty,
+                            price=float(trig_r),
+                            client_order_id=cid_entry,
+                            position_side=pst,
+                        )
+                        entry_order_label = "LIMIT"
+                    else:
+                        entry_resp = self.client.place_stop_market_entry_order(
+                            symbol=symbol,
+                            side=side,
+                            quantity=qty,
+                            stop_price=float(trig_r),
+                            client_order_id=cid_entry,
+                            position_side=pst,
+                        )
+                        entry_order_label = "STOP_MARKET"
+                else:
+                    entry_resp = self.client.place_market_order(
+                        symbol=symbol,
+                        side=side,
+                        quantity=qty,
+                        client_order_id=cid_entry,
+                        position_side=pst,
+                    )
+                    entry_order_label = "MARKET"
+            except requests.HTTPError as exc:
+                entry_resp = _entry_duplicate_response(
+                    exc,
+                    self.client,
+                    symbol,
+                    side,
+                    qty,
+                    entry_px,
+                    hedge=self.config.hedge_position_mode,
+                )
+                if entry_resp is None:
+                    traceback.print_exc()
+                    return {"ok": False, "error": f"entry_failed:{exc}"}
+            except Exception as exc:
+                entry_resp = _entry_duplicate_response(
+                    exc,
+                    self.client,
+                    symbol,
+                    side,
+                    qty,
+                    entry_px,
+                    hedge=self.config.hedge_position_mode,
+                )
+                if entry_resp is None:
+                    traceback.print_exc()
+                    return {"ok": False, "error": f"entry_failed:{exc}"}
+
+        if use_signal_price and pend_key:
+            st_now = _entry_response_status(entry_resp)
+            if st_now in ("NEW", "PARTIALLY_FILLED"):
+                oid_new = _order_id(entry_resp)
+                record_execution_health(
+                    pend_key,
+                    {
+                        "order_id": oid_new,
+                        "symbol": symbol,
+                        "client_order_id": cid_entry,
+                        "order_type": entry_order_label,
+                        "status": st_now,
+                    },
+                    db_path=self.store.db_path,
+                )
+                return {
+                    "ok": True,
+                    "awaiting_entry_fill": True,
+                    "order_id": oid_new,
+                    "order_type": entry_order_label,
+                    "status": st_now,
+                }
 
         exec_qty, avg_px = _executed_qty_price(entry_resp, qty, entry_px)
         exec_qty = round_quantity(self.client, symbol, exec_qty)
@@ -495,7 +643,7 @@ class PositionManager:
             order_id=oid_entry,
             client_order_id=cid_entry,
             side="BUY" if side == "LONG" else "SELL",
-            order_type="MARKET",
+            order_type=entry_order_label,
             quantity=exec_qty,
             stop_price=None,
             status="FILLED",
@@ -572,6 +720,8 @@ class PositionManager:
                 {"symbol": symbol, "signal_id": signal_id, "position_id": pos_id, "scale_in": True},
                 db_path=self.store.db_path,
             )
+            if use_signal_price and pend_key:
+                clear_execution_health(pend_key, db_path=self.store.db_path)
             return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px, "scale_in": True}
 
         cids_open, has_sl_book = _open_order_cids_and_sl_flag(self.client, symbol)
@@ -674,6 +824,8 @@ class PositionManager:
             {"symbol": symbol, "signal_id": signal_id, "position_id": pos_id},
             db_path=self.store.db_path,
         )
+        if use_signal_price and pend_key:
+            clear_execution_health(pend_key, db_path=self.store.db_path)
         return {"ok": True, "position_id": pos_id, "executed_qty": exec_qty, "avg_price": avg_px}
 
     def close_for_signal(self, signal_row: Any, reason: str) -> dict[str, Any]:

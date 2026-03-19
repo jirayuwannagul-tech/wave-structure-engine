@@ -36,6 +36,8 @@ class ExecutionConfig:
     drawdown_start_fraction: float = 0.10
     drawdown_full_fraction: float = 0.30
     drawdown_min_risk_multiplier: float = 0.25
+    # Entry execution: "market" (immediate, price may slip) or "signal_price" (LIMIT / STOP at signal entry).
+    entry_style: str = "market"
 
     @property
     def credentials_ready(self) -> bool:

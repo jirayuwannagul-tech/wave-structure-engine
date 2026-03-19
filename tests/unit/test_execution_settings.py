@@ -28,3 +28,13 @@ def test_load_execution_config_from_env(monkeypatch):
     assert config.tp2_size_pct == 0.3
     assert config.tp3_size_pct == 0.3
     assert config.tp_allocation_total == 1.0
+    assert config.entry_style == "market"
+
+
+def test_entry_style_signal_price(monkeypatch):
+    monkeypatch.setenv("BINANCE_TP1_SIZE_PCT", "0.4")
+    monkeypatch.setenv("BINANCE_TP2_SIZE_PCT", "0.3")
+    monkeypatch.setenv("BINANCE_TP3_SIZE_PCT", "0.3")
+    monkeypatch.setenv("BINANCE_ENTRY_STYLE", "signal_price")
+    cfg = load_execution_config()
+    assert cfg.entry_style == "signal_price"

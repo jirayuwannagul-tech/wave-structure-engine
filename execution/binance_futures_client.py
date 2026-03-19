@@ -154,6 +154,46 @@ class BinanceFuturesClient:
         params = {"symbol": symbol.upper()} if symbol else None
         return self._request("GET", "/fapi/v1/exchangeInfo", params=params or {}, signed=False)
 
+    def get_mark_price(self, symbol: str) -> float | None:
+        """Latest mark price from premium index (USDT-M)."""
+        data = self._request(
+            "GET",
+            "/fapi/v1/premiumIndex",
+            params={"symbol": symbol.upper()},
+            signed=False,
+        )
+        if not isinstance(data, dict):
+            return None
+        mp = data.get("markPrice")
+        try:
+            f = float(mp) if mp not in (None, "", "0") else None
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def set_margin_type(self, symbol: str, margin_type: str) -> Any:
+        """Set margin type (ISOLATED/CROSSED). Safe to call repeatedly."""
+        self._ensure_trading_enabled()
+        params = {"symbol": symbol.upper(), "marginType": str(margin_type or "").upper()}
+        try:
+            return self._request("POST", "/fapi/v1/marginType", params=params, signed=True)
+        except requests.HTTPError as exc:
+            # Binance returns an error when margin type is already set.
+            try:
+                payload = exc.response.json() if exc.response is not None else {}
+            except Exception:
+                payload = {}
+            msg = str(payload.get("msg") or "")
+            if "No need to change margin type" in msg:
+                return {"ok": True, "skipped": "margin_type_already_set", "msg": msg}
+            raise
+
+    def set_leverage(self, symbol: str, leverage: int) -> Any:
+        """Set leverage. Safe to call repeatedly."""
+        self._ensure_trading_enabled()
+        params = {"symbol": symbol.upper(), "leverage": int(leverage)}
+        return self._request("POST", "/fapi/v1/leverage", params=params, signed=True)
+
     def get_open_orders(self, symbol: str | None = None) -> Any:
         params: dict[str, str] = {}
         if symbol:
@@ -239,6 +279,61 @@ class BinanceFuturesClient:
             type_="MARKET",
             quantity=quantity,
             extra_params=None,
+            client_order_id=client_order_id,
+            position_side=ps,
+        )
+
+    def place_limit_entry_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        client_order_id: str | None = None,
+        position_side: str | None = None,
+        time_in_force: str = "GTC",
+    ) -> Any:
+        """GTC limit to open at the signal entry (or better); not reduce-only."""
+        order_side = self._entry_side(side)
+        extra: dict[str, Any] = {
+            "price": price,
+            "timeInForce": str(time_in_force or "GTC").upper(),
+        }
+        ps = str(position_side).upper() if position_side else None
+        return self._place_order(
+            symbol=symbol,
+            side=order_side,
+            type_="LIMIT",
+            quantity=quantity,
+            extra_params=extra,
+            client_order_id=client_order_id,
+            position_side=ps,
+        )
+
+    def place_stop_market_entry_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        client_order_id: str | None = None,
+        position_side: str | None = None,
+    ) -> Any:
+        """STOP_MARKET to open when price reaches entry from the other side (not reduce-only)."""
+        order_side = self._entry_side(side)
+        extra: dict[str, Any] = {
+            "stopPrice": stop_price,
+            "workingType": "CONTRACT_PRICE",
+        }
+        ps = str(position_side).upper() if position_side else None
+        return self._place_order(
+            symbol=symbol,
+            side=order_side,
+            type_="STOP_MARKET",
+            quantity=quantity,
+            extra_params=extra,
             client_order_id=client_order_id,
             position_side=ps,
         )

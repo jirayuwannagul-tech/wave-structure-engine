@@ -63,10 +63,13 @@ def read_execution_health(event_key: str, *, db_path: str | None = None) -> dict
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT created_at, details_json FROM system_events WHERE event_key = ? LIMIT 1",
-            (str(event_key),),
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT created_at, details_json FROM system_events WHERE event_key = ? LIMIT 1",
+                (str(event_key),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
         if row is None:
             return None
         try:
@@ -75,5 +78,22 @@ def read_execution_health(event_key: str, *, db_path: str | None = None) -> dict
             payload = {}
         payload["_created_at"] = row["created_at"]
         return payload
+    finally:
+        conn.close()
+
+
+def clear_execution_health(event_key: str, *, db_path: str | None = None) -> None:
+    """Remove a health marker (e.g. pending entry order after fill or cancel)."""
+    db_path = db_path or os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+    path = Path(db_path)
+    if not path.exists():
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        try:
+            conn.execute("DELETE FROM system_events WHERE event_key = ?", (str(event_key),))
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
     finally:
         conn.close()

@@ -47,6 +47,22 @@ def _normalize_tp_allocations(tp1: float, tp2: float, tp3: float) -> tuple[float
     return float(tp1) * scale, float(tp2) * scale, float(tp3) * scale
 
 
+def _env_entry_style() -> str:
+    raw = (os.getenv("BINANCE_ENTRY_STYLE") or "market").strip().lower()
+    if raw in {"market", "m", "immediate"}:
+        return "market"
+    if raw in {
+        "signal",
+        "signal_price",
+        "entry",
+        "limit",
+        "planned",
+        "plan",
+    }:
+        return "signal_price"
+    return "market"
+
+
 def load_execution_config() -> ExecutionConfig:
     tp1 = _env_float("BINANCE_TP1_SIZE_PCT", 0.40)
     tp2 = _env_float("BINANCE_TP2_SIZE_PCT", 0.30)
@@ -89,4 +105,5 @@ def load_execution_config() -> ExecutionConfig:
         drawdown_start_fraction=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_START_FRACTION", 0.10)),
         drawdown_full_fraction=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_FULL_FRACTION", 0.30)),
         drawdown_min_risk_multiplier=max(0.0, _env_float("PORTFOLIO_DRAWDOWN_MIN_RISK_MULTIPLIER", 0.25)),
+        entry_style=_env_entry_style(),
     )
