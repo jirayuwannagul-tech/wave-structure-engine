@@ -55,6 +55,10 @@ def _signals_entry_only_enabled() -> bool:
     raw = os.getenv("SIGNALS_ENTRY_ONLY")
     if raw is None or str(raw).strip() == "":
         return True
+    # Some VPS setups set the literal string "None" instead of leaving it unset.
+    # Treat that as "not provided" so we keep the intended default behavior.
+    if str(raw).strip().lower() == "none":
+        return True
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
