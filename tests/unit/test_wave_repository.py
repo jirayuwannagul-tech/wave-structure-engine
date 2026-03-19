@@ -297,13 +297,33 @@ def test_signal_gate_blocks_second_plan_until_terminal_exit(tmp_path, monkeypatc
     assert new_row["status"] in {"ACTIVE", "PENDING_ENTRY"}
 
 
-def test_signal_gate_blocks_other_timeframe_by_default_when_enabled(tmp_path, monkeypatch):
+def test_signal_gate_allows_other_timeframe_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
     repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
     id_4h = repo.sync_analysis(_analysis(timeframe="4H", entry=100.0, stop_loss=95.0), current_price=100.5)
     id_1d = repo.sync_analysis(_analysis(timeframe="1D", entry=200.0, stop_loss=190.0), current_price=200.5)
     assert id_4h is not None
-    assert id_1d is None
+    assert id_1d is not None
+
+
+def test_signal_gate_blocks_same_timeframe_after_opposite_structure_exit(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
+    monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=99.0)
+
+    assert first_id is not None
+    assert repo.close_open_signal(
+        first_id,
+        status="STOPPED",
+        close_reason="OPPOSITE_STRUCTURE",
+        current_price=99.5,
+        event_time="2026-03-17T00:00:00+00:00",
+        event_type="OPPOSITE_STRUCTURE_HIT",
+    ) is True
+
+    second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0), current_price=99.0)
+    assert second_id is None
 
 
 def test_exchange_managed_signal_entry_stays_pending_until_exchange_fill(tmp_path, monkeypatch):

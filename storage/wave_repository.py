@@ -74,7 +74,7 @@ def _signals_entry_only_enabled() -> bool:
 def _signal_gate_terminal_exit_enabled() -> bool:
     raw = os.getenv("SIGNAL_GATE_TERMINAL_EXIT")
     if raw is None or str(raw).strip() == "":
-        # Default to one open trade plan per symbol until it reaches a terminal exit.
+        # Default to one effective trade plan per symbol+timeframe until it resolves via SL or TP3.
         return True
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
@@ -781,32 +781,48 @@ class WaveRepository:
             return -1
 
     def _signal_gate_blocks_new(self, conn: sqlite3.Connection, snapshot: dict) -> bool:
-        """When enabled, block INSERT of a new signal until open trades exit via SL or TP3.
+        """When enabled, block a new signal on the same symbol+timeframe until SL or TP3.
 
-        Open = PENDING_ENTRY / ACTIVE / PARTIAL_TP*. Terminal exits (TP3_HIT, STOPPED, etc.)
-        are not open, so a new row is allowed after those.
-
-        - SIGNAL_GATE_TERMINAL_EXIT: master switch.
-        Behavior (when enabled): at most one open signal per symbol (across all timeframes).
-        This enforces: "เหลือแค่ 1 สัญญาณเปิดต่อเหรียญ (ทุก timeframe)" until SL or TP3.
+        We look at the latest non-replaced lifecycle row for that symbol+timeframe. A new
+        signal is allowed only after the previous effective plan finished via:
+        - TP3_HIT
+        - STOPPED with STOP_LOSS
+        - INVALIDATED with STOP_LOSS_BEFORE_ENTRY
         """
         if not _signal_gate_terminal_exit_enabled():
             return False
 
         sym = (snapshot.get("symbol") or "").strip().upper()
+        timeframe = str(snapshot.get("timeframe") or "").strip().upper()
         if not sym:
+            return False
+        if not timeframe:
             return False
 
         row = conn.execute(
-            f"""
-            SELECT id FROM signals
+            """
+            SELECT id, status, close_reason
+            FROM signals
             WHERE UPPER(TRIM(symbol)) = ?
-              AND status IN ({_OPEN_STATUS_SQL})
+              AND UPPER(TRIM(timeframe)) = ?
+              AND status != 'REPLACED'
+            ORDER BY id DESC
             LIMIT 1
             """,
-            (sym,),
+            (sym, timeframe),
         ).fetchone()
-        return row is not None
+        if row is None:
+            return False
+
+        status = str(row["status"] or "").upper()
+        close_reason = str(row["close_reason"] or "").upper()
+        if status == "TP3_HIT":
+            return False
+        if status == "STOPPED" and close_reason == "STOP_LOSS":
+            return False
+        if status == "INVALIDATED" and close_reason == "STOP_LOSS_BEFORE_ENTRY":
+            return False
+        return True
 
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
         self.record_analysis_snapshot(analysis, current_price=current_price)
