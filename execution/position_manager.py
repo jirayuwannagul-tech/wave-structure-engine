@@ -331,7 +331,13 @@ class PositionManager:
             ]
             if not candidates:
                 continue
-            sig = max(candidates, key=lambda s: int(s["id"]))
+            # Multiple ACTIVE rows for same symbol+side (e.g. LINK): picking max(id) surprises
+            # operators ("why did it jump to signal 27?"). Default: oldest active = min(id).
+            pick = str(os.getenv("POSITION_BACKFILL_SIGNAL_PICK") or "oldest").strip().lower()
+            if pick in {"newest", "max", "latest"}:
+                sig = max(candidates, key=lambda s: int(s["id"]))
+            else:
+                sig = min(candidates, key=lambda s: int(s["id"]))
             pid = int(row["id"])
             updates: dict[str, Any] = {}
             if row["tp1_price"] is None and sig["tp1"] is not None:
