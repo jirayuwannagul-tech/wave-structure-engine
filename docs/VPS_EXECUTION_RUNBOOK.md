@@ -31,6 +31,18 @@ git fetch origin main && git reset --hard origin/main
 sudo systemctl restart elliott-wave-orchestrator
 ```
 
+## 3a. Force exact SL / TP1 / TP2 / TP3 (cancel book orders, rewrite DB, re-place)
+
+Use when Sheet (or you) have the canonical numbers and Binance/DB are wrong.
+
+```bash
+set -a && source .env && set +a
+.venv/bin/python scripts/force_position_protections.py LINKUSDT SHORT \
+  --sl 9.7161 --tp1 9.1964 --tp2 9.12 --tp3 9.0656
+```
+
+`--dry-run` prints levels only. Requires one OPEN row for that `symbol` + `side`.
+
 ## 3. Protections on **already open** positions (no market close)
 
 ```bash
