@@ -12,6 +12,8 @@ class ExecutionConfig:
     api_secret: str | None = None
     recv_window: int = 5000
     risk_per_trade: float = 0.01
+    # If set (e.g. 0.10), position size uses notional ≈ equity * fraction / entry (ignores risk_per_trade for qty).
+    position_notional_fraction: float | None = None
     leverage: int = 1
     margin_type: str = "ISOLATED"
     allow_long: bool = True

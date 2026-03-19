@@ -17,12 +17,19 @@ No extra **signal filters** and no change to wave/signal **logic** — only exec
 | `BINANCE_ENTRY_STYLE` | `market` | `market` — open with **MARKET** (fast; fill price can differ from signal `entry_price`). `signal_price` — place **LIMIT** or **STOP_MARKET** at the signal entry (from mark vs entry), then **SL/TP only after fill**. |
 | `BINANCE_ENTRY_POLL_SECONDS` | `8` | When the queue runs `OPEN_FROM_SIGNAL` and entry is still resting, reschedule with this delay (does **not** increment failure attempts). |
 
-## Multi-position
+## Position sizing
 
-- **One-way (default)** — At most one OPEN position per symbol (unchanged behaviour).
-- **Hedge** — Set `BINANCE_HEDGE_POSITION_MODE=1`. Account must be in **dual-side / hedge** on Binance. Then you can hold **LONG and SHORT** on the same symbol as separate legs (one DB row per leg). Second LONG on the same leg is still blocked (exchange merges adds).
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `BINANCE_RISK_PER_TRADE` | `0.01` | Fraction of **equity** used as **USDT at risk if SL is hit** → `qty = (equity × risk_per_trade) / \|entry − SL\|`. Tight SL ⇒ larger notional (can exceed margin). |
+| `BINANCE_POSITION_NOTIONAL_FRACTION` | *(unset)* | If set (e.g. `0.10`), **notional ≈ equity × fraction** → `qty ≈ (equity × fraction) / entry_price`. Better when you want “~10% of wallet per trade” in contract value terms. |
 
-Orders send `positionSide` when hedge mode is on.
+## Multi-position (one-way vs hedge)
+
+- **One-way (recommended default)** — `BINANCE_HEDGE_POSITION_MODE=false`. Matches Binance **Position mode: One-way**. At most one net position per symbol; **do not** send `positionSide` on orders.
+- **Hedge** — `BINANCE_HEDGE_POSITION_MODE=1` **only if** Binance account is **dual-side / hedge**. Mismatch → **400** on order placement.
+
+Orders send `positionSide` only when hedge mode is on.
 
 ## Close by signal
 

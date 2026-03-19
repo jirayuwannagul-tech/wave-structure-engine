@@ -37,8 +37,17 @@ def build_order_intent_from_signal(
     if side == "SHORT" and stop_loss <= entry_price:
         raise ValueError("SHORT signal requires stop loss above entry.")
 
-    risk_amount_usdt = round(float(account_equity_usdt) * float(config.risk_per_trade), 4)
-    quantity = calculate_order_quantity(entry_price, stop_loss, risk_amount_usdt)
+    eq = float(account_equity_usdt)
+    nf = getattr(config, "position_notional_fraction", None)
+    if nf is not None and float(nf) > 0:
+        notional_usdt = eq * float(nf)
+        quantity = float(notional_usdt) / float(entry_price)
+        quantity = round(quantity, 6)
+        stop_distance = abs(float(entry_price) - float(stop_loss))
+        risk_amount_usdt = round(quantity * stop_distance, 4)
+    else:
+        risk_amount_usdt = round(eq * float(config.risk_per_trade), 4)
+        quantity = calculate_order_quantity(entry_price, stop_loss, risk_amount_usdt)
 
     return OrderIntent(
         symbol=signal_row["symbol"],

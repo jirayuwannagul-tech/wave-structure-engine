@@ -19,6 +19,13 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _env_optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    return float(raw)
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -75,6 +82,10 @@ def load_execution_config() -> ExecutionConfig:
         )
     tp1, tp2, tp3 = _normalize_tp_allocations(tp1, tp2, tp3)
 
+    notional_frac = _env_optional_float("BINANCE_POSITION_NOTIONAL_FRACTION")
+    if notional_frac is not None and notional_frac <= 0:
+        notional_frac = None
+
     return ExecutionConfig(
         enabled=_env_flag("BINANCE_EXECUTION_ENABLED", False),
         live_order_enabled=_env_flag("BINANCE_LIVE_ORDER_ENABLED", False),
@@ -83,6 +94,7 @@ def load_execution_config() -> ExecutionConfig:
         api_secret=os.getenv("BINANCE_FUTURES_API_SECRET"),
         recv_window=_env_int("BINANCE_RECV_WINDOW", 5000),
         risk_per_trade=_env_float("BINANCE_RISK_PER_TRADE", 0.01),
+        position_notional_fraction=notional_frac,
         leverage=_env_int("BINANCE_DEFAULT_LEVERAGE", 1),
         margin_type=(os.getenv("BINANCE_MARGIN_TYPE") or "ISOLATED").upper(),
         allow_long=_env_flag("BINANCE_ALLOW_LONG", True),
