@@ -54,16 +54,47 @@ def _symbols_from_exchange(client: BinanceFuturesClient) -> set[str]:
     return out
 
 
+def _config_diagnostic(cfg) -> dict:
+    """Safe snapshot (no secrets) for debugging why orders are not sent."""
+    return {
+        "BINANCE_EXECUTION_ENABLED": cfg.enabled,
+        "BINANCE_LIVE_ORDER_ENABLED": cfg.live_order_enabled,
+        "BINANCE_USE_TESTNET": cfg.use_testnet,
+        "credentials_ready": cfg.credentials_ready,
+        "KILL_SWITCH": _truthy_kill_switch(),
+    }
+
+
 def main(argv: list[str]) -> int:
     cfg = load_execution_config()
+    diag = _config_diagnostic(cfg)
     if not cfg.enabled:
-        print("Execution is disabled (execution config).", file=sys.stderr)
+        print(
+            "ERROR: BINANCE_EXECUTION_ENABLED is not true — execution layer is off.\n"
+            "Set BINANCE_EXECUTION_ENABLED=1 in .env (same file systemd/orchestrator loads).",
+            file=sys.stderr,
+        )
+        print(json.dumps({"ok": False, "diagnostic": diag}, indent=2))
+        return 1
+    if not cfg.live_order_enabled:
+        print(
+            "ERROR: BINANCE_LIVE_ORDER_ENABLED is not true — SL/TP will NEVER be sent to Binance.\n"
+            "This is the most common reason protective orders do not appear on the exchange.\n"
+            "Set BINANCE_LIVE_ORDER_ENABLED=1 in .env, then restart orchestrator or re-run this script.",
+            file=sys.stderr,
+        )
+        print(json.dumps({"ok": False, "diagnostic": diag}, indent=2))
         return 1
     if not cfg.credentials_ready:
-        print("Binance credentials not ready; set API keys in env.", file=sys.stderr)
+        print(
+            "ERROR: BINANCE_FUTURES_API_KEY / BINANCE_FUTURES_API_SECRET missing or empty.",
+            file=sys.stderr,
+        )
+        print(json.dumps({"ok": False, "diagnostic": diag}, indent=2))
         return 1
     if _truthy_kill_switch():
-        print("KILL_SWITCH is on; abort.", file=sys.stderr)
+        print("ERROR: KILL_SWITCH is on — no orders are allowed.", file=sys.stderr)
+        print(json.dumps({"ok": False, "diagnostic": diag}, indent=2))
         return 1
 
     store = PositionStore()
@@ -86,7 +117,12 @@ def main(argv: list[str]) -> int:
         except Exception as exc:
             results.append({"symbol": sym, "error": str(exc)})
 
-    print(json.dumps({"ok": True, "symbols": sorted(syms), "results": results}, indent=2))
+    print(
+        json.dumps(
+            {"ok": True, "diagnostic": diag, "symbols": sorted(syms), "results": results},
+            indent=2,
+        )
+    )
     return 0
 
 
