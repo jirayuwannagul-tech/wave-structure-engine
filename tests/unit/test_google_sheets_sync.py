@@ -226,6 +226,9 @@ def test_compute_signal_tracking_opposite_structure_exit_without_sl_mark():
 def test_should_sync_signal_to_sheet_only_after_real_entry():
     assert should_sync_signal_to_sheet(_signal_row(status="PENDING_ENTRY")) is False
     assert should_sync_signal_to_sheet(_signal_row(status="INVALIDATED")) is False
+    invalidated_after_trigger = _signal_row(status="INVALIDATED")
+    invalidated_after_trigger["entry_triggered_at"] = "2026-03-12T01:00:00+00:00"
+    assert should_sync_signal_to_sheet(invalidated_after_trigger) is False
     assert should_sync_signal_to_sheet(_signal_row(status="REPLACED")) is False
     assert should_sync_signal_to_sheet(_signal_row(status="ACTIVE")) is True
     assert should_sync_signal_to_sheet(_signal_row(status="PARTIAL_TP1")) is True

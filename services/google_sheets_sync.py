@@ -350,11 +350,7 @@ def should_sync_signal_to_sheet(signal_row) -> bool:
     except Exception:
         pass
     status = str((row or {}).get("status") or "").upper()
-    if status in SYNCABLE_SIGNAL_STATUSES:
-        return True
-    if status == "INVALIDATED" and (row or {}).get("entry_triggered_at"):
-        return True
-    return False
+    return status in SYNCABLE_SIGNAL_STATUSES
 
 
 class GoogleSheetsSignalLogger:
