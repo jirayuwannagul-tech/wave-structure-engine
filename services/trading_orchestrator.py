@@ -978,11 +978,14 @@ def _log_wave_state(runtime: OrchestratorRuntime, price: float) -> None:
         tf = analysis.get("timeframe", "?")
         pattern = analysis.get("primary_pattern_type") or "?"
         wave_summary = analysis.get("wave_summary") or {}
-        bias = wave_summary.get("bias") or "NONE"
+        bias = wave_summary.get("bias")
+        direction = wave_summary.get("pattern_direction") or bias or "NONE"
         position = analysis.get("position")
         leg = describe_current_leg(position) or "-"
-        bias_icon = "▲" if bias == "BULLISH" else ("▼" if bias == "BEARISH" else "—")
-        parts.append(f"  {tf}: {pattern} {bias_icon} leg={leg}")
+        direction_icon = "▲" if direction == "BULLISH" else ("▼" if direction == "BEARISH" else "—")
+        direction_th = "ขาขึ้น" if direction == "BULLISH" else ("ขาลง" if direction == "BEARISH" else "ไม่ชัด")
+        signal_tag = " [สัญญาณ]" if bias else ""
+        parts.append(f"  {tf}: {pattern} {direction_icon} {direction_th} leg={leg}{signal_tag}")
     print("\n".join(parts))
 
 

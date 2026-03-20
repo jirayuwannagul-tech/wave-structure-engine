@@ -171,6 +171,7 @@ def build_wave_summary(
     return {
         "current_wave": primary["pattern_type"] if primary else None,
         "bias": bias,
+        "pattern_direction": direction or None,
         "alternate_wave": alternate["pattern_type"] if alternate else None,
         "confirm": trade_levels.get("confirm"),
         "stop_loss": trade_levels.get("stop_loss"),
