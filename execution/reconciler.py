@@ -7,7 +7,14 @@ import os
 from execution.binance_futures_client import BinanceFuturesClient
 from execution.exchange_info import round_price, round_quantity
 from execution.models import ExecutionConfig
-from execution.position_manager import PositionManager, exit_order_side_for_position
+from execution.position_manager import (
+    PositionManager,
+    _is_protective_exit_order,
+    _is_stop_order,
+    _is_take_profit_order,
+    _order_quantity,
+    exit_order_side_for_position,
+)
 from storage.position_store import PositionStore
 
 
@@ -120,9 +127,11 @@ def _maybe_resize_stop_loss_qty(
     pst = row["position_side_tag"]
     sls: list[dict] = []
     for o in orders:
-        if str(o.get("type") or "").upper() != "STOP_MARKET":
+        if not isinstance(o, dict):
             continue
-        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+        if not _is_stop_order(o):
+            continue
+        if not _is_protective_exit_order(o):
             continue
         if str(o.get("side") or "").upper() != close_side:
             continue
@@ -132,10 +141,12 @@ def _maybe_resize_stop_loss_qty(
         sls.append(o)
     if not sls:
         return
+    if any(str(o.get("closePosition") or "").lower() in ("true", "1") or o.get("closePosition") is True for o in sls):
+        return
     mismatch = False
     for o in sls:
         try:
-            oq = float(o.get("origQty") or 0)
+            oq = _order_quantity(o, pos_qty)
         except (TypeError, ValueError):
             oq = 0.0
         oq_r = round_quantity(client, symbol_u, oq)
@@ -304,17 +315,15 @@ def reconcile_symbol(
             oside = str(o.get("side") or "").upper()
             if oside != close_side:
                 continue
-            ro = str(o.get("reduceOnly") or "").lower()
-            if ro not in ("true", "1"):
+            if not _is_protective_exit_order(o):
                 continue
-            ot = str(o.get("type") or "").upper()
             try:
                 sp = float(o.get("stopPrice") or 0)
             except (TypeError, ValueError):
                 sp = 0.0
-            if ot == "STOP_MARKET" and sp > 0 and sl_px is None:
+            if _is_stop_order(o) and sp > 0 and sl_px is None:
                 sl_px = sp
-            elif ot == "TAKE_PROFIT_MARKET" and sp > 0:
+            elif _is_take_profit_order(o) and sp > 0:
                 cid = str(o.get("clientOrderId") or "")
                 if "TP2" in cid:
                     tp2_px = tp2_px or sp
@@ -340,14 +349,12 @@ def reconcile_symbol(
         )
         store.append_event(pid, "RECOVERED_FROM_EXCHANGE", {"quantity": qty, "entry_price": entry_price})
         for o in orders:
-            ot = str(o.get("type") or "").upper()
             oside = str(o.get("side") or "").upper()
             if oside != close_side:
                 continue
-            ro = str(o.get("reduceOnly") or "").lower()
-            if ro not in ("true", "1"):
+            if not _is_protective_exit_order(o):
                 continue
-            if ot == "STOP_MARKET":
+            if _is_stop_order(o):
                 try:
                     oid = int(o["orderId"]) if o.get("orderId") is not None else None
                 except (TypeError, ValueError):
@@ -357,7 +364,7 @@ def reconcile_symbol(
                 except (TypeError, ValueError):
                     sp = 0.0
                 try:
-                    q = float(o.get("origQty") or o.get("quantity") or qty)
+                    q = _order_quantity(o, qty)
                 except (TypeError, ValueError):
                     q = qty
                 store.record_order(
@@ -370,9 +377,9 @@ def reconcile_symbol(
                     quantity=q,
                     stop_price=sp or sl_px,
                     status="NEW",
-                    reduce_only=True,
+                    reduce_only=_is_protective_exit_order(o),
                 )
-            elif ot == "TAKE_PROFIT_MARKET":
+            elif _is_take_profit_order(o):
                 try:
                     oid = int(o["orderId"]) if o.get("orderId") is not None else None
                 except (TypeError, ValueError):
@@ -388,7 +395,7 @@ def reconcile_symbol(
                 except (TypeError, ValueError):
                     sp = 0.0
                 try:
-                    q = float(o.get("origQty") or o.get("quantity") or 0)
+                    q = _order_quantity(o, qty)
                 except (TypeError, ValueError):
                     q = 0.0
                 store.record_order(
@@ -401,7 +408,7 @@ def reconcile_symbol(
                     quantity=q,
                     stop_price=sp,
                     status="NEW",
-                    reduce_only=True,
+                    reduce_only=_is_protective_exit_order(o),
                 )
         if config is not None:
             PositionManager(client, config, store).ensure_protection(symbol_u)

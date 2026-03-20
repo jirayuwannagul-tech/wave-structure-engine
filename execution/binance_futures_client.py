@@ -12,6 +12,7 @@ import requests
 from execution.models import ExecutionConfig
 
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_FALLBACK_TO_ALGO_CODES = frozenset({-2011, -2013, -2022, -4120})
 
 
 class BinanceFuturesClient:
@@ -198,7 +199,43 @@ class BinanceFuturesClient:
         params: dict[str, str] = {}
         if symbol:
             params["symbol"] = symbol.upper()
-        return self._request("GET", "/fapi/v1/openOrders", params=params, signed=True)
+        regular = self._request("GET", "/fapi/v1/openOrders", params=params, signed=True)
+        algo = self.get_open_algo_orders(symbol)
+        if not isinstance(regular, list):
+            regular = []
+        if not isinstance(algo, list):
+            algo = []
+        out: list[dict[str, Any]] = []
+        seen_client_ids: set[str] = set()
+        seen_ids: set[tuple[str, int]] = set()
+        for raw in [*algo, *regular]:
+            if not isinstance(raw, dict):
+                continue
+            normalized = self._normalize_open_order(raw)
+            cid = str(normalized.get("clientOrderId") or "").strip()
+            oid = normalized.get("orderId")
+            if cid:
+                if cid in seen_client_ids:
+                    continue
+                seen_client_ids.add(cid)
+            if oid is not None:
+                try:
+                    oid_i = int(oid)
+                except (TypeError, ValueError):
+                    oid_i = None
+                if oid_i is not None:
+                    key = (str(normalized.get("symbol") or "").upper(), oid_i)
+                    if key in seen_ids:
+                        continue
+                    seen_ids.add(key)
+            out.append(normalized)
+        return out
+
+    def get_open_algo_orders(self, symbol: str | None = None) -> Any:
+        params: dict[str, str] = {}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        return self._request("GET", "/fapi/v1/openAlgoOrders", params=params, signed=True)
 
     def cancel_order(
         self,
@@ -213,17 +250,78 @@ class BinanceFuturesClient:
             params["orderId"] = int(order_id)
         if client_order_id is not None:
             params["origClientOrderId"] = client_order_id
-        return self._request("DELETE", "/fapi/v1/order", params=params, signed=True)
+        try:
+            return self._request("DELETE", "/fapi/v1/order", params=params, signed=True)
+        except requests.HTTPError as exc:
+            if not self._should_try_algo_fallback(exc):
+                raise
+            return self.cancel_algo_order(algo_id=order_id, client_algo_id=client_order_id)
 
     def query_order(self, *, symbol: str, order_id: int) -> Any:
         """GET order status (FILLED / CANCELED / NEW / …) for sync with DB."""
         params = {"symbol": symbol.upper(), "orderId": int(order_id)}
-        return self._request("GET", "/fapi/v1/order", params=params, signed=True)
+        try:
+            return self._request("GET", "/fapi/v1/order", params=params, signed=True)
+        except requests.HTTPError as exc:
+            if not self._should_try_algo_fallback(exc):
+                raise
+            raw = self.query_algo_order(algo_id=order_id)
+            return self._normalize_algo_query(raw)
 
     def cancel_all_orders(self, *, symbol: str) -> Any:
         self._ensure_trading_enabled()
         params = {"symbol": symbol.upper()}
-        return self._request("DELETE", "/fapi/v1/allOpenOrders", params=params, signed=True)
+        regular_result: Any = None
+        algo_result: Any = None
+        regular_exc: requests.HTTPError | None = None
+        algo_exc: requests.HTTPError | None = None
+        try:
+            regular_result = self._request("DELETE", "/fapi/v1/allOpenOrders", params=params, signed=True)
+        except requests.HTTPError as exc:
+            regular_exc = exc
+        try:
+            algo_result = self.cancel_all_algo_orders(symbol=symbol)
+        except requests.HTTPError as exc:
+            algo_exc = exc
+        if regular_exc and algo_exc:
+            raise regular_exc
+        return {"regular": regular_result, "algo": algo_result}
+
+    def cancel_algo_order(
+        self,
+        *,
+        algo_id: int | None = None,
+        client_algo_id: str | None = None,
+    ) -> Any:
+        self._ensure_trading_enabled()
+        params: dict[str, Any] = {}
+        if algo_id is not None:
+            params["algoId"] = int(algo_id)
+        if client_algo_id is not None:
+            params["clientAlgoId"] = client_algo_id
+        return self._request("DELETE", "/fapi/v1/algoOrder", params=params, signed=True)
+
+    def cancel_all_algo_orders(self, *, symbol: str) -> Any:
+        self._ensure_trading_enabled()
+        return self._request(
+            "DELETE",
+            "/fapi/v1/algoOpenOrders",
+            params={"symbol": symbol.upper()},
+            signed=True,
+        )
+
+    def query_algo_order(
+        self,
+        *,
+        algo_id: int | None = None,
+        client_algo_id: str | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {}
+        if algo_id is not None:
+            params["algoId"] = int(algo_id)
+        if client_algo_id is not None:
+            params["clientAlgoId"] = client_algo_id
+        return self._request("GET", "/fapi/v1/algoOrder", params=params, signed=True)
 
     # --------------------------------------------------------------------- #
     # Order placement                                                       #
@@ -262,6 +360,44 @@ class BinanceFuturesClient:
         if position_side:
             params["positionSide"] = str(position_side).upper()
         return self._request("POST", "/fapi/v1/order", params=params, signed=True)
+
+    def _place_algo_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        type_: str,
+        trigger_price: float,
+        quantity: float | None = None,
+        price: float | None = None,
+        reduce_only: bool | None = None,
+        close_position: bool | None = None,
+        client_algo_id: str | None = None,
+        position_side: str | None = None,
+    ) -> Any:
+        self._ensure_trading_enabled()
+        params: dict[str, Any] = {
+            "algoType": "CONDITIONAL",
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": type_,
+            "triggerPrice": trigger_price,
+            "workingType": "CONTRACT_PRICE",
+            "newOrderRespType": "RESULT",
+        }
+        if quantity is not None:
+            params["quantity"] = quantity
+        if price is not None:
+            params["price"] = price
+        if reduce_only is not None:
+            params["reduceOnly"] = "true" if reduce_only else "false"
+        if close_position is not None:
+            params["closePosition"] = "true" if close_position else "false"
+        if client_algo_id:
+            params["clientAlgoId"] = client_algo_id
+        if position_side:
+            params["positionSide"] = str(position_side).upper()
+        return self._request("POST", "/fapi/v1/algoOrder", params=params, signed=True)
 
     def place_market_order(
         self,
@@ -324,18 +460,14 @@ class BinanceFuturesClient:
     ) -> Any:
         """STOP_MARKET to open when price reaches entry from the other side (not reduce-only)."""
         order_side = self._entry_side(side)
-        extra: dict[str, Any] = {
-            "stopPrice": stop_price,
-            "workingType": "CONTRACT_PRICE",
-        }
         ps = str(position_side).upper() if position_side else None
-        return self._place_order(
+        return self._place_algo_order(
             symbol=symbol,
             side=order_side,
             type_="STOP_MARKET",
+            trigger_price=stop_price,
             quantity=quantity,
-            extra_params=extra,
-            client_order_id=client_order_id,
+            client_algo_id=client_order_id,
             position_side=ps,
         )
 
@@ -391,19 +523,15 @@ class BinanceFuturesClient:
     ) -> Any:
         """Place a STOP_MARKET reduce-only order used as protective stop loss."""
         order_side = self._exit_side(side)
-        extra = {
-            "stopPrice": stop_price,
-            "reduceOnly": "true",
-            "workingType": "CONTRACT_PRICE",
-        }
         ps = str(position_side).upper() if position_side else None
-        return self._place_order(
+        return self._place_algo_order(
             symbol=symbol,
             side=order_side,
             type_="STOP_MARKET",
-            quantity=quantity,
-            extra_params=extra,
-            client_order_id=client_order_id,
+            trigger_price=stop_price,
+            quantity=None,
+            close_position=True,
+            client_algo_id=client_order_id,
             position_side=ps,
         )
 
@@ -419,18 +547,66 @@ class BinanceFuturesClient:
     ) -> Any:
         """Place a TAKE_PROFIT_MARKET reduce-only order used as TP."""
         order_side = self._exit_side(side)
-        extra = {
-            "stopPrice": stop_price,
-            "reduceOnly": "true",
-            "workingType": "CONTRACT_PRICE",
-        }
         ps = str(position_side).upper() if position_side else None
-        return self._place_order(
+        return self._place_algo_order(
             symbol=symbol,
             side=order_side,
             type_="TAKE_PROFIT_MARKET",
+            trigger_price=stop_price,
             quantity=quantity,
-            extra_params=extra,
-            client_order_id=client_order_id,
+            reduce_only=True,
+            client_algo_id=client_order_id,
             position_side=ps,
         )
+
+    def _should_try_algo_fallback(self, exc: requests.HTTPError) -> bool:
+        resp = exc.response
+        if resp is None:
+            return False
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {}
+        code = payload.get("code")
+        return code in _FALLBACK_TO_ALGO_CODES
+
+    def _normalize_open_order(self, raw: dict[str, Any]) -> dict[str, Any]:
+        if "algoId" not in raw and "clientAlgoId" not in raw:
+            return dict(raw)
+        return {
+            **raw,
+            "orderId": raw.get("algoId"),
+            "clientOrderId": raw.get("clientAlgoId"),
+            "type": raw.get("orderType"),
+            "status": raw.get("algoStatus"),
+            "origQty": raw.get("quantity") or "0",
+            "stopPrice": raw.get("triggerPrice") or raw.get("price") or "0",
+        }
+
+    def _normalize_algo_query(self, raw: dict[str, Any]) -> dict[str, Any]:
+        status = str(raw.get("algoStatus") or "").upper()
+        actual_order_id = raw.get("actualOrderId")
+        actual_price = raw.get("actualPrice")
+        trigger_time = raw.get("triggerTime")
+        filled = False
+        if status not in {"NEW", "CANCELED", "EXPIRED", "REJECTED"}:
+            filled = True
+        if actual_order_id not in (None, "", "0"):
+            filled = True
+        if actual_price not in (None, "", "0", "0.00000"):
+            filled = True
+        try:
+            filled = filled or int(trigger_time or 0) > 0 and status not in {"NEW", "CANCELED", "EXPIRED", "REJECTED"}
+        except (TypeError, ValueError):
+            pass
+        normalized_status = "FILLED" if filled else (status or "NEW")
+        return {
+            **raw,
+            "orderId": raw.get("algoId"),
+            "clientOrderId": raw.get("clientAlgoId"),
+            "status": normalized_status,
+            "type": raw.get("orderType"),
+            "stopPrice": raw.get("triggerPrice") or raw.get("price") or "0",
+            "executedQty": raw.get("quantity") if filled else "0",
+            "avgPrice": raw.get("actualPrice") or raw.get("price") or raw.get("triggerPrice") or "0",
+        }

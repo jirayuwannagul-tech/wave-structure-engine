@@ -285,7 +285,7 @@ class FakeBinanceFuturesClient:
             "side": exit_side,
             "stopPrice": str(stop_price),
             "origQty": str(quantity),
-            "reduceOnly": True,
+            "closePosition": True,
             "status": "NEW",
             "clientOrderId": client_order_id,
         }

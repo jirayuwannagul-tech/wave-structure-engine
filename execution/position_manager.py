@@ -47,6 +47,8 @@ def _order_id(resp: Any) -> int | None:
     if not isinstance(resp, dict):
         return None
     oid = resp.get("orderId")
+    if oid is None:
+        oid = resp.get("algoId")
     try:
         return int(oid) if oid is not None else None
     except (TypeError, ValueError):
@@ -99,6 +101,41 @@ def _open_order_client_ids_from_orders(orders: list[Any]) -> set[str]:
     return out
 
 
+def _order_type(order: dict[str, Any]) -> str:
+    return str(order.get("type") or order.get("orderType") or "").upper()
+
+
+def _order_flag(order: dict[str, Any], key: str) -> bool:
+    value = order.get(key)
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
+
+
+def _is_protective_exit_order(order: dict[str, Any]) -> bool:
+    return _order_flag(order, "reduceOnly") or _order_flag(order, "closePosition")
+
+
+def _is_stop_order(order: dict[str, Any]) -> bool:
+    return _order_type(order) in {"STOP", "STOP_MARKET"}
+
+
+def _is_take_profit_order(order: dict[str, Any]) -> bool:
+    return _order_type(order) in {"TAKE_PROFIT", "TAKE_PROFIT_MARKET"}
+
+
+def _order_quantity(order: dict[str, Any], fallback: float = 0.0) -> float:
+    raw = order.get("origQty")
+    if raw in (None, "", "0", "0.0"):
+        raw = order.get("quantity")
+    if raw in (None, "", "0", "0.0") and _order_flag(order, "closePosition"):
+        raw = fallback
+    try:
+        return float(raw) if raw is not None else float(fallback)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
 def _hedge_order_matches_leg(
     config: ExecutionConfig,
     position_side_tag: str | None,
@@ -118,12 +155,14 @@ def stop_loss_reduce_on_book_from_orders(
     position_side: str,
     position_side_tag: str | None,
 ) -> bool:
-    """True if a reduce-only STOP_MARKET exists that would close *this* leg (exit side + hedge tag)."""
+    """True if a protective stop exists that would close *this* leg."""
     exit_side = exit_order_side_for_position(position_side)
     for o in orders:
-        if str(o.get("type") or "").upper() != "STOP_MARKET":
+        if not isinstance(o, dict):
             continue
-        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+        if not _is_stop_order(o):
+            continue
+        if not _is_protective_exit_order(o):
             continue
         if str(o.get("side") or "").upper() != exit_side:
             continue
@@ -165,9 +204,11 @@ def take_profit_reduce_on_book_from_orders(
     exit_side = exit_order_side_for_position(position_side)
     want_px = round_price(client, symbol, float(stop_price))
     for o in orders:
-        if str(o.get("type") or "").upper() != "TAKE_PROFIT_MARKET":
+        if not isinstance(o, dict):
             continue
-        if str(o.get("reduceOnly") or "").lower() not in ("true", "1"):
+        if not _is_take_profit_order(o):
+            continue
+        if not _is_protective_exit_order(o):
             continue
         if str(o.get("side") or "").upper() != exit_side:
             continue
@@ -251,7 +292,7 @@ def _pending_entry_health_key(signal_id: int) -> str:
 def _entry_response_status(resp: Any) -> str:
     if not isinstance(resp, dict):
         return ""
-    return str(resp.get("status") or "").upper()
+    return str(resp.get("status") or resp.get("algoStatus") or "").upper()
 
 
 def _normalize_filled_entry_from_query(q: dict[str, Any]) -> dict[str, Any]:
@@ -370,6 +411,203 @@ class PositionManager:
                     "TARGETS_BACKFILLED_FROM_SIGNAL",
                     {"signal_id": int(sig["id"])},
                 )
+
+    def _find_matching_order_row(
+        self,
+        symbol_u: str,
+        existing_rows: list[Any],
+        *,
+        order_id: int | None,
+        client_order_id: str | None,
+        order_kind: str,
+        stop_price: float | None,
+    ) -> Any | None:
+        for existing in existing_rows:
+            try:
+                existing_oid = existing["order_id"]
+            except (KeyError, TypeError):
+                existing_oid = None
+            if order_id is not None and existing_oid is not None:
+                try:
+                    if int(existing_oid) == int(order_id):
+                        return existing
+                except (TypeError, ValueError):
+                    pass
+            try:
+                existing_cid = str(existing["client_order_id"] or "")
+            except (KeyError, TypeError):
+                existing_cid = ""
+            if client_order_id and existing_cid == client_order_id:
+                return existing
+            try:
+                existing_kind = str(existing["order_kind"] or "")
+            except (KeyError, TypeError):
+                existing_kind = ""
+            if existing_kind != order_kind:
+                continue
+            try:
+                existing_status = str(existing["status"] or "").upper()
+            except (KeyError, TypeError):
+                existing_status = ""
+            if existing_status not in {"NEW", "OFF_BOOK", "UNKNOWN"}:
+                continue
+            try:
+                existing_stop = existing["stop_price"]
+            except (KeyError, TypeError):
+                existing_stop = None
+            if stop_price is None or existing_stop is None:
+                continue
+            try:
+                want = round_price(self.client, symbol_u, float(stop_price))
+                have = round_price(self.client, symbol_u, float(existing_stop))
+            except (TypeError, ValueError):
+                continue
+            if want == have:
+                return existing
+        return None
+
+    def _infer_take_profit_kind(self, symbol_u: str, row: Any, order: dict[str, Any]) -> str | None:
+        cid = str(order.get("clientOrderId") or "").upper()
+        if "TP1" in cid:
+            return "TP1"
+        if "TP2" in cid:
+            return "TP2"
+        if "TP3" in cid:
+            return "TP3"
+        try:
+            stop_price = float(order.get("stopPrice") or 0)
+        except (TypeError, ValueError):
+            stop_price = 0.0
+        if stop_price <= 0:
+            return None
+        want = round_price(self.client, symbol_u, stop_price)
+        for label, field in (("TP1", "tp1_price"), ("TP2", "tp2_price"), ("TP3", "tp3_price")):
+            level = row[field]
+            if level is None:
+                continue
+            try:
+                level_r = round_price(self.client, symbol_u, float(level))
+            except (TypeError, ValueError):
+                continue
+            if level_r == want:
+                return label
+        return None
+
+    def _record_or_refresh_protective_order_row(
+        self,
+        symbol_u: str,
+        row: Any,
+        existing_rows: list[Any],
+        *,
+        order_kind: str,
+        order: dict[str, Any],
+        fallback_qty: float,
+    ) -> str | None:
+        pid = int(row["id"])
+        order_id = _order_id(order)
+        client_order_id = str(order.get("clientOrderId") or "").strip() or None
+        try:
+            stop_price = float(order.get("stopPrice") or 0)
+        except (TypeError, ValueError):
+            stop_price = 0.0
+        stop_price = stop_price if stop_price > 0 else None
+        match = self._find_matching_order_row(
+            symbol_u,
+            existing_rows,
+            order_id=order_id,
+            client_order_id=client_order_id,
+            order_kind=order_kind,
+            stop_price=stop_price,
+        )
+        if match is not None:
+            if order_id is not None and match["order_id"] is None:
+                self.store.update_order_exchange_id(int(match["id"]), order_id)
+            if str(match["status"] or "").upper() != "NEW":
+                self.store.update_position_order_row_status(int(match["id"]), "NEW")
+            return "refreshed"
+
+        quantity = _order_quantity(order, fallback_qty)
+        try:
+            quantity = round_quantity(self.client, symbol_u, quantity)
+        except ValueError:
+            quantity = float(quantity)
+
+        row_id = self.store.record_order(
+            pid,
+            order_kind=order_kind,
+            order_id=order_id,
+            client_order_id=client_order_id,
+            side=str(order.get("side") or "").upper() or None,
+            order_type=_order_type(order) or order_kind,
+            quantity=quantity if quantity > 0 else None,
+            stop_price=stop_price,
+            status="NEW",
+            reduce_only=_is_protective_exit_order(order),
+        )
+        if order_id is not None:
+            self.store.update_order_exchange_id(row_id, order_id)
+        existing_rows.append(
+            {
+                "id": row_id,
+                "order_id": order_id,
+                "client_order_id": client_order_id,
+                "order_kind": order_kind,
+                "status": "NEW",
+                "stop_price": stop_price,
+            }
+        )
+        self.store.append_event(
+            pid,
+            "PROTECTIVE_ORDER_IMPORTED_FROM_BOOK",
+            {"order_kind": order_kind, "order_id": order_id, "client_order_id": client_order_id},
+        )
+        return "imported"
+
+    def _sync_protective_rows_from_book(
+        self,
+        symbol_u: str,
+        row: Any,
+        amt: float,
+        open_orders: list[Any],
+    ) -> dict[str, int]:
+        if not isinstance(open_orders, list):
+            return {"imported": 0, "refreshed": 0}
+        side = str(row["side"]).upper()
+        pst = row["position_side_tag"]
+        exit_side = exit_order_side_for_position(side)
+        fallback_qty = abs(float(amt or 0))
+        existing_rows = list(self.store.list_orders_for_position(int(row["id"])))
+        imported = 0
+        refreshed = 0
+        for order in open_orders:
+            if not isinstance(order, dict):
+                continue
+            if not _is_protective_exit_order(order):
+                continue
+            if str(order.get("side") or "").upper() != exit_side:
+                continue
+            if not _hedge_order_matches_leg(self.config, pst, order):
+                continue
+            order_kind: str | None = None
+            if _is_stop_order(order):
+                order_kind = "SL"
+            elif _is_take_profit_order(order):
+                order_kind = self._infer_take_profit_kind(symbol_u, row, order)
+            if not order_kind:
+                continue
+            action = self._record_or_refresh_protective_order_row(
+                symbol_u,
+                row,
+                existing_rows,
+                order_kind=order_kind,
+                order=order,
+                fallback_qty=fallback_qty,
+            )
+            if action == "imported":
+                imported += 1
+            elif action == "refreshed":
+                refreshed += 1
+        return {"imported": imported, "refreshed": refreshed}
 
     def _ensure_take_profits_for_row(
         self,
@@ -511,6 +749,9 @@ class PositionManager:
             open_orders = self.client.get_open_orders(symbol_u) or []
             if not isinstance(open_orders, list):
                 open_orders = []
+            sync_info = self._sync_protective_rows_from_book(symbol_u, row, amt, open_orders)
+            if sync_info.get("imported") or sync_info.get("refreshed"):
+                results.append({"position_id": int(row["id"]), "book_sync": sync_info})
             side_row = str(row["side"]).upper()
             if stop_loss_reduce_on_book_from_orders(
                 open_orders,
@@ -594,7 +835,20 @@ class PositionManager:
                                 {"position_id": int(row["id"]), "placed": True, "emergency_sl": emergency}
                             )
             tp_results.append(self._ensure_take_profits_for_row(symbol_u, row, amt, open_orders))
-        return {"ok": True, "results": results, "tp": tp_results}
+        ok = True
+        for item in results:
+            if "error" in item:
+                ok = False
+                break
+        if ok:
+            for item in tp_results:
+                for level in item.get("tp_levels") or []:
+                    if "error" in level:
+                        ok = False
+                        break
+                if not ok:
+                    break
+        return {"ok": ok, "results": results, "tp": tp_results}
 
     def _sync_signal_entry_after_binance_fill(self, signal_id: int, avg_entry: float) -> None:
         """Keep SQLite `signals` (and thus Google Sheet) entry aligned with Binance avg fill."""
@@ -1082,6 +1336,11 @@ class PositionManager:
         raw_orders = self.client.get_open_orders(symbol) or []
         if not isinstance(raw_orders, list):
             raw_orders = []
+        row_now = self.store.get_open_position_by_signal(signal_id)
+        if row_now is None and self.config.hedge_position_mode:
+            row_now = self.store.get_open_leg_position(symbol, side)
+        if row_now is not None:
+            self._sync_protective_rows_from_book(symbol, row_now, exec_qty, raw_orders)
         cids_open = _open_order_client_ids_from_orders(raw_orders)
         has_sl_strict = stop_loss_reduce_on_book_from_orders(
             raw_orders,

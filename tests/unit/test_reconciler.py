@@ -147,8 +147,10 @@ def test_reconcile_resizes_sl_after_partial_tp(rec_setup):
         o
         for o in client.get_open_orders("BTCUSDT")
         if o.get("type") == "STOP_MARKET"
-        and str(o.get("reduceOnly")).lower() in ("true", "1")
+        and (
+            str(o.get("reduceOnly")).lower() in ("true", "1")
+            or str(o.get("closePosition")).lower() in ("true", "1")
+        )
     ]
     assert len(sl_orders) >= 1
-    sl_qty = float(sl_orders[0].get("origQty") or 0)
-    assert sl_qty == pytest.approx(pos_after, rel=0, abs=0.002)
+    assert any(str(o.get("closePosition")).lower() in ("true", "1") for o in sl_orders)

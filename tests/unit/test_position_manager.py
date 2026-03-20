@@ -301,6 +301,65 @@ def test_ensure_protection_places_sl_and_tp_after_backfill_from_signals():
         os.unlink(path)
 
 
+def test_ensure_protection_imports_existing_exchange_protection_rows():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = PositionStore(db_path=path)
+    client = FakeBinanceFuturesClient()
+    pm = PositionManager(client, _cfg(), store)
+    try:
+        client.seed_position("BTCUSDT", 0.1, 50000.0)
+        pid = store.create_position(
+            symbol="BTCUSDT",
+            side="LONG",
+            source_signal_id=77,
+            signal_hash="h77",
+            quantity=0.1,
+            entry_price=50000.0,
+            entry_order_id=77,
+            stop_loss_price=49000.0,
+            tp1_price=51000.0,
+            tp2_price=52000.0,
+            tp3_price=53000.0,
+        )
+        client._orders.extend(
+            [
+                {
+                    "orderId": 901,
+                    "symbol": "BTCUSDT",
+                    "type": "STOP_MARKET",
+                    "side": "SELL",
+                    "stopPrice": "49000",
+                    "origQty": "0.1",
+                    "closePosition": True,
+                    "status": "NEW",
+                    "clientOrderId": "E77SL",
+                },
+                {
+                    "orderId": 902,
+                    "symbol": "BTCUSDT",
+                    "type": "TAKE_PROFIT_MARKET",
+                    "side": "SELL",
+                    "stopPrice": "52000",
+                    "origQty": "0.03",
+                    "reduceOnly": True,
+                    "status": "NEW",
+                    "clientOrderId": "E77TP2",
+                },
+            ]
+        )
+
+        out = pm.ensure_protection("BTCUSDT")
+
+        assert out["ok"] is True
+        rows = store.list_orders_for_position(pid)
+        by_exchange_id = {int(r["order_id"]): str(r["order_kind"]) for r in rows if r["order_id"] is not None}
+        assert by_exchange_id[901] == "SL"
+        assert by_exchange_id[902] == "TP2"
+    finally:
+        os.unlink(path)
+
+
 def test_close_for_signal_cancels_pending_entry_without_symbol_cleanup():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
