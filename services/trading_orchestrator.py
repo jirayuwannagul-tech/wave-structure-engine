@@ -971,6 +971,23 @@ def process_market_update(
     return runtime
 
 
+def _log_wave_state(runtime: OrchestratorRuntime, price: float) -> None:
+    """Print a compact one-line wave state per symbol per cycle."""
+    from datetime import UTC, datetime as _dt
+    ts = _dt.now(UTC).strftime("%H:%M:%S")
+    parts = [f"[{ts}] {runtime.symbol} ${price:,.2f}"]
+    for analysis in runtime.analyses:
+        tf = analysis.get("timeframe", "?")
+        pattern = analysis.get("primary_pattern_type") or "?"
+        wave_summary = analysis.get("wave_summary") or {}
+        bias = wave_summary.get("bias") or "NONE"
+        position = analysis.get("position")
+        leg = describe_current_leg(position) or "-"
+        bias_icon = "▲" if bias == "BULLISH" else ("▼" if bias == "BEARISH" else "—")
+        parts.append(f"  {tf}: {pattern} {bias_icon} leg={leg}")
+    print("\n".join(parts))
+
+
 def run_orchestrator(
     symbol: str = "BTCUSDT",
     symbols: list[str] | None = None,
@@ -1057,7 +1074,7 @@ def run_orchestrator(
                 price = get_last_price(runtime.symbol)
                 price_updates[runtime.symbol] = price
                 ordered_runtimes.append(runtime)
-                print(f"{runtime.symbol} price: {price}")
+                _log_wave_state(runtime, price)
             maybe_run_combined_daily_job(
                 repository=repository,
                 runtimes=ordered_runtimes,
