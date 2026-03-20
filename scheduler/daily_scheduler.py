@@ -320,6 +320,18 @@ def build_daily_scenario_message(
         support, resistance = _support_resistance_from_scenario(scenario)
         wave_name = _fmt_wave_name(analysis.get("position"))
 
+        wave_lines = []
+        for a in (getattr(runtime, "analyses", []) or []):
+            atf = (a.get("timeframe") or "").upper()
+            pattern = a.get("primary_pattern_type") or "?"
+            ws = a.get("wave_summary") or {}
+            direction = ws.get("pattern_direction") or ws.get("bias") or "NONE"
+            leg = _fmt_wave_name(a.get("position"))
+            dir_icon = "▲" if direction == "BULLISH" else ("▼" if direction == "BEARISH" else "—")
+            dir_th = "ขาขึ้น" if direction == "BULLISH" else ("ขาลง" if direction == "BEARISH" else "ไม่ชัด")
+            signal_tag = " [สัญญาณ]" if ws.get("bias") else ""
+            wave_lines.append(f"  {atf}: {pattern} {dir_icon} {dir_th} leg={leg}{signal_tag}")
+
         rows.append(
             "\n".join(
                 [
@@ -328,6 +340,7 @@ def build_daily_scenario_message(
                     f"- แนวต้าน: {_fmt_value(resistance)}",
                     f"- เฝ้าดู: {wave_name}",
                 ]
+                + wave_lines
             )
         )
 
