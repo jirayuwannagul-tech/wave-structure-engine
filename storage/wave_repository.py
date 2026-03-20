@@ -183,6 +183,24 @@ def build_signal_snapshot(analysis: dict, current_price: float | None = None) ->
     if side == "SHORT" and stop_loss <= entry:
         return None
 
+    # Replace targets with Fibonacci fallback if TP1 RR is too low (< 0.5).
+    # Prevents signals where the wave pattern support/resistance is too close
+    # to entry relative to the SL distance.
+    if targets and entry is not None and stop_loss is not None:
+        try:
+            risk = abs(float(entry) - float(stop_loss))
+            tp1_dist = abs(float(targets[0]) - float(entry)) if targets[0] is not None else 0
+            rr_tp1 = tp1_dist / risk if risk > 0 else 0
+            if rr_tp1 < 0.5:
+                direction = 1.0 if side == "LONG" else -1.0
+                targets = [
+                    _round_price(float(entry) + direction * risk * 1.0),
+                    _round_price(float(entry) + direction * risk * 1.272),
+                    _round_price(float(entry) + direction * risk * 1.618),
+                ]
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
     while len(targets) < 3:
         targets.append(None)
 
