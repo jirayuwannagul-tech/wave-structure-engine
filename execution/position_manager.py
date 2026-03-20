@@ -609,6 +609,132 @@ class PositionManager:
                 refreshed += 1
         return {"imported": imported, "refreshed": refreshed}
 
+    def _fetch_signal_for_position(self, row: Any) -> Any | None:
+        sid = row["source_signal_id"]
+        if sid is None:
+            return None
+        try:
+            from storage.wave_repository import WaveRepository
+
+            repo = WaveRepository(db_path=self.store.db_path)
+            return repo.fetch_signal(int(sid))
+        except Exception:
+            return None
+
+    def _expected_tp_levels_for_row(self, symbol_u: str, row: Any, amt: float) -> list[tuple[str, float]]:
+        exec_qty = round_quantity(self.client, symbol_u, abs(amt))
+        if exec_qty <= 0:
+            return []
+        hit_levels: set[str] = set()
+        signal_row = self._fetch_signal_for_position(row)
+        if signal_row is not None:
+            if signal_row["tp1_hit_at"] is not None:
+                hit_levels.add("TP1")
+            if signal_row["tp2_hit_at"] is not None:
+                hit_levels.update({"TP1", "TP2"})
+            if signal_row["tp3_hit_at"] is not None:
+                hit_levels.update({"TP1", "TP2", "TP3"})
+        tp_levels = [
+            ("TP1", row["tp1_price"], float(self.config.tp1_size_pct)),
+            ("TP2", row["tp2_price"], float(self.config.tp2_size_pct)),
+            ("TP3", row["tp3_price"], float(self.config.tp3_size_pct)),
+        ]
+        valid = [
+            (lab, px, w)
+            for lab, px, w in tp_levels
+            if lab not in hit_levels and px is not None and w > 0
+        ]
+        if not valid:
+            return []
+        wsum = sum(w for _, _, w in valid)
+        placed_qty = 0.0
+        levels: list[tuple[str, float]] = []
+        for j, (label, tp_px_raw, w) in enumerate(valid):
+            if j == len(valid) - 1:
+                tp_qty = round_quantity(self.client, symbol_u, exec_qty - placed_qty)
+            else:
+                tp_qty = round_quantity(
+                    self.client, symbol_u, exec_qty * (w / wsum) if wsum > 0 else 0
+                )
+            placed_qty = round_quantity(self.client, symbol_u, placed_qty + tp_qty)
+            if tp_qty <= 0:
+                continue
+            tp_px = round_price(self.client, symbol_u, float(tp_px_raw))
+            levels.append((label, tp_px))
+        return levels
+
+    def _cleanup_stray_protective_orders_from_book(
+        self,
+        symbol_u: str,
+        row: Any,
+        amt: float,
+        open_orders: list[Any],
+    ) -> dict[str, int]:
+        if not isinstance(open_orders, list):
+            return {"canceled": 0}
+        if row["source_signal_id"] is None:
+            return {"canceled": 0}
+        side = str(row["side"]).upper()
+        pst = row["position_side_tag"]
+        exit_side = exit_order_side_for_position(side)
+        expected_tp_prices = {price for _, price in self._expected_tp_levels_for_row(symbol_u, row, amt)}
+        expected_sl_price: float | None = None
+        if row["stop_loss_price"] is not None:
+            try:
+                expected_sl_price = round_price(self.client, symbol_u, float(row["stop_loss_price"]))
+            except (TypeError, ValueError):
+                expected_sl_price = None
+        canceled = 0
+        existing_rows = list(self.store.list_orders_for_position(int(row["id"])))
+        for order in open_orders:
+            if not isinstance(order, dict):
+                continue
+            if not _is_protective_exit_order(order):
+                continue
+            if str(order.get("side") or "").upper() != exit_side:
+                continue
+            if not _hedge_order_matches_leg(self.config, pst, order):
+                continue
+            try:
+                stop_price = float(order.get("stopPrice") or 0)
+            except (TypeError, ValueError):
+                stop_price = 0.0
+            if stop_price <= 0:
+                continue
+            stop_price_r = round_price(self.client, symbol_u, stop_price)
+            keep = False
+            if _is_stop_order(order):
+                keep = expected_sl_price is not None and stop_price_r == expected_sl_price
+            elif _is_take_profit_order(order):
+                keep = stop_price_r in expected_tp_prices
+            if keep:
+                continue
+            order_id = _order_id(order)
+            client_order_id = str(order.get("clientOrderId") or "").strip() or None
+            try:
+                if order_id is not None:
+                    self.client.cancel_order(symbol=symbol_u, order_id=int(order_id))
+                elif client_order_id:
+                    self.client.cancel_order(symbol=symbol_u, client_order_id=client_order_id)
+                else:
+                    continue
+            except Exception:
+                continue
+            for existing in existing_rows:
+                existing_oid = existing["order_id"]
+                existing_cid = str(existing["client_order_id"] or "")
+                oid_match = order_id is not None and existing_oid is not None and int(existing_oid) == int(order_id)
+                cid_match = bool(client_order_id) and existing_cid == client_order_id
+                if oid_match or cid_match:
+                    self.store.update_position_order_row_status(int(existing["id"]), "CANCELED")
+            self.store.append_event(
+                int(row["id"]),
+                "STRAY_PROTECTIVE_ORDER_CANCELED",
+                {"order_id": order_id, "client_order_id": client_order_id, "stop_price": stop_price_r},
+            )
+            canceled += 1
+        return {"canceled": canceled}
+
     def _ensure_take_profits_for_row(
         self,
         symbol_u: str,
@@ -640,12 +766,13 @@ class PositionManager:
         exec_qty = round_quantity(self.client, symbol_u, abs(amt))
         if exec_qty <= 0:
             return {"position_id": pid, "skipped": "qty_zero"}
-        tp_levels = [
-            ("TP1", row["tp1_price"], float(self.config.tp1_size_pct)),
-            ("TP2", row["tp2_price"], float(self.config.tp2_size_pct)),
-            ("TP3", row["tp3_price"], float(self.config.tp3_size_pct)),
-        ]
-        valid = [(lab, px, w) for lab, px, w in tp_levels if px is not None and w > 0]
+        expected_levels = self._expected_tp_levels_for_row(symbol_u, row, amt)
+        tp_weights = {
+            "TP1": float(self.config.tp1_size_pct),
+            "TP2": float(self.config.tp2_size_pct),
+            "TP3": float(self.config.tp3_size_pct),
+        }
+        valid = [(lab, px, tp_weights[lab]) for lab, px in expected_levels]
         if not valid:
             return {"position_id": pid, "skipped": "no_tp_levels"}
         wsum = sum(w for _, _, w in valid)
@@ -752,6 +879,12 @@ class PositionManager:
             sync_info = self._sync_protective_rows_from_book(symbol_u, row, amt, open_orders)
             if sync_info.get("imported") or sync_info.get("refreshed"):
                 results.append({"position_id": int(row["id"]), "book_sync": sync_info})
+            cleanup_info = self._cleanup_stray_protective_orders_from_book(symbol_u, row, amt, open_orders)
+            if cleanup_info.get("canceled"):
+                results.append({"position_id": int(row["id"]), "book_cleanup": cleanup_info})
+                open_orders = self.client.get_open_orders(symbol_u) or []
+                if not isinstance(open_orders, list):
+                    open_orders = []
             side_row = str(row["side"]).upper()
             if stop_loss_reduce_on_book_from_orders(
                 open_orders,

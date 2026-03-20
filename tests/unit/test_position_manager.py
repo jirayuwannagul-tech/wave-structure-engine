@@ -360,6 +360,89 @@ def test_ensure_protection_imports_existing_exchange_protection_rows():
         os.unlink(path)
 
 
+def test_ensure_protection_skips_hit_tp_and_cancels_stale_tp():
+    import sqlite3
+
+    from storage.wave_repository import WaveRepository
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = PositionStore(db_path=path)
+    WaveRepository(db_path=path)
+    client = FakeBinanceFuturesClient()
+    pm = PositionManager(client, _cfg(), store)
+    try:
+        client.seed_position("ETHUSDT", -0.375, 2160.78)
+        pid = store.create_position(
+            symbol="ETHUSDT",
+            side="SHORT",
+            source_signal_id=25,
+            signal_hash="h25",
+            quantity=0.375,
+            entry_price=2160.78,
+            entry_order_id=25,
+            stop_loss_price=2268.81,
+            tp1_price=2117.91826,
+            tp2_price=2061.6,
+            tp3_price=2021.49904,
+        )
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                """
+                INSERT INTO signals (
+                    id, created_at, updated_at, symbol, timeframe, side, status,
+                    signal_hash, entry_price, stop_loss, tp1, tp2, tp3, tp1_hit_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    25,
+                    "2026-03-19T00:00:00+00:00",
+                    "2026-03-19T00:00:00+00:00",
+                    "ETHUSDT",
+                    "4H",
+                    "SHORT",
+                    "PARTIAL_TP1",
+                    "h25",
+                    2160.78,
+                    2268.81,
+                    2117.91826,
+                    2061.6,
+                    2021.49904,
+                    "2026-03-19T13:14:42+00:00",
+                ),
+            )
+            conn.commit()
+        client._orders.append(
+            {
+                "orderId": 777,
+                "symbol": "ETHUSDT",
+                "type": "TAKE_PROFIT_MARKET",
+                "side": "BUY",
+                "stopPrice": "2021.00",
+                "origQty": "0",
+                "reduceOnly": True,
+                "closePosition": True,
+                "status": "NEW",
+                "clientOrderId": "STALE_TP",
+            }
+        )
+
+        out = pm.ensure_protection("ETHUSDT")
+
+        assert out["ok"] is True
+        orders = client.get_open_orders("ETHUSDT")
+        cids = {str(o.get("clientOrderId") or "") for o in orders}
+        assert "STALE_TP" not in cids
+        assert "E25TP1" not in cids
+        assert "E25TP2" in cids
+        assert "E25TP3" in cids
+        rows = store.list_orders_for_position(pid)
+        tp1_rows = [r for r in rows if r["order_kind"] == "TP1" and str(r["status"]) == "NEW"]
+        assert tp1_rows == []
+    finally:
+        os.unlink(path)
+
+
 def test_close_for_signal_cancels_pending_entry_without_symbol_cleanup():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
