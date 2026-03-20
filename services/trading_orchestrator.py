@@ -752,6 +752,21 @@ def _format_analysis_summary(analysis: dict) -> str:
     tp1 = targets[0] if len(targets) >= 1 else None
     tp2 = targets[1] if len(targets) >= 2 else None
     tp3 = targets[2] if len(targets) >= 3 else None
+
+    # If TP1 RR is too low (< 0.5), replace with Fibonacci fallback targets.
+    # This happens when the wave pattern's support/resistance is too close to entry.
+    if tp1 is not None and entry is not None and stop_loss is not None:
+        try:
+            risk = abs(float(entry) - float(stop_loss))
+            tp1_dist = abs(float(tp1) - float(entry))
+            rr_tp1 = tp1_dist / risk if risk > 0 else 0
+            if rr_tp1 < 0.5:
+                targets = _fallback_targets(bias, entry, stop_loss)
+                tp1 = targets[0] if len(targets) >= 1 else tp1
+                tp2 = targets[1] if len(targets) >= 2 else tp2
+                tp3 = targets[2] if len(targets) >= 3 else tp3
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
     scenario_name = getattr(main_scenario, "name", None) or "No active scenario"
     setup_status, trigger_side = _infer_setup_status(
         bias=bias,
