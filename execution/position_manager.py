@@ -480,6 +480,13 @@ class PositionManager:
             stop_price = 0.0
         if stop_price <= 0:
             return None
+        if (
+            _order_flag(order, "closePosition")
+            and row["tp1_price"] is None
+            and row["tp2_price"] is None
+            and row["tp3_price"] is None
+        ):
+            return "TP3"
         want = round_price(self.client, symbol_u, stop_price)
         for label, field in (("TP1", "tp1_price"), ("TP2", "tp2_price"), ("TP3", "tp3_price")):
             level = row[field]
@@ -531,6 +538,9 @@ class PositionManager:
             quantity = round_quantity(self.client, symbol_u, quantity)
         except ValueError:
             quantity = float(quantity)
+
+        if order_kind == "TP3" and row["tp3_price"] is None and stop_price is not None:
+            self.store.update_protection_prices(pid, tp3_price=stop_price)
 
         row_id = self.store.record_order(
             pid,

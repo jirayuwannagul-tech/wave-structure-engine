@@ -443,6 +443,66 @@ def test_ensure_protection_skips_hit_tp_and_cancels_stale_tp():
         os.unlink(path)
 
 
+def test_ensure_protection_imports_orphan_close_all_tp_as_tp3():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = PositionStore(db_path=path)
+    client = FakeBinanceFuturesClient()
+    pm = PositionManager(client, _cfg(), store)
+    try:
+        client.seed_position("BTCUSDT", -0.023, 69848.9)
+        pid = store.create_position(
+            symbol="BTCUSDT",
+            side="SHORT",
+            source_signal_id=None,
+            signal_hash=None,
+            quantity=0.023,
+            entry_price=69848.9,
+            entry_order_id=None,
+            stop_loss_price=73341.3,
+            recovered=1,
+        )
+        client._orders.extend(
+            [
+                {
+                    "orderId": 1001,
+                    "symbol": "BTCUSDT",
+                    "type": "STOP_MARKET",
+                    "side": "BUY",
+                    "stopPrice": "73341.3",
+                    "origQty": "0",
+                    "closePosition": True,
+                    "status": "NEW",
+                    "clientOrderId": "REC_SL",
+                },
+                {
+                    "orderId": 1002,
+                    "symbol": "BTCUSDT",
+                    "type": "TAKE_PROFIT_MARKET",
+                    "side": "BUY",
+                    "stopPrice": "65000",
+                    "origQty": "0",
+                    "closePosition": True,
+                    "reduceOnly": True,
+                    "status": "NEW",
+                    "clientOrderId": "LEGACY_TP",
+                },
+            ]
+        )
+
+        out = pm.ensure_protection("BTCUSDT")
+
+        assert out["ok"] is True
+        row = store.get_open_position_by_symbol("BTCUSDT")
+        assert row is not None
+        assert row["tp3_price"] == pytest.approx(65000.0)
+        rows = store.list_orders_for_position(pid)
+        by_exchange_id = {int(r["order_id"]): str(r["order_kind"]) for r in rows if r["order_id"] is not None}
+        assert by_exchange_id[1002] == "TP3"
+    finally:
+        os.unlink(path)
+
+
 def test_close_for_signal_cancels_pending_entry_without_symbol_cleanup():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
