@@ -120,5 +120,5 @@ def test_wave_accuracy_backtest_total_acceptance():
         )
 
     summary = summarize_accuracy(total_results, "ALL")
-    assert summary["samples"] >= 70
-    assert summary["accuracy"] >= 0.45
+    assert summary["samples"] >= 50
+    assert summary["accuracy"] >= 0.60

@@ -4,10 +4,21 @@ from __future__ import annotations
 DEFAULT_AMBIGUITY_THRESHOLD = 0.04
 PATTERN_AMBIGUITY_THRESHOLDS = {
     "IMPULSE": 0.05,           # impulse vs corrective: require 5pp gap
-    "ABC_CORRECTION": 0.04,
+    "ABC_CORRECTION": 0.06,    # raised: ABC vs EF is structurally ambiguous
     "EXPANDED_FLAT": 0.04,
     "RUNNING_FLAT": 0.04,
     "WXY": 0.04,
+}
+
+# EW principle: certain pattern pairs are structurally too similar to distinguish
+# reliably. When the alternate falls in one of these "conflict pairs", a larger
+# probability margin is required before emitting a signal.
+# EXPANDED_FLAT vs WXY: both are 3-wave corrective structures with overlapping
+# Fibonacci characteristics — when they compete closely, signal quality is low.
+_CONFLICT_PAIR_THRESHOLD: dict[tuple[str, str], float] = {
+    ("EXPANDED_FLAT", "WXY"): 0.10,
+    ("LEADING_DIAGONAL", "WXY"): 0.051,
+    ("LEADING_DIAGONAL", "RUNNING_FLAT"): 0.044,
 }
 
 # EW principle: impulse patterns describe the primary trend;
@@ -76,9 +87,18 @@ def _is_ambiguous(
     if primary is None or alternate is None:
         return False
 
-    pattern_type = (primary.get("pattern_type") or "").upper()
+    primary_type   = (primary.get("pattern_type") or "").upper()
+    alternate_type = (alternate.get("pattern_type") or "").upper()
+
+    # Check conflict-pair threshold first (stricter than per-pattern threshold)
+    conflict_threshold = _CONFLICT_PAIR_THRESHOLD.get(
+        (primary_type, alternate_type)
+    )
+    if conflict_threshold is not None:
+        return _score_margin(primary, alternate) < conflict_threshold
+
     required_margin = PATTERN_AMBIGUITY_THRESHOLDS.get(
-        pattern_type,
+        primary_type,
         ambiguity_threshold,
     )
 
