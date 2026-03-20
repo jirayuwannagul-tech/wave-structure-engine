@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import traceback
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import os
 
 from analysis.price_level_watcher import Level
@@ -404,8 +404,6 @@ def _process_execution_queue(repository: WaveRepository) -> None:
                 n = int(cur.get("n") or 0) + 1
                 record_execution_health("execution:circuit_failures", {"n": n}, db_path=store.db_path)
                 if n >= int(cfg.circuit_breaker_failures):
-                    from datetime import UTC, datetime, timedelta
-
                     until_ts = (
                         datetime.now(UTC).replace(microsecond=0)
                         + timedelta(seconds=float(cfg.circuit_breaker_cooldown_sec))
