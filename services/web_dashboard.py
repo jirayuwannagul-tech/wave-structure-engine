@@ -173,6 +173,9 @@ def run_web_dashboard(
             if path == "/healthz":
                 self._send_json(200, {"ok": True})
                 return
+            if path == "/heartbeat":
+                self._send_heartbeat()
+                return
             if path == "/api/execution_health":
                 self._send_execution_health()
                 return
@@ -210,6 +213,17 @@ def run_web_dashboard(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_heartbeat(self) -> None:
+            try:
+                with open("heartbeat.txt") as f:
+                    import json as _json
+                    data = _json.load(f)
+                self._send_json(200, {"ok": True, **data})
+            except FileNotFoundError:
+                self._send_json(503, {"ok": False, "error": "heartbeat.txt not found — orchestrator not running"})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
 
         def _send_execution_health(self) -> None:
             db_path = os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")

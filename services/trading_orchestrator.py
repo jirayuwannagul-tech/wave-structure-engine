@@ -1026,6 +1026,7 @@ def run_orchestrator(
         for level in runtime.levels:
             print(f"- {level.name}: {level.price} ({level.level_type})")
 
+    _uptime_cycles = 0
     while True:
         try:
             _process_execution_queue(repository)
@@ -1088,6 +1089,21 @@ def run_orchestrator(
             if once:
                 print("\n\n".join(snapshots))
                 return next(iter(runtimes.values()))
+
+            # Write heartbeat so external tools can verify the process is alive
+            try:
+                from datetime import UTC, datetime as _dt
+                _hb = {
+                    "timestamp": _dt.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "symbols": symbols,
+                    "uptime_cycles": _uptime_cycles,
+                }
+                with open("heartbeat.txt", "w") as _f:
+                    import json as _json
+                    _json.dump(_hb, _f, indent=2)
+                _uptime_cycles += 1
+            except Exception:
+                pass
 
             time.sleep(poll_interval)
 
