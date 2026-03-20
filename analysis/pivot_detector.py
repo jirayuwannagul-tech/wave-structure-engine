@@ -52,15 +52,15 @@ def detect_pivots(
         is_pivot_low = True
 
         for j in range(1, left + 1):
-            if highs[i] <= highs[i - j]:
+            if highs[i] < highs[i - j]:
                 is_pivot_high = False
-            if lows[i] >= lows[i - j]:
+            if lows[i] > lows[i - j]:
                 is_pivot_low = False
 
         for j in range(1, right + 1):
-            if highs[i] <= highs[i + j]:
+            if highs[i] < highs[i + j]:
                 is_pivot_high = False
-            if lows[i] >= lows[i + j]:
+            if lows[i] > lows[i + j]:
                 is_pivot_low = False
 
         # ATR-based minimum swing size filter
@@ -91,6 +91,8 @@ def detect_pivots(
                 timestamp=df.iloc[i]["open_time"],
             ))
 
+    if "close" in df.columns:
+        mark_broken_pivots(pivots, df)
     return pivots
 
 

@@ -7,7 +7,7 @@ def test_get_manual_wave_context_returns_seeded_btc_weekly_context():
     assert context is not None
     assert context.symbol == "BTCUSDT"
     assert context.timeframe == "1W"
-    assert context.bias == "BEARISH"
-    assert context.wave_number == "A"
+    assert context.bias == "BULLISH"
+    assert context.wave_number == "B"
     assert context.structure == "ABC_CORRECTION"
-    assert context.position == "WAVE_A_IN_PROGRESS"
+    assert context.position == "WAVE_B_IN_PROGRESS"

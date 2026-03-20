@@ -327,7 +327,7 @@ def _process_execution_queue(repository: WaveRepository) -> None:
 
     if cfg.circuit_breaker_enabled:
         until = read_execution_health("execution:circuit_until", db_path=store.db_path)
-        if until and (until.get("until") or "") > __import__("datetime").datetime.now(__import__("datetime").UTC).replace(microsecond=0).isoformat():
+        if until and (until.get("until") or "") > datetime.now(UTC).replace(microsecond=0).isoformat():
             return
 
     tasks = queue.fetch_ready(limit=int(cfg.execution_queue_max_tasks_per_cycle))
@@ -615,8 +615,14 @@ def _resolve_weekly_context(symbol: str) -> tuple[dict, dict | None]:
         analysis_1w["manual_wave_context"] = None
         return analysis_1w, build_higher_timeframe_context(analysis_1w)
 
-    analysis_1w["manual_wave_context"] = serialize_manual_wave_context(manual_context)
-    return analysis_1w, analysis_1w["manual_wave_context"]
+    serialized = serialize_manual_wave_context(manual_context)
+    analysis_1w["manual_wave_context"] = serialized
+    # Return the manual context as-is so callers get bias/wave_number/structure/position.
+    # Add wave_sequence: None so the key is always present regardless of the path taken,
+    # matching the structure returned by build_higher_timeframe_context().
+    ctx = dict(serialized) if serialized else {}
+    ctx.setdefault("wave_sequence", None)
+    return analysis_1w, ctx
 
 
 def _load_runtime(symbol: str = "BTCUSDT", retries: int = 3) -> OrchestratorRuntime:

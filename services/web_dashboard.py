@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from services.terminal_dashboard import build_dashboard_snapshot, render_terminal_dashboard
@@ -195,7 +196,7 @@ def run_web_dashboard(
                     "ok": True,
                     "snapshot": snapshot,
                     "terminal": render_terminal_dashboard(snapshot),
-                    "updated_at": __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 self._send_json(200, payload)
             except Exception as exc:  # pragma: no cover - defensive

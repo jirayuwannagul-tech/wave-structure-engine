@@ -42,7 +42,11 @@ def _resolve_timeframes(timeframes: list[str] | None) -> list[str]:
     normalized = [timeframe.upper() for timeframe in timeframes]
     invalid = [timeframe for timeframe in normalized if timeframe not in TIMEFRAME_CONFIG]
     if invalid:
-        raise ValueError(f"Unsupported timeframe(s): {', '.join(invalid)}")
+        supported = ", ".join(sorted(TIMEFRAME_CONFIG))
+        raise ValueError(
+            f"Unsupported timeframe(s): {', '.join(invalid)}. "
+            f"Supported timeframes for backtest: {supported}"
+        )
     return normalized
 
 
