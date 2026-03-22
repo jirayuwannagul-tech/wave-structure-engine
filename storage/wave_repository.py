@@ -1190,43 +1190,45 @@ class WaveRepository:
                             events_created.append((signal_id, "STOP_LOSS_HIT"))
                             continue
 
-                        opposite_scenario = self._opposite_structure_scenario(
-                            analysis_by_timeframe.get(str(row["timeframe"] or "").upper()),
-                            side=side,
-                            current_price=current,
-                        )
-                        if opposite_scenario is not None:
-                            self._close_signal(
-                                conn,
-                                signal_id=signal_id,
-                                status="STOPPED",
-                                close_reason="OPPOSITE_STRUCTURE",
+                        _edge_mode = str(os.getenv("EDGE_COLLECTION_MODE", "0")).strip().lower() in {"1", "true", "yes", "on"}
+                        if not _edge_mode:
+                            opposite_scenario = self._opposite_structure_scenario(
+                                analysis_by_timeframe.get(str(row["timeframe"] or "").upper()),
+                                side=side,
                                 current_price=current,
-                                event_time=now,
-                                event_type="OPPOSITE_STRUCTURE_HIT",
                             )
-                            events_created.append((signal_id, "OPPOSITE_STRUCTURE_HIT"))
-                            continue
+                            if opposite_scenario is not None:
+                                self._close_signal(
+                                    conn,
+                                    signal_id=signal_id,
+                                    status="STOPPED",
+                                    close_reason="OPPOSITE_STRUCTURE",
+                                    current_price=current,
+                                    event_time=now,
+                                    event_type="OPPOSITE_STRUCTURE_HIT",
+                                )
+                                events_created.append((signal_id, "OPPOSITE_STRUCTURE_HIT"))
+                                continue
 
-                        if self._volatility_exit_triggered(
-                            conn,
-                            symbol=symbol,
-                            timeframe=row["timeframe"],
-                            side=side,
-                            current_price=current,
-                            entry_price=float(row["entry_triggered_price"] or entry),
-                        ):
-                            self._close_signal(
+                            if self._volatility_exit_triggered(
                                 conn,
-                                signal_id=signal_id,
-                                status="STOPPED",
-                                close_reason="VOLATILITY_EXIT",
+                                symbol=symbol,
+                                timeframe=row["timeframe"],
+                                side=side,
                                 current_price=current,
-                                event_time=now,
-                                event_type="VOLATILITY_EXIT_HIT",
-                            )
-                            events_created.append((signal_id, "VOLATILITY_EXIT_HIT"))
-                            continue
+                                entry_price=float(row["entry_triggered_price"] or entry),
+                            ):
+                                self._close_signal(
+                                    conn,
+                                    signal_id=signal_id,
+                                    status="STOPPED",
+                                    close_reason="VOLATILITY_EXIT",
+                                    current_price=current,
+                                    event_time=now,
+                                    event_type="VOLATILITY_EXIT_HIT",
+                                )
+                                events_created.append((signal_id, "VOLATILITY_EXIT_HIT"))
+                                continue
 
                         limit = time_stop_bars_for_timeframe(row["timeframe"])
                         entry_triggered_at = _parse_iso_timestamp(row["entry_triggered_at"])
