@@ -1230,10 +1230,12 @@ class WaveRepository:
                                 events_created.append((signal_id, "VOLATILITY_EXIT_HIT"))
                                 continue
 
+                        _edge_mode_ts = str(os.getenv("EDGE_COLLECTION_MODE", "0")).strip().lower() in {"1", "true", "yes", "on"}
                         limit = time_stop_bars_for_timeframe(row["timeframe"])
                         entry_triggered_at = _parse_iso_timestamp(row["entry_triggered_at"])
                         if (
-                            limit is not None
+                            not _edge_mode_ts
+                            and limit is not None
                             and entry_triggered_at is not None
                             and row["tp1_hit_at"] is None
                         ):
