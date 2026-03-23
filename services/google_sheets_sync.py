@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from execution.settings import load_execution_config
 
 
-THAI_TZ = ZoneInfo("Asia/Bangkok")
+THAI_TZ = ZoneInfo("America/Los_Angeles")
 SHEET_HEADERS = [
     "date",
     "symbol",

@@ -8,20 +8,21 @@ from zoneinfo import ZoneInfo
 from services.notifier import send_notification
 from analysis.wave_position import describe_current_leg
 
-THAI_TZ = ZoneInfo("Asia/Bangkok")
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+THAI_TZ = LOCAL_TZ  # backward-compat alias
 
 
 def _now_bangkok(now: datetime | None) -> datetime:
     if now is None:
-        return datetime.now(THAI_TZ)
+        return datetime.now(LOCAL_TZ)
     if now.tzinfo is None:
-        return now.replace(tzinfo=THAI_TZ)
-    return now.astimezone(THAI_TZ)
+        return now.replace(tzinfo=LOCAL_TZ)
+    return now.astimezone(LOCAL_TZ)
 
 
 def in_daily_watch_window(now: datetime | None = None) -> bool:
     """
-    Bangkok 07:05–07:59 — first orchestrator cycle in this window each day sends the reminder.
+    LA 07:05–07:59 — first orchestrator cycle in this window each day sends the reminder.
     Optional: DAILY_WATCH_START_HOUR (default 7), DAILY_WATCH_START_MINUTE (5),
     DAILY_WATCH_END_HOUR (default 7) — if end hour > start, extends window (e.g. catch-up until 08:30).
     """
@@ -164,7 +165,7 @@ def build_combined_daily_summary_message(
         rows.append(build_symbol_watch_message(runtime, current_price=price))
 
     return (
-        "⏰ แจ้งเตือนจับตาดูรายวัน (07:05 น. เวลาไทย)\n"
+        "⏰ แจ้งเตือนจับตาดูรายวัน (07:05 น. เวลา LA)\n"
         "────────────────\n"
         "Daily Watchlist\n"
         f"📅 {now.strftime('%Y-%m-%d')}\n\n"
@@ -345,7 +346,7 @@ def build_daily_scenario_message(
         )
 
     return (
-        "📌 Scenario Update (หลังปิดแท่ง) — 07:05 (Asia/Bangkok)\n"
+        "📌 Scenario Update (หลังปิดแท่ง) — 07:05 (America/Los_Angeles)\n"
         f"โฟกัส: แนวรับ/แนวต้าน (อย่างละ 1) + เฝ้าดู “ชื่อคลื่น” | TF: {tf}\n"
         f"📅 {now.strftime('%Y-%m-%d')}\n\n"
         + "\n\n".join(rows)
