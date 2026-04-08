@@ -804,8 +804,8 @@ class WaveRepository:
         We look at the latest non-replaced lifecycle row for that symbol+timeframe. A new
         signal is allowed only after the previous effective plan finished via:
         - TP3_HIT
-        - STOPPED with STOP_LOSS
-        - INVALIDATED with STOP_LOSS_BEFORE_ENTRY
+        - STOPPED with STOP_LOSS  (only if new signal has different bias)
+        - INVALIDATED with STOP_LOSS_BEFORE_ENTRY (only if new signal has different bias)
         """
         if not _signal_gate_terminal_exit_enabled():
             return False
@@ -819,7 +819,7 @@ class WaveRepository:
 
         row = conn.execute(
             """
-            SELECT id, status, close_reason
+            SELECT id, status, close_reason, bias
             FROM signals
             WHERE UPPER(TRIM(symbol)) = ?
               AND UPPER(TRIM(timeframe)) = ?
@@ -834,12 +834,16 @@ class WaveRepository:
 
         status = str(row["status"] or "").upper()
         close_reason = str(row["close_reason"] or "").upper()
+        prev_bias = str(row["bias"] or "").upper()
+        new_bias = str(snapshot.get("bias") or "").upper()
+
         if status == "TP3_HIT":
             return False
         if status == "STOPPED" and close_reason == "STOP_LOSS":
-            return False
+            # Allow re-entry only if bias flipped (e.g. BEARISH → BULLISH)
+            return prev_bias == new_bias
         if status == "INVALIDATED" and close_reason == "STOP_LOSS_BEFORE_ENTRY":
-            return False
+            return prev_bias == new_bias
         return True
 
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
