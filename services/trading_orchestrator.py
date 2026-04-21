@@ -27,6 +27,7 @@ from execution.position_manager import PositionManager
 from execution.reconciler import reconcile_symbol
 from execution.settings import load_execution_config
 from execution.execution_health import record_execution_health, read_execution_health
+from services.account_fanout import fanout_to_active_accounts
 from storage.execution_queue_store import ExecutionQueueStore
 
 
@@ -191,6 +192,16 @@ def _maybe_run_exchange_execution(symbol: str, event_type: str, signal_row) -> d
         print(f"[orchestrator] exchange execution error: {exc}")
         traceback.print_exc()
         return {"ok": False, "error": str(exc)}
+
+    # Fan-out to all additional active managed accounts (non-blocking per account)
+    try:
+        fanout_results = fanout_to_active_accounts(event_type, signal_row)
+        if fanout_results:
+            ok_count = sum(1 for r in fanout_results if r.get("ok"))
+            print(f"[orchestrator] fanout {event_type}: {ok_count}/{len(fanout_results)} accounts ok")
+    except Exception as exc:
+        print(f"[orchestrator] fanout error (non-fatal): {exc}")
+
     return {"ok": True, "skipped": "noop"}
 
 
