@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from services.terminal_dashboard import build_dashboard_snapshot, render_terminal_dashboard
 from execution.execution_health import read_execution_health
 from storage.execution_queue_store import ExecutionQueueStore
+from storage.account_store import AccountStore
 import os
 
 
@@ -518,6 +519,208 @@ def build_history_html(refresh_seconds: float) -> str:
 """
 
 
+_ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
+
+
+def build_register_html() -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Register — AlphaFutures</title>
+<style>{_SHARED_CSS}
+.form-card {{ max-width: 480px; margin: 60px auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; }}
+.form-card h2 {{ font-size: 20px; font-weight: 700; margin-bottom: 8px; }}
+.form-card p {{ color: var(--muted); font-size: 13px; margin-bottom: 24px; line-height: 1.5; }}
+label {{ display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }}
+input[type=text], input[type=password] {{ width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; margin-bottom: 16px; outline: none; }}
+input:focus {{ border-color: var(--primary); }}
+.btn {{ width: 100%; padding: 12px; background: var(--primary); color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }}
+.btn:disabled {{ opacity: .5; cursor: not-allowed; }}
+.msg {{ margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 13px; display: none; }}
+.msg-ok {{ background: rgba(16,185,129,.15); color: var(--success); }}
+.msg-err {{ background: rgba(239,68,68,.15); color: var(--danger); }}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>&#x26A1; AlphaFutures</h1>
+    <nav class="nav"><a href="/">Dashboard</a></nav>
+  </div>
+  <div class="form-card">
+    <h2>Connect your Binance account</h2>
+    <p>Enter your Binance Futures API key and secret. Your keys are stored securely and used only to execute trades on your behalf.<br><br>Required permission: <strong>Futures Trading</strong> only. Do NOT enable Withdrawals.</p>
+    <label>Your Name / Label</label>
+    <input type="text" id="label" placeholder="e.g. John" />
+    <label>Binance API Key</label>
+    <input type="text" id="apikey" placeholder="Paste your API key" autocomplete="off" />
+    <label>Binance API Secret</label>
+    <input type="password" id="apisecret" placeholder="Paste your API secret" autocomplete="off" />
+    <button class="btn" id="submit-btn" onclick="submit()">Register</button>
+    <div class="msg msg-ok" id="msg-ok"></div>
+    <div class="msg msg-err" id="msg-err"></div>
+  </div>
+</div>
+<script>
+async function submit() {{
+  const label = document.getElementById('label').value.trim();
+  const apikey = document.getElementById('apikey').value.trim();
+  const apisecret = document.getElementById('apisecret').value.trim();
+  const btn = document.getElementById('submit-btn');
+  const ok = document.getElementById('msg-ok');
+  const err = document.getElementById('msg-err');
+  ok.style.display = 'none'; err.style.display = 'none';
+  if (!label || !apikey || !apisecret) {{ err.textContent = 'Please fill in all fields.'; err.style.display = 'block'; return; }}
+  btn.disabled = true; btn.textContent = 'Registering...';
+  try {{
+    const res = await fetch('/api/register', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{label, api_key: apikey, api_secret: apisecret}})
+    }});
+    const d = await res.json();
+    if (d.ok) {{
+      ok.innerHTML = '&#10003; Registered! Your dashboard link:<br><a href="/u/' + d.token + '" style="color:var(--primary)">/u/' + d.token.substring(0,16) + '...</a><br><br>Save this link — it is your personal dashboard.';
+      ok.style.display = 'block';
+      btn.textContent = 'Registered';
+      document.getElementById('label').value = '';
+      document.getElementById('apikey').value = '';
+      document.getElementById('apisecret').value = '';
+    }} else {{
+      err.textContent = d.error || 'Registration failed.';
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Register';
+    }}
+  }} catch(e) {{
+    err.textContent = 'Network error: ' + e.message;
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Register';
+  }}
+}}
+</script>
+</body></html>
+"""
+
+
+def build_admin_html() -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — AlphaFutures</title>
+<style>{_SHARED_CSS}
+.login-card {{ max-width: 360px; margin: 100px auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; }}
+.login-card h2 {{ font-size: 18px; font-weight: 700; margin-bottom: 20px; }}
+label {{ display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }}
+input[type=password] {{ width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; margin-bottom: 16px; outline: none; }}
+input:focus {{ border-color: var(--primary); }}
+.btn {{ padding: 8px 16px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }}
+.btn-primary {{ background: var(--primary); color: #fff; }}
+.btn-success {{ background: var(--success); color: #fff; }}
+.btn-danger {{ background: var(--danger); color: #fff; }}
+.btn:disabled {{ opacity: .5; cursor: not-allowed; }}
+.badge-active {{ background: rgba(16,185,129,.15); color: var(--success); padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
+.badge-inactive {{ background: rgba(239,68,68,.15); color: var(--danger); padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
+#main {{ display: none; }}
+.err {{ color: var(--danger); font-size: 13px; margin-top: 8px; }}
+</style></head><body>
+<div class="container">
+  <div id="login-view">
+    <div class="login-card">
+      <h2>&#x1F512; Admin Login</h2>
+      <label>Password</label>
+      <input type="password" id="pw" placeholder="Enter admin password" onkeydown="if(event.key==='Enter')login()" />
+      <button class="btn btn-primary" onclick="login()" style="width:100%">Login</button>
+      <div class="err" id="login-err"></div>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="header">
+      <h1>&#x26A1; Admin Panel</h1>
+      <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/admin" class="active">Admin</a>
+      </nav>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <h2>Members (<span id="total-count">0</span>)</h2>
+        <div style="font-size:13px;color:var(--muted)">
+          Active: <span id="active-count" style="color:var(--success);font-weight:600">0</span>
+        </div>
+      </div>
+      <table class="table">
+        <thead><tr>
+          <th>ID</th><th>Label</th><th>API Key</th><th>Status</th>
+          <th>Registered</th><th>Activated</th><th>Action</th>
+        </tr></thead>
+        <tbody id="accounts-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let _pw = '';
+
+async function login() {{
+  _pw = document.getElementById('pw').value;
+  const res = await fetch('/api/admin/accounts', {{
+    headers: {{'X-Admin-Password': _pw}}
+  }});
+  if (res.status === 401) {{
+    document.getElementById('login-err').textContent = 'Wrong password';
+    return;
+  }}
+  const d = await res.json();
+  if (!d.ok) {{ document.getElementById('login-err').textContent = d.error || 'Error'; return; }}
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  renderAccounts(d.accounts);
+}}
+
+function renderAccounts(accounts) {{
+  document.getElementById('total-count').textContent = accounts.length;
+  document.getElementById('active-count').textContent = accounts.filter(a=>a.active).length;
+  const tbody = document.getElementById('accounts-tbody');
+  if (!accounts.length) {{
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">No members yet</td></tr>';
+    return;
+  }}
+  tbody.innerHTML = accounts.map(a => `
+    <tr>
+      <td>#${{a.id}}</td>
+      <td style="font-weight:600">${{a.label}}</td>
+      <td style="font-family:monospace;font-size:12px">${{a.api_key_masked}}</td>
+      <td><span class="${{a.active ? 'badge-active' : 'badge-inactive'}}">${{a.active ? 'ACTIVE' : 'INACTIVE'}}</span></td>
+      <td style="color:var(--muted);font-size:12px">${{a.created_at.substring(0,10)}}</td>
+      <td style="color:var(--muted);font-size:12px">${{a.activated_at ? a.activated_at.substring(0,10) : '—'}}</td>
+      <td>
+        ${{a.active
+          ? `<button class="btn btn-danger" onclick="toggle(${{a.id}}, false)">Deactivate</button>`
+          : `<button class="btn btn-success" onclick="toggle(${{a.id}}, true)">Activate</button>`
+        }}
+      </td>
+    </tr>
+  `).join('');
+}}
+
+async function toggle(id, activate) {{
+  const endpoint = activate ? '/api/admin/activate' : '/api/admin/deactivate';
+  const res = await fetch(endpoint, {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/json','X-Admin-Password':_pw}},
+    body: JSON.stringify({{id}})
+  }});
+  const d = await res.json();
+  if (!d.ok) {{ alert(d.error); return; }}
+  const res2 = await fetch('/api/admin/accounts', {{headers:{{'X-Admin-Password':_pw}}}});
+  const d2 = await res2.json();
+  renderAccounts(d2.accounts);
+}}
+</script>
+</body></html>
+"""
+
+
 def run_web_dashboard(
     symbol: str = "BTCUSDT",
     *,
@@ -529,7 +732,10 @@ def run_web_dashboard(
 
     html = build_web_dashboard_html(symbol, refresh_seconds)
     history_html = build_history_html(refresh_seconds)
+    register_html = build_register_html()
+    admin_html = build_admin_html()
     db_path = os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+    account_store = AccountStore(db_path=db_path)
 
     _cache: dict = {"payload": None, "updated_at": None}
     _cache_lock = threading.Lock()
@@ -566,6 +772,21 @@ def run_web_dashboard(
             if path == "/history":
                 self._send_html(history_html)
                 return
+            if path == "/register":
+                self._send_html(register_html)
+                return
+            if path == "/admin":
+                self._send_html(admin_html)
+                return
+            if path.startswith("/u/"):
+                token = path[3:]
+                acc = account_store.get_by_token(token)
+                if acc is None:
+                    self._send_html("<h2>Account not found</h2>")
+                else:
+                    from services.web_dashboard_client import build_client_html
+                    self._send_html(build_client_html(acc, refresh_seconds))
+                return
             if path == "/api/snapshot":
                 with _cache_lock:
                     payload = _cache["payload"]
@@ -581,6 +802,16 @@ def run_web_dashboard(
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
+            if path == "/api/admin/accounts":
+                if not self._check_admin():
+                    return
+                accounts = account_store.list_all()
+                self._send_json(200, {"ok": True, "accounts": [a.to_dict() for a in accounts]})
+                return
+            if path.startswith("/api/client/"):
+                token = path[len("/api/client/"):]
+                self._handle_client_api(token)
+                return
             if path == "/healthz":
                 self._send_json(200, {"ok": True})
                 return
@@ -591,6 +822,106 @@ def run_web_dashboard(
                 self._send_execution_health()
                 return
             self._send_json(404, {"ok": False, "error": "not found"})
+
+        def do_POST(self):  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path == "/api/register":
+                self._handle_register()
+                return
+            if path == "/api/admin/activate":
+                if not self._check_admin():
+                    return
+                body = self._read_json()
+                if body is None:
+                    return
+                ok = account_store.activate(int(body.get("id", 0)))
+                self._send_json(200, {"ok": ok})
+                return
+            if path == "/api/admin/deactivate":
+                if not self._check_admin():
+                    return
+                body = self._read_json()
+                if body is None:
+                    return
+                ok = account_store.deactivate(int(body.get("id", 0)))
+                self._send_json(200, {"ok": ok})
+                return
+            self._send_json(404, {"ok": False, "error": "not found"})
+
+        def _handle_client_api(self, token: str) -> None:
+            acc = account_store.get_by_token(token)
+            if acc is None:
+                self._send_json(404, {"ok": False, "error": "account not found"})
+                return
+            if not acc.active:
+                self._send_json(200, {"ok": True, "wallet": 0, "available": 0, "upnl": 0,
+                                       "positions": [], "history": [], "updated_at": ""})
+                return
+            try:
+                from execution.binance_futures_client import BinanceFuturesClient
+                client = BinanceFuturesClient(api_key=acc.api_key, api_secret=acc.api_secret)
+                balance_info = client.get_account_balance()
+                wallet = next((float(b["balance"]) for b in balance_info if b["asset"] == "USDT"), 0.0)
+                available = next((float(b["availableBalance"]) for b in balance_info if b["asset"] == "USDT"), 0.0)
+                positions_raw = client.get_position_risk()
+                positions = [
+                    {
+                        "symbol": p["symbol"],
+                        "side": "LONG" if float(p["positionAmt"]) > 0 else "SHORT",
+                        "size": abs(float(p["positionAmt"])),
+                        "entry_price": float(p["entryPrice"]),
+                        "mark_price": float(p.get("markPrice", 0)),
+                        "upnl": float(p["unRealizedProfit"]),
+                        "liq_price": float(p.get("liquidationPrice", 0)),
+                    }
+                    for p in positions_raw if float(p.get("positionAmt", 0)) != 0
+                ]
+                upnl = sum(p["upnl"] for p in positions)
+                history = _build_trade_history(db_path, limit=50)
+                updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+                self._send_json(200, {
+                    "ok": True,
+                    "wallet": round(wallet, 2),
+                    "available": round(available, 2),
+                    "upnl": round(upnl, 2),
+                    "positions": positions,
+                    "history": history,
+                    "updated_at": updated_at,
+                })
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+
+        def _check_admin(self) -> bool:
+            pw = self.headers.get("X-Admin-Password", "")
+            if pw != _ADMIN_PASSWORD:
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return False
+            return True
+
+        def _read_json(self) -> dict | None:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                return json.loads(body)
+            except Exception:
+                self._send_json(400, {"ok": False, "error": "invalid JSON"})
+                return None
+
+        def _handle_register(self) -> None:
+            body = self._read_json()
+            if body is None:
+                return
+            label = (body.get("label") or "").strip()
+            api_key = (body.get("api_key") or "").strip()
+            api_secret = (body.get("api_secret") or "").strip()
+            if not label or not api_key or not api_secret:
+                self._send_json(400, {"ok": False, "error": "label, api_key, and api_secret are required"})
+                return
+            try:
+                acc = account_store.create(label, api_key, api_secret)
+                self._send_json(200, {"ok": True, "token": acc.token, "id": acc.id})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
 
         def log_message(self, format, *args):  # noqa: A003
             return
