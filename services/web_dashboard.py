@@ -13,8 +13,7 @@ import os
 
 _WIN_REASONS = {"TAKE_PROFIT_1", "TAKE_PROFIT_2", "TAKE_PROFIT_3", "TP1", "TP2", "TP3"}
 _LOSS_REASONS = {"STOP_LOSS"}
-_SKIP_REASONS = {"STOP_LOSS_BEFORE_ENTRY", "OVEREXTENDED_ENTRY", "TIME_STOP",
-                 "VOLATILITY_EXIT", "OPPOSITE_STRUCTURE_EXIT"}
+_COUNT_REASONS = _WIN_REASONS | _LOSS_REASONS  # only these count toward stats/history
 
 
 def _calc_rr(reason: str, row) -> float:
@@ -63,7 +62,7 @@ def _build_trade_stats(db_path: str) -> dict:
 
     for row in rows:
         reason = (row["close_reason"] or "").upper()
-        if reason in _SKIP_REASONS:
+        if reason not in _COUNT_REASONS:
             continue
         if reason in _WIN_REASONS:
             wins += 1
@@ -77,7 +76,7 @@ def _build_trade_stats(db_path: str) -> dict:
         else:
             continue
         peak = max(peak, equity)
-        dd = (peak - equity) / peak if peak > 0 else 0
+        dd = peak - equity  # absolute R drawdown (not percentage, avoids divide-by-zero)
         max_dd = max(max_dd, dd)
 
     total = wins + losses
@@ -94,7 +93,7 @@ def _build_trade_stats(db_path: str) -> dict:
         "wins": wins,
         "losses": losses,
         "profit_factor": profit_factor,
-        "max_dd": round(max_dd * 100, 1),
+        "max_dd": round(max_dd, 2),  # in R units (e.g. 3.5R drawdown)
     }
 
 
@@ -121,7 +120,7 @@ def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
     result = []
     for row in rows:
         reason = (row["close_reason"] or "").upper()
-        if reason in _SKIP_REASONS:
+        if reason not in _COUNT_REASONS:
             continue
         is_win = reason in _WIN_REASONS
         rr = round(_calc_rr(reason, row), 2) if is_win else -1.0
@@ -240,7 +239,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
   <div class="stats-grid">
     <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-value" id="s-wr">&ndash;</div><div class="stat-sub" id="s-wl">&ndash;</div></div>
     <div class="stat"><div class="stat-label">Avg RR</div><div class="stat-value" id="s-rr">&ndash;</div><div class="stat-sub">risk:reward</div></div>
-    <div class="stat"><div class="stat-label">Max Drawdown</div><div class="stat-value text-danger" id="s-dd">&ndash;</div><div class="stat-sub">peak to trough</div></div>
+    <div class="stat"><div class="stat-label">Max Drawdown</div><div class="stat-value text-danger" id="s-dd">&ndash;</div><div class="stat-sub">in R units</div></div>
     <div class="stat"><div class="stat-label">Total Trades</div><div class="stat-value" id="s-total">&ndash;</div><div class="stat-sub">closed</div></div>
     <div class="stat"><div class="stat-label">Profit Factor</div><div class="stat-value" id="s-pf">&ndash;</div><div class="stat-sub">gross W/L</div></div>
     <div class="stat"><div class="stat-label">Balance</div><div class="stat-value" id="s-bal">&ndash;</div><div class="stat-sub">USDT</div></div>
@@ -326,7 +325,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     wrEl.className = "stat-value" + (wr >= 50 ? " text-success" : wr != null ? " text-danger" : "");
     document.getElementById("s-wl").textContent = st.total ? st.wins + "W / " + st.losses + "L of " + st.total : "\u2013";
     document.getElementById("s-rr").textContent = st.avg_rr ?? "\u2013";
-    document.getElementById("s-dd").textContent = st.max_dd != null ? "-" + st.max_dd + "%" : "\u2013";
+    document.getElementById("s-dd").textContent = st.max_dd != null ? "-" + st.max_dd + "R" : "\u2013";
     document.getElementById("s-total").textContent = st.total ?? "\u2013";
     document.getElementById("s-pf").textContent = st.profit_factor ?? "\u2013";
     document.getElementById("s-bal").textContent = fmt(d.wallet, 2);
