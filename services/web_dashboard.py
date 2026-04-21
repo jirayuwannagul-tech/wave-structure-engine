@@ -186,9 +186,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .pos { color: var(--success); font-weight: 600; }
 .neg { color: var(--danger); font-weight: 600; }
 .muted { color: var(--muted); }
+.api-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+.api-card h2 { font-size: 14px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.api-row { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: end; }
+.api-row input { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; font-family: monospace; width: 100%; }
+.api-row input:focus { outline: none; border-color: var(--primary); }
+.api-status { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.api-status .ok { color: var(--success); font-weight: 600; }
+.api-status .err { color: var(--danger); font-weight: 600; }
+.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: .15s; white-space: nowrap; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: #2563eb; }
+.btn-ghost { background: var(--surface-2); color: var(--muted); }
+.btn-ghost:hover { color: var(--text); }
 @media (max-width: 640px) {
   .header { flex-direction: column; gap: 12px; align-items: stretch; }
   .nav { justify-content: center; }
+  .api-row { grid-template-columns: 1fr; }
 }
 """
 
@@ -211,6 +225,18 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     </nav>
   </div>
   <div id="error-slot"></div>
+
+  <div class="api-card">
+    <h2>&#x1F511; Exchange API Credentials</h2>
+    <div class="api-row">
+      <input type="text" id="api-key" placeholder="API Key" spellcheck="false" autocomplete="off" />
+      <input type="password" id="api-secret" placeholder="API Secret" spellcheck="false" autocomplete="off" />
+      <button class="btn btn-primary" onclick="saveApiCreds()">Save</button>
+      <button class="btn btn-ghost" onclick="clearApiCreds()">Clear</button>
+    </div>
+    <div class="api-status" id="api-status">Status: <span class="err">Not configured</span></div>
+  </div>
+
   <div class="stats-grid">
     <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-value" id="s-wr">&ndash;</div><div class="stat-sub" id="s-wl">&ndash;</div></div>
     <div class="stat"><div class="stat-label">Avg RR</div><div class="stat-value" id="s-rr">&ndash;</div><div class="stat-sub">risk:reward</div></div>
@@ -242,6 +268,32 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     </div>
   </div>
 </div>
+<script>
+  const _CREDS_KEY = "ew_api_v1";
+  function saveApiCreds() {{
+    const k = document.getElementById("api-key").value.trim();
+    const s = document.getElementById("api-secret").value.trim();
+    if (!k || !s) {{ document.getElementById("api-status").innerHTML = 'Status: <span class="err">Both fields required</span>'; return; }}
+    localStorage.setItem(_CREDS_KEY, JSON.stringify({{key: k, secret: s}}));
+    document.getElementById("api-status").innerHTML = 'Status: <span class="ok">Saved</span> &bull; key &bull;&bull;&bull;&bull;' + k.slice(-4);
+  }}
+  function clearApiCreds() {{
+    localStorage.removeItem(_CREDS_KEY);
+    document.getElementById("api-key").value = "";
+    document.getElementById("api-secret").value = "";
+    document.getElementById("api-status").innerHTML = 'Status: <span class="err">Cleared</span>';
+  }}
+  (function loadApiCreds() {{
+    try {{
+      const raw = localStorage.getItem(_CREDS_KEY);
+      if (!raw) return;
+      const c = JSON.parse(raw);
+      document.getElementById("api-key").value = c.key || "";
+      document.getElementById("api-secret").value = c.secret || "";
+      document.getElementById("api-status").innerHTML = 'Status: <span class="ok">Saved</span> &bull; key &bull;&bull;&bull;&bull;' + (c.key||"").slice(-4);
+    }} catch(_) {{}}
+  }})();
+</script>
 <script>
 (function(){{
   const SYMBOL = {escaped_symbol};
