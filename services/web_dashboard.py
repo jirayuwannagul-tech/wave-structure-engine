@@ -510,7 +510,34 @@ def run_web_dashboard(
     port: int = 8080,
     refresh_seconds: float = 5.0,
 ) -> None:
+    import threading
+
     html = build_web_dashboard_html(symbol, refresh_seconds)
+
+    _cache: dict = {"payload": None, "updated_at": None}
+    _cache_lock = threading.Lock()
+
+    def _refresh_cache() -> None:
+        while True:
+            try:
+                snapshot = build_dashboard_snapshot(symbol)
+                updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+                payload = {
+                    "ok": True,
+                    "snapshot": snapshot,
+                    "terminal": render_terminal_dashboard(snapshot),
+                    "updated_at": updated_at,
+                }
+            except Exception as exc:
+                payload = {"ok": False, "error": str(exc)}
+            with _cache_lock:
+                _cache["payload"] = payload
+                _cache["updated_at"] = datetime.now(UTC)
+            import time as _time
+            _time.sleep(30)
+
+    t = threading.Thread(target=_refresh_cache, daemon=True)
+    t.start()
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -519,7 +546,12 @@ def run_web_dashboard(
                 self._send_html(html)
                 return
             if path == "/api/snapshot":
-                self._send_snapshot(symbol)
+                with _cache_lock:
+                    payload = _cache["payload"]
+                if payload is None:
+                    self._send_json(503, {"ok": False, "error": "snapshot not ready yet, please retry"})
+                else:
+                    self._send_json(200, payload)
                 return
             if path == "/healthz":
                 self._send_json(200, {"ok": True})
@@ -543,18 +575,6 @@ def run_web_dashboard(
             self.end_headers()
             self.wfile.write(payload)
 
-        def _send_snapshot(self, dashboard_symbol: str) -> None:
-            try:
-                snapshot = build_dashboard_snapshot(dashboard_symbol)
-                payload = {
-                    "ok": True,
-                    "snapshot": snapshot,
-                    "terminal": render_terminal_dashboard(snapshot),
-                    "updated_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                self._send_json(200, payload)
-            except Exception as exc:  # pragma: no cover - defensive
-                self._send_json(500, {"ok": False, "error": str(exc)})
 
         def _send_json(self, status: int, payload: dict) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
