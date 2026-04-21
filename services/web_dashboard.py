@@ -9,6 +9,7 @@ from services.terminal_dashboard import build_dashboard_snapshot, render_termina
 from execution.execution_health import read_execution_health
 from storage.execution_queue_store import ExecutionQueueStore
 from storage.account_store import AccountStore
+from services.line_bot import handle_webhook, notify_new_account
 import os
 
 
@@ -825,6 +826,9 @@ def run_web_dashboard(
 
         def do_POST(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path == "/webhook/line":
+                self._handle_line_webhook()
+                return
             if path == "/api/register":
                 self._handle_register()
                 return
@@ -907,6 +911,22 @@ def run_web_dashboard(
                 self._send_json(400, {"ok": False, "error": "invalid JSON"})
                 return None
 
+        def _handle_line_webhook(self) -> None:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                signature = self.headers.get("X-Line-Signature", "")
+                result = handle_webhook(body, signature, account_store)
+                status = result.get("status", 200)
+                resp = result.get("body", "OK").encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+
         def _handle_register(self) -> None:
             body = self._read_json()
             if body is None:
@@ -919,6 +939,10 @@ def run_web_dashboard(
                 return
             try:
                 acc = account_store.create(label, api_key, api_secret)
+                try:
+                    notify_new_account(acc.id, acc.label, acc.token)
+                except Exception:
+                    pass
                 self._send_json(200, {"ok": True, "token": acc.token, "id": acc.id})
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": str(exc)})
