@@ -126,7 +126,7 @@ def test_build_signal_sheet_row_formats_trade_journal_columns():
     )
 
     assert row == [
-        "2026-03-12 07:15:00",
+        "2026-03-11 17:15:00",
         "BTCUSDT",
         "4H",
         "SHORT",
@@ -186,7 +186,7 @@ def test_google_sheets_logger_matches_existing_row_when_sheet_reformats_time():
     )
 
     reformatted = build_signal_sheet_row(_signal_row(status="ACTIVE"))
-    reformatted[0] = "2026-03-12 7:15:00"
+    reformatted[0] = "2026-03-11 17:15:00"
     worksheet.rows.append(reformatted)
 
     logger.upsert_signal(_signal_row(status="STOPPED", tp1_hit_at="2026-03-12T01:00:00+00:00"))
