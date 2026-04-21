@@ -11,6 +11,34 @@ from storage.execution_queue_store import ExecutionQueueStore
 import os
 
 
+_WIN_REASONS = {"TAKE_PROFIT_1", "TAKE_PROFIT_2", "TAKE_PROFIT_3", "TP1", "TP2", "TP3"}
+_LOSS_REASONS = {"STOP_LOSS"}
+_SKIP_REASONS = {"STOP_LOSS_BEFORE_ENTRY", "OVEREXTENDED_ENTRY", "TIME_STOP",
+                 "VOLATILITY_EXIT", "OPPOSITE_STRUCTURE_EXIT"}
+
+
+def _calc_rr(reason: str, row) -> float:
+    r = reason.upper()
+    if r in ("TAKE_PROFIT_3", "TP3") and row["rr_tp3"]:
+        return 0.4 * float(row["rr_tp1"] or 1.0) + 0.3 * float(row["rr_tp2"] or 1.272) + 0.3 * float(row["rr_tp3"])
+    if r in ("TAKE_PROFIT_2", "TP2") and row["rr_tp2"]:
+        return 0.4 * float(row["rr_tp1"] or 1.0) + 0.6 * float(row["rr_tp2"])
+    if r in ("TAKE_PROFIT_1", "TP1") and row["rr_tp1"]:
+        return float(row["rr_tp1"])
+    return 1.0
+
+
+def _calc_exit(reason: str, row):
+    r = reason.upper()
+    if r in ("TAKE_PROFIT_3", "TP3"):
+        return row["tp3_hit_price"]
+    if r in ("TAKE_PROFIT_2", "TP2"):
+        return row["tp2_hit_price"]
+    if r in ("TAKE_PROFIT_1", "TP1"):
+        return row["tp1_hit_price"]
+    return row["entry_triggered_price"]
+
+
 def _build_trade_stats(db_path: str) -> dict:
     try:
         conn = sqlite3.connect(db_path)
@@ -19,10 +47,8 @@ def _build_trade_stats(db_path: str) -> dict:
         cur.execute("""
             SELECT close_reason, rr_tp1, rr_tp2, rr_tp3, tp1_hit_price, tp2_hit_price, tp3_hit_price
             FROM signals
-            WHERE status IN ('STOPPED','CLOSED','INVALIDATED')
-              AND close_reason IS NOT NULL
-              AND close_reason != 'STOP_LOSS_BEFORE_ENTRY'
-              AND entry_triggered_at IS NOT NULL
+            WHERE close_reason IS NOT NULL AND entry_triggered_at IS NOT NULL
+            ORDER BY closed_at ASC
         """)
         rows = cur.fetchall()
         conn.close()
@@ -37,27 +63,21 @@ def _build_trade_stats(db_path: str) -> dict:
 
     for row in rows:
         reason = (row["close_reason"] or "").upper()
-        if reason in ("TP3", "TP2", "TP1"):
+        if reason in _SKIP_REASONS:
+            continue
+        if reason in _WIN_REASONS:
             wins += 1
-            # weighted realized RR
-            rr = 0.0
-            if row["tp3_hit_price"] and row["rr_tp3"]:
-                rr = 0.4 * (row["rr_tp1"] or 1.0) + 0.3 * (row["rr_tp2"] or 1.618) + 0.3 * float(row["rr_tp3"])
-            elif row["tp2_hit_price"] and row["rr_tp2"]:
-                rr = 0.4 * (row["rr_tp1"] or 1.0) + 0.6 * float(row["rr_tp2"])
-            elif row["rr_tp1"]:
-                rr = float(row["rr_tp1"])
-            else:
-                rr = 1.0
+            rr = _calc_rr(reason, row)
             rr_list.append(rr)
             equity += rr
-        elif reason == "STOP_LOSS":
+        elif reason in _LOSS_REASONS:
             losses += 1
             rr_list.append(-1.0)
             equity -= 1.0
-
+        else:
+            continue
         peak = max(peak, equity)
-        dd = (peak - equity) / max(peak, 1) if peak > 0 else 0
+        dd = (peak - equity) / peak if peak > 0 else 0
         max_dd = max(max_dd, dd)
 
     total = wins + losses
@@ -78,7 +98,7 @@ def _build_trade_stats(db_path: str) -> dict:
     }
 
 
-def _build_trade_history(db_path: str, limit: int = 100) -> list[dict]:
+def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -89,10 +109,7 @@ def _build_trade_history(db_path: str, limit: int = 100) -> list[dict]:
                    rr_tp1, rr_tp2, rr_tp3,
                    entry_triggered_price, closed_at, created_at
             FROM signals
-            WHERE status IN ('STOPPED','CLOSED','INVALIDATED')
-              AND close_reason IS NOT NULL
-              AND close_reason != 'STOP_LOSS_BEFORE_ENTRY'
-              AND entry_triggered_at IS NOT NULL
+            WHERE close_reason IS NOT NULL AND entry_triggered_at IS NOT NULL
             ORDER BY closed_at DESC
             LIMIT ?
         """, (limit,))
@@ -104,27 +121,17 @@ def _build_trade_history(db_path: str, limit: int = 100) -> list[dict]:
     result = []
     for row in rows:
         reason = (row["close_reason"] or "").upper()
-        is_win = reason in ("TP1", "TP2", "TP3")
-        if reason == "TP3" and row["rr_tp3"]:
-            rr = round(0.4 * (row["rr_tp1"] or 1.0) + 0.3 * (row["rr_tp2"] or 1.618) + 0.3 * float(row["rr_tp3"]), 2)
-            exit_price = row["tp3_hit_price"]
-        elif reason == "TP2" and row["rr_tp2"]:
-            rr = round(0.4 * (row["rr_tp1"] or 1.0) + 0.6 * float(row["rr_tp2"]), 2)
-            exit_price = row["tp2_hit_price"]
-        elif reason == "TP1" and row["rr_tp1"]:
-            rr = round(float(row["rr_tp1"]), 2)
-            exit_price = row["tp1_hit_price"]
-        else:
-            rr = -1.0
-            exit_price = row["entry_triggered_price"]
-
+        if reason in _SKIP_REASONS:
+            continue
+        is_win = reason in _WIN_REASONS
+        rr = round(_calc_rr(reason, row), 2) if is_win else -1.0
         result.append({
-            "closed_at": (row["closed_at"] or row["created_at"] or "")[:16],
+            "closed_at": (row["closed_at"] or row["created_at"] or "")[:16].replace("T", " "),
             "symbol": row["symbol"],
             "timeframe": row["timeframe"],
             "side": (row["side"] or "").upper(),
             "entry": row["entry_price"],
-            "exit": exit_price,
+            "exit": _calc_exit(reason, row),
             "close_reason": reason,
             "rr": rr,
             "result": "WIN" if is_win else "LOSS",
