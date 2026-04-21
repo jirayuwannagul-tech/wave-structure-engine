@@ -107,7 +107,8 @@ def notify_activated(account_id: int, label: str) -> None:
 def handle_webhook(body: bytes, signature: str, account_store) -> dict:
     """Process incoming Line webhook event. Returns dict for HTTP response."""
     if not verify_signature(body, signature):
-        return {"status": 401, "body": "Invalid signature"}
+        logger.warning("Line webhook signature mismatch")
+        return {"status": 200, "body": "OK"}  # return 200 always so Line doesn't retry
 
     try:
         data = json.loads(body)
