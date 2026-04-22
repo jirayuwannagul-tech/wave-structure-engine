@@ -172,6 +172,42 @@ def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
     return result
 
 
+def _build_active_trades(db_path: str) -> list[dict]:
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT symbol, timeframe, side, status, entry_price, entry_triggered_price,
+                   stop_loss, tp1, tp2, tp3, tp1_hit_at, tp2_hit_at, created_at
+            FROM signals
+            WHERE status IN ('ACTIVE','PARTIAL_TP1','PARTIAL_TP2')
+              AND entry_triggered_at IS NOT NULL
+            ORDER BY created_at DESC
+        """)
+        rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    result = []
+    for row in rows:
+        result.append({
+            "symbol": row["symbol"],
+            "timeframe": row["timeframe"],
+            "side": (row["side"] or "").upper(),
+            "status": row["status"],
+            "entry": row["entry_triggered_price"] or row["entry_price"],
+            "sl": row["stop_loss"],
+            "tp1": row["tp1"],
+            "tp2": row["tp2"],
+            "tp3": row["tp3"],
+            "tp1_hit": bool(row["tp1_hit_at"]),
+            "tp2_hit": bool(row["tp2_hit_at"]),
+        })
+    return result
+
+
 _SHARED_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -291,6 +327,17 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
   </div>
   <div class="section">
     <div class="section-head">
+      <h2>&#x1F4CC; Open Trades <span id="active-count" style="color:var(--muted);font-weight:400;">(0)</span></h2>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Status</th></tr></thead>
+        <tbody id="active-body"><tr><td colspan="9" class="empty">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-head">
       <h2>&#x26A1; Active Signals <span id="sig-count" style="color:var(--muted);font-weight:400;">(0)</span></h2>
     </div>
     <div class="table-wrap">
@@ -380,6 +427,29 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
             + "</tr>";
         }}).join("")
       : "<tr><td colspan='6' class='empty'>No open positions</td></tr>";
+
+    const acts = Array.isArray(d.active_trades) ? d.active_trades : [];
+    document.getElementById("active-count").textContent = "(" + acts.length + ")";
+    document.getElementById("active-body").innerHTML = acts.length
+      ? acts.map(t => {{
+          const side = (t.side||"").toUpperCase();
+          const sideBadge = side === "LONG"
+            ? "<span class='badge badge-long'>LONG</span>"
+            : "<span class='badge badge-short'>SHORT</span>";
+          const status = (t.status||"").replace("_"," ");
+          return "<tr>"
+            + "<td><b>" + (t.symbol||"\u2013") + "</b></td>"
+            + "<td>" + (t.timeframe||"\u2013") + "</td>"
+            + "<td>" + sideBadge + "</td>"
+            + "<td>" + fmt(t.entry,4) + "</td>"
+            + "<td class='neg'>" + fmt(t.sl,4) + "</td>"
+            + "<td class='pos'>" + fmt(t.tp1,4) + "</td>"
+            + "<td class='pos'>" + fmt(t.tp2,4) + "</td>"
+            + "<td class='pos'>" + fmt(t.tp3,4) + "</td>"
+            + "<td><span class='badge'>" + status + "</span></td>"
+            + "</tr>";
+        }}).join("")
+      : "<tr><td colspan='9' class='empty'>No open trades</td></tr>";
 
     const sigs = Array.isArray(d.signals) ? d.signals : [];
     document.getElementById("sig-count").textContent = "(" + sigs.length + ")";
@@ -746,6 +816,7 @@ def run_web_dashboard(
             try:
                 snapshot = build_dashboard_snapshot(symbol)
                 snapshot["stats"] = _build_trade_stats(db_path)
+                snapshot["active_trades"] = _build_active_trades(db_path)
                 updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
                 payload = {
                     "ok": True,
