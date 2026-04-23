@@ -216,7 +216,11 @@ _SHARED_CSS = """
   --primary: #3b82f6; --success: #10b981; --danger: #ef4444; --warning: #f59e0b;
   --radius: 12px;
 }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px; }
+body.light {
+  --bg: #f1f5f9; --surface: #ffffff; --surface-2: #e2e8f0;
+  --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px; transition: background .2s, color .2s; }
 .container { max-width: 1200px; margin: 0 auto; }
 .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--surface); border-radius: var(--radius); margin-bottom: 16px; border: 1px solid var(--border); }
 .header h1 { font-size: 20px; font-weight: 700; }
@@ -291,6 +295,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/" class="active">Dashboard</a>
       <a href="/history">History</a>
+      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;">&#x263D; Dark</button>
     </nav>
   </div>
   <div id="error-slot"></div>
@@ -336,17 +341,6 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
       </table>
     </div>
   </div>
-  <div class="section">
-    <div class="section-head">
-      <h2>&#x26A1; Active Signals <span id="sig-count" style="color:var(--muted);font-weight:400;">(0)</span></h2>
-    </div>
-    <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Symbol</th><th>TF</th><th>Bias</th><th>Entry</th><th>SL</th><th>TP1</th><th>RR</th></tr></thead>
-        <tbody id="signals-body"><tr><td colspan="7" class="empty">Loading&hellip;</td></tr></tbody>
-      </table>
-    </div>
-  </div>
 </div>
 <script>
   const _CREDS_KEY = "ew_api_v1";
@@ -378,6 +372,19 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
 (function(){{
   const SYMBOL = {escaped_symbol};
   const REFRESH_MS = {refresh_ms};
+
+  // Dark/Light theme toggle
+  function applyTheme(mode) {{
+    document.body.classList.toggle("light", mode === "light");
+    const btn = document.getElementById("theme-btn");
+    if (btn) btn.textContent = mode === "light" ? "\u2600\uFE0F Light" : "\u263D Dark";
+  }}
+  function toggleTheme() {{
+    const next = document.body.classList.contains("light") ? "dark" : "light";
+    localStorage.setItem("ew_theme", next);
+    applyTheme(next);
+  }}
+  applyTheme(localStorage.getItem("ew_theme") || "dark");
 
   function fmt(n, d) {{
     if (n == null || n === "" || isNaN(Number(n))) return "\u2013";
@@ -450,29 +457,6 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
             + "</tr>";
         }}).join("")
       : "<tr><td colspan='9' class='empty'>No open trades</td></tr>";
-
-    const sigs = Array.isArray(d.signals) ? d.signals : [];
-    document.getElementById("sig-count").textContent = "(" + sigs.length + ")";
-    document.getElementById("signals-body").innerHTML = sigs.length
-      ? sigs.map(s => {{
-          const entry = parseFloat(s.entry)||0, sl = parseFloat(s.sl)||0, tp1 = parseFloat(s.tp1)||0;
-          const risk = Math.abs(entry - sl);
-          const rr = risk > 0 ? (Math.abs(tp1-entry)/risk).toFixed(2)+"R" : "\u2013";
-          const bias = (s.bias||"").toLowerCase();
-          const bb = bias.includes("bull") ? "<span class='badge badge-bull'>" + s.bias + "</span>"
-                    : bias.includes("bear") ? "<span class='badge badge-bear'>" + s.bias + "</span>"
-                    : s.bias||"\u2013";
-          return "<tr>"
-            + "<td><b>" + (s.symbol||"\u2013") + "</b></td>"
-            + "<td>" + (s.timeframe||"\u2013") + "</td>"
-            + "<td>" + bb + "</td>"
-            + "<td>" + fmt(s.entry,4) + "</td>"
-            + "<td class='neg'>" + fmt(s.sl,4) + "</td>"
-            + "<td class='pos'>" + fmt(s.tp1,4) + "</td>"
-            + "<td class='muted'>" + rr + "</td>"
-            + "</tr>";
-        }}).join("")
-      : "<tr><td colspan='7' class='empty'>No active signals</td></tr>";
   }}
 
   tick();
@@ -497,6 +481,7 @@ def build_history_html(refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/">Dashboard</a>
       <a href="/history" class="active">History</a>
+      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;">&#x263D; Dark</button>
     </nav>
   </div>
   <div id="error-slot"></div>
@@ -522,6 +507,18 @@ def build_history_html(refresh_seconds: float) -> str:
   const REFRESH_MS = {refresh_ms};
   let currentFilter = "30";
   let allTrades = [];
+
+  function applyTheme(mode) {{
+    document.body.classList.toggle("light", mode === "light");
+    const btn = document.getElementById("theme-btn");
+    if (btn) btn.textContent = mode === "light" ? "\u2600\uFE0F Light" : "\u263D Dark";
+  }}
+  function toggleTheme() {{
+    const next = document.body.classList.contains("light") ? "dark" : "light";
+    localStorage.setItem("ew_theme", next);
+    applyTheme(next);
+  }}
+  applyTheme(localStorage.getItem("ew_theme") || "dark");
 
   function setFilter(f) {{
     currentFilter = f;
