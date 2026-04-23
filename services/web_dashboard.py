@@ -299,7 +299,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
       <a href="/" class="active">Dashboard</a>
       <a href="/history">History</a>
       <a href="https://www.binance.com/en/support/faq/detail/360002502072" target="_blank" style="padding:8px 14px;border-radius:8px;background:rgba(245,158,11,.15);color:var(--warning);font-size:13px;font-weight:600;text-decoration:none;border:1px solid rgba(245,158,11,.3);">&#x1F511; วิธีเอา API Key</a>
-      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;">&#x263D; Dark</button>
+      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #3b82f6;background:transparent;color:#3b82f6;font-size:13px;font-weight:600;cursor:pointer;">&#x263D; Dark</button>
     </nav>
   </div>
   <div id="error-slot"></div>
@@ -381,7 +381,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
   function applyTheme(mode) {{
     document.body.classList.toggle("light", mode === "light");
     const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = mode === "light" ? "\u2600\uFE0F Light" : "\u263D Dark";
+    if (btn) btn.textContent = mode === "light" ? "\uD83C\uDF19 Dark Mode" : "\u2600\uFE0F Light Mode";
   }}
   function toggleTheme() {{
     const next = document.body.classList.contains("light") ? "dark" : "light";
@@ -485,7 +485,7 @@ def build_history_html(refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/">Dashboard</a>
       <a href="/history" class="active">History</a>
-      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;">&#x263D; Dark</button>
+      <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid #3b82f6;background:transparent;color:#3b82f6;font-size:13px;font-weight:600;cursor:pointer;">&#x263D; Dark</button>
     </nav>
   </div>
   <div id="error-slot"></div>
@@ -515,7 +515,7 @@ def build_history_html(refresh_seconds: float) -> str:
   function applyTheme(mode) {{
     document.body.classList.toggle("light", mode === "light");
     const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = mode === "light" ? "\u2600\uFE0F Light" : "\u263D Dark";
+    if (btn) btn.textContent = mode === "light" ? "\uD83C\uDF19 Dark Mode" : "\u2600\uFE0F Light Mode";
   }}
   function toggleTheme() {{
     const next = document.body.classList.contains("light") ? "dark" : "light";
