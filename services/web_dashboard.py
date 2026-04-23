@@ -291,7 +291,10 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
 </head><body>
 <div class="container">
   <div class="header">
-    <h1>&#x26A1; Trading Dashboard</h1>
+    <div>
+      <h1>&#x26A1; Trading Dashboard</h1>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;letter-spacing:.3px;">Since <span style="color:var(--primary);font-weight:600;">18 Mar 2026</span> &nbsp;&bull;&nbsp; Elliott Wave Engine</div>
+    </div>
     <nav class="nav">
       <a href="/" class="active">Dashboard</a>
       <a href="/history">History</a>
