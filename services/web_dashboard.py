@@ -298,6 +298,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/" class="active">Dashboard</a>
       <a href="/history">History</a>
+      <a href="https://www.binance.com/en/support/faq/detail/360002502072" target="_blank" style="padding:8px 14px;border-radius:8px;background:rgba(245,158,11,.15);color:var(--warning);font-size:13px;font-weight:600;text-decoration:none;border:1px solid rgba(245,158,11,.3);">&#x1F511; วิธีเอา API Key</a>
       <button onclick="toggleTheme()" id="theme-btn" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;">&#x263D; Dark</button>
     </nav>
   </div>
@@ -614,11 +615,31 @@ input:focus {{ border-color: var(--primary); }}
 <div class="container">
   <div class="header">
     <h1>&#x26A1; AlphaFutures</h1>
-    <nav class="nav"><a href="/">Dashboard</a></nav>
+    <nav class="nav">
+      <a href="/">Dashboard</a>
+      <a href="https://www.binance.com/en/support/faq/detail/360002502072" target="_blank" style="padding:8px 14px;border-radius:8px;background:rgba(245,158,11,.15);color:var(--warning);font-size:13px;font-weight:600;text-decoration:none;border:1px solid rgba(245,158,11,.3);">&#x1F511; วิธีเอา API Key</a>
+    </nav>
   </div>
   <div class="form-card">
     <h2>Connect your Binance account</h2>
-    <p>Enter your Binance Futures API key and secret. Your keys are stored securely and used only to execute trades on your behalf.<br><br>Required permission: <strong>Futures Trading</strong> only. Do NOT enable Withdrawals.</p>
+    <p>กรอก Binance Futures API Key และ Secret ของคุณ เพื่อให้ระบบเทรดแทนคุณโดยอัตโนมัติ</p>
+
+    <div style="background:var(--surface-2);border-radius:10px;padding:20px;margin-bottom:24px;border:1px solid var(--border);">
+      <div style="font-size:13px;font-weight:700;margin-bottom:14px;color:var(--text);">&#x1F4CB; วิธีสร้าง API Key จาก Binance</div>
+      <ol style="padding-left:18px;display:flex;flex-direction:column;gap:10px;">
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">เข้า <a href="https://www.binance.com" target="_blank" style="color:var(--primary);">binance.com</a> แล้ว Login เข้าบัญชีของคุณ</li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">คลิกรูปโปรไฟล์มุมขวาบน → เลือก <strong style="color:var(--text);">API Management</strong></li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">กด <strong style="color:var(--text);">Create API</strong> → เลือก <strong style="color:var(--text);">System generated</strong> → ตั้งชื่อ เช่น <code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-size:12px;">AlphaFutures</code></li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">ยืนยันตัวตนด้วย Email OTP และ Authenticator App (2FA)</li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">ตั้งค่า Permission ดังนี้:<br>
+          <span style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;background:rgba(16,185,129,.1);color:var(--success);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">&#10003; Enable Futures</span>&nbsp;
+          <span style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;background:rgba(239,68,68,.1);color:var(--danger);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">&#10007; Withdrawals (ห้ามเปิด)</span>
+        </li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">คัดลอก <strong style="color:var(--text);">API Key</strong> และ <strong style="color:var(--text);">Secret Key</strong> ทันที<br><span style="color:var(--danger);font-size:12px;">⚠ Secret Key จะแสดงครั้งเดียวเท่านั้น</span></li>
+        <li style="font-size:13px;color:var(--muted);line-height:1.6;">นำมากรอกในช่องด้านล่างนี้ได้เลย</li>
+      </ol>
+    </div>
+
     <label>Your Name / Label</label>
     <input type="text" id="label" placeholder="e.g. John" />
     <label>Binance API Key</label>
