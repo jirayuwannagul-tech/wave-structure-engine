@@ -381,7 +381,7 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
   function applyTheme(mode) {{
     document.body.classList.toggle("light", mode === "light");
     const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = mode === "light" ? "\uD83C\uDF19 Dark Mode" : "\u2600\uFE0F Light Mode";
+    if (btn) btn.textContent = mode === "light" ? "\U0001F319 Dark Mode" : "\u2600 Light Mode";
   }}
   function toggleTheme() {{
     const next = document.body.classList.contains("light") ? "dark" : "light";
@@ -515,7 +515,7 @@ def build_history_html(refresh_seconds: float) -> str:
   function applyTheme(mode) {{
     document.body.classList.toggle("light", mode === "light");
     const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = mode === "light" ? "\uD83C\uDF19 Dark Mode" : "\u2600\uFE0F Light Mode";
+    if (btn) btn.textContent = mode === "light" ? "\U0001F319 Dark Mode" : "\u2600 Light Mode";
   }}
   function toggleTheme() {{
     const next = document.body.classList.contains("light") ? "dark" : "light";
