@@ -145,7 +145,18 @@ async function tick() {{
   }}
 }}
 
-{"tick(); setInterval(tick, REFRESH_MS);" if account.active else ""}
+{"tick(); setInterval(tick, REFRESH_MS);" if account.active else f"""
+// Poll for activation every 5s and reload when active
+(function pollActivation() {{
+  setInterval(async function() {{
+    try {{
+      const r = await fetch("/api/client/{token}");
+      const d = await r.json();
+      if (d.ok && d.active) location.reload();
+    }} catch(_) {{}}
+  }}, 5000);
+}})();
+"""}
 </script>
 </body></html>
 """
