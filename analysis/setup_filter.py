@@ -6,6 +6,7 @@ from analysis.candle_pattern import score_candle_confirmation
 from analysis.wave_position import describe_current_leg
 
 from storage.experience_store import get_pattern_edge
+from config.markets import get_symbol_rules
 
 
 MIN_MAIN_CONFIDENCE = 0.80
@@ -421,6 +422,9 @@ def _passes_quality_gate(
     if hierarchy is not None and not hierarchy.get("aligned"):
         return False, "child wave not aligned with higher timeframe hierarchy"
 
+    sym_rules = get_symbol_rules(symbol)
+    min_rr = sym_rules.get("min_rr", 0.8)
+
     scenario_targets = list(getattr(scenario, "targets", []) or [])
     scenario_sl = getattr(scenario, "stop_loss", None)
     scenario_confirm = getattr(scenario, "confirmation", None)
@@ -428,8 +432,8 @@ def _passes_quality_gate(
         tp1 = float(scenario_targets[0])
         reward = abs(float(scenario_confirm) - tp1)
         risk = abs(float(scenario_confirm) - float(scenario_sl))
-        if risk > 0 and reward / risk < 0.8:
-            return False, f"RR too low: {reward/risk:.2f} (need >= 0.8)"
+        if risk > 0 and reward / risk < min_rr:
+            return False, f"RR too low: {reward/risk:.2f} (need >= {min_rr})"
 
     if htf_wave_number:
         if htf_wave_number in ("3",):
@@ -483,9 +487,13 @@ def _passes_quality_gate(
         macd_divergence != "NONE",
     ])
 
+    short_4h_min_conf = sym_rules.get("short_4h_min_confirmations", 1)
     if timeframe.upper() == "1D":
         if confirmation_count < 2:
             return False, "1D: requires 2+ confirmation signals (atr/rsi_div/macd_div)"
+    elif timeframe.upper() == "4H" and bias == "BEARISH" and short_4h_min_conf >= 2:
+        if confirmation_count < 2:
+            return False, f"{symbol} 4H SHORT: requires 2+ confirmation signals"
     elif confirmation_count < 1:
         return False, "main missing atr expansion"
 
@@ -493,6 +501,12 @@ def _passes_quality_gate(
         return False, "main not aligned with trend"
     if trend_state in {"SIDEWAY", "SIDEWAYS", "RANGING"}:
         return False, "sideways market blocked"
+
+    # DOGE-specific SHORT filters
+    if bias == "BEARISH" and sym_rules:
+        if sym_rules.get("short_requires_ema200_bearish"):
+            if not indicator_context.get("long_term_trend_ok"):
+                return False, f"{symbol} SHORT blocked: price above EMA200 (long-term bullish)"
 
     candle_pats = analysis.get("candle_patterns") or []
     if candle_pats:
