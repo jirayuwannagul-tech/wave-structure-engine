@@ -718,8 +718,14 @@ def generate_scenarios(
         if key_levels.support is not None and key_levels.resistance is not None:
             range_size = key_levels.resistance - key_levels.support
 
-        bullish_target = round((key_levels.resistance or 0.0) + (range_size * 1.0), 2)
-        bearish_target = round((key_levels.support or 0.0) - (range_size * 1.0), 2)
+        res = key_levels.resistance or 0.0
+        sup = key_levels.support or 0.0
+        bull_tp1 = round(res + range_size * 1.0, 4)
+        bull_tp2 = round(res + range_size * 1.618, 4)
+        bull_tp3 = round(res + range_size * 2.618, 4)
+        bear_tp1 = round(sup - range_size * 1.0, 4)
+        bear_tp2 = round(sup - range_size * 1.618, 4)
+        bear_tp3 = round(sup - range_size * 2.618, 4)
 
         bull_confirmation = _refine_entry_with_confluence(
             key_levels.resistance, "BULLISH", _czones
@@ -733,12 +739,12 @@ def generate_scenarios(
                 name="Bullish Breakout",
                 condition=f"price breaks above {bull_confirmation}",
                 interpretation="triangle resolves upward",
-                target=f"move toward {bullish_target}",
+                target=f"move toward {bull_tp1} / {bull_tp2} / {bull_tp3}",
                 bias="BULLISH",
                 invalidation=key_levels.support,
                 confirmation=bull_confirmation,
                 stop_loss=key_levels.support,
-                targets=[bullish_target],
+                targets=[bull_tp1, bull_tp2, bull_tp3],
             )
         )
         scenarios.append(
@@ -746,12 +752,12 @@ def generate_scenarios(
                 name="Bearish Breakdown",
                 condition=f"price breaks below {bear_confirmation}",
                 interpretation="triangle resolves downward",
-                target=f"move toward {bearish_target}",
+                target=f"move toward {bear_tp1} / {bear_tp2} / {bear_tp3}",
                 bias="BEARISH",
                 invalidation=key_levels.resistance,
                 confirmation=bear_confirmation,
                 stop_loss=key_levels.resistance,
-                targets=[bearish_target],
+                targets=[bear_tp1, bear_tp2, bear_tp3],
             )
         )
         return _sanitize_scenarios(scenarios, key_levels)
