@@ -425,6 +425,19 @@ def prioritize_scenarios(
     return [ranked[0]["scenario"]]
 
 
+def _fill_missing_targets(bias: str, entry: float, sl: float, targets: list[float]) -> list[float]:
+    """Ensure exactly 3 targets using risk-based extensions if any are missing."""
+    risk = abs(entry - sl)
+    if risk == 0:
+        return targets
+    direction = 1 if bias == "BULLISH" else -1
+    multipliers = [1.0, 2.0, 3.0]
+    result = list(targets)
+    for m in multipliers[len(result):]:
+        result.append(round(entry + direction * risk * m, 6))
+    return result[:3]
+
+
 def _sanitize_scenarios(scenarios: list, key_levels: "KeyLevels") -> list:
     """Final safety pass: fix SL direction and filter wrong-side targets.
 
@@ -432,6 +445,7 @@ def _sanitize_scenarios(scenarios: list, key_levels: "KeyLevels") -> list:
     - BULLISH: SL < entry, targets > entry
     - BEARISH: SL > entry, targets < entry
     Scenarios where no valid targets remain are dropped.
+    Always ensures 3 TP levels using risk-based extensions as fallback.
     """
     valid = []
     for sc in scenarios:
@@ -445,6 +459,7 @@ def _sanitize_scenarios(scenarios: list, key_levels: "KeyLevels") -> list:
         sc.stop_loss = _ensure_sl_direction(bias, entry, float(sc.stop_loss or 0), key_levels)
         sc.targets = _filter_targets(bias, entry, sc.targets or [])
         if sc.targets:
+            sc.targets = _fill_missing_targets(bias, entry, float(sc.stop_loss), sc.targets)
             valid.append(sc)
     return valid
 
@@ -771,8 +786,14 @@ def generate_scenarios(
         and key_levels.resistance is not None
     ):
         range_size = key_levels.resistance - key_levels.support
-        bull_target = round(key_levels.resistance + range_size * 0.618, 6)
-        bear_target = round(key_levels.support - range_size * 0.618, 6)
+        res = key_levels.resistance
+        sup = key_levels.support
+        bull_tp1 = round(res + range_size * 0.618, 6)
+        bull_tp2 = round(res + range_size * 1.0, 6)
+        bull_tp3 = round(res + range_size * 1.618, 6)
+        bear_tp1 = round(sup - range_size * 0.618, 6)
+        bear_tp2 = round(sup - range_size * 1.0, 6)
+        bear_tp3 = round(sup - range_size * 1.618, 6)
         bull_conf = _refine_entry_with_confluence(key_levels.resistance, "BULLISH", _czones)
         bear_conf = _refine_entry_with_confluence(key_levels.support, "BEARISH", _czones)
         scenarios.append(
@@ -780,12 +801,12 @@ def generate_scenarios(
                 name="Bullish Breakout",
                 condition=f"price closes above {bull_conf}",
                 interpretation="structure resolves upward",
-                target=f"move toward {bull_target}",
+                target=f"move toward {bull_tp1} / {bull_tp2} / {bull_tp3}",
                 bias="BULLISH",
                 invalidation=key_levels.support,
                 confirmation=bull_conf,
                 stop_loss=key_levels.support,
-                targets=[bull_target],
+                targets=[bull_tp1, bull_tp2, bull_tp3],
             )
         )
         scenarios.append(
@@ -793,12 +814,12 @@ def generate_scenarios(
                 name="Bearish Breakdown",
                 condition=f"price closes below {bear_conf}",
                 interpretation="structure resolves downward",
-                target=f"move toward {bear_target}",
+                target=f"move toward {bear_tp1} / {bear_tp2} / {bear_tp3}",
                 bias="BEARISH",
                 invalidation=key_levels.resistance,
                 confirmation=bear_conf,
                 stop_loss=key_levels.resistance,
-                targets=[bear_target],
+                targets=[bear_tp1, bear_tp2, bear_tp3],
             )
         )
         return _sanitize_scenarios(scenarios, key_levels)
