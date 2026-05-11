@@ -1,24 +1,19 @@
 from __future__ import annotations
 
 
-DEFAULT_AMBIGUITY_THRESHOLD = 0.04
+DEFAULT_AMBIGUITY_THRESHOLD = 0.02
 PATTERN_AMBIGUITY_THRESHOLDS = {
-    "IMPULSE": 0.05,           # impulse vs corrective: require 5pp gap
-    "ABC_CORRECTION": 0.06,    # raised: ABC vs EF is structurally ambiguous
-    "EXPANDED_FLAT": 0.04,
-    "RUNNING_FLAT": 0.04,
-    "WXY": 0.04,
+    "IMPULSE": 0.03,
+    "ABC_CORRECTION": 0.03,
+    "EXPANDED_FLAT": 0.02,
+    "RUNNING_FLAT": 0.02,
+    "WXY": 0.02,
 }
 
-# EW principle: certain pattern pairs are structurally too similar to distinguish
-# reliably. When the alternate falls in one of these "conflict pairs", a larger
-# probability margin is required before emitting a signal.
-# EXPANDED_FLAT vs WXY: both are 3-wave corrective structures with overlapping
-# Fibonacci characteristics — when they compete closely, signal quality is low.
 _CONFLICT_PAIR_THRESHOLD: dict[tuple[str, str], float] = {
-    ("EXPANDED_FLAT", "WXY"): 0.10,
-    ("LEADING_DIAGONAL", "WXY"): 0.051,
-    ("LEADING_DIAGONAL", "RUNNING_FLAT"): 0.044,
+    ("EXPANDED_FLAT", "WXY"): 0.06,
+    ("LEADING_DIAGONAL", "WXY"): 0.03,
+    ("LEADING_DIAGONAL", "RUNNING_FLAT"): 0.03,
 }
 
 # EW principle: impulse patterns describe the primary trend;
