@@ -302,6 +302,7 @@ textarea.inp{resize:vertical;line-height:1.65}
 const {useState,useEffect,useRef,useCallback}=React;
 
 const fmt=(n,d=2)=>n==null||isNaN(+n)?"–":Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtP=n=>{if(n==null||isNaN(+n))return"–";const v=Math.abs(+n);const d=v>=1000?0:v>=100?1:v>=10?2:v>=1?3:v>=0.1?4:5;return Number(n).toFixed(d);};
 const REASON={TP3_HIT:"TP3 HIT",TP2_THEN_SL:"TP2 → SL",TP1_THEN_SL:"TP1 → SL",SL_HIT:"SL HIT"};
 
 function Spin(){return<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{animation:"spin 1s linear infinite",flexShrink:0}}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/></svg>;}
@@ -309,19 +310,20 @@ function Spin(){return<svg width="14" height="14" viewBox="0 0 24 24" fill="none
 function getInitPage(){
   const p=window.location.pathname;
   if(p.startsWith("/u/"))return{page:"client",token:p.slice(3)};
-  const MAP={"/login":"login","/register":"register","/guide":"guide","/board":"board","/history":"history","/admin":"admin"};
+  const MAP={"/login":"login","/register":"register","/guide":"guide","/board":"board","/history":"history","/admin":"admin","/about":"about"};
   return{page:MAP[p]||"dashboard",token:""};
 }
 
 /* ── TICKER ── */
 function Ticker(){
-  const SYMS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","AVAXUSDT"];
+  const SYMS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT"];
   const [items,setItems]=React.useState(SYMS.map(s=>({s:s.replace("USDT","/USDT"),p:"–",c:"–",up:true})));
   const load=React.useCallback(async()=>{
     try{
-      const r=await fetch("https://api.binance.com/api/v3/ticker/24hr?symbols=[%22"+SYMS.join("%22,%22")+"%22]",{cache:"no-store"});
-      const data=await r.json();
-      if(!Array.isArray(data))return;
+      const r=await fetch("/api/ticker",{cache:"no-store"});
+      const res=await r.json();
+      if(!res.ok||!Array.isArray(res.data))return;
+      const data=res.data;
       setItems(data.map(d=>({
         s:d.symbol.replace("USDT","/USDT"),
         p:parseFloat(d.lastPrice)<1?parseFloat(d.lastPrice).toFixed(4):parseFloat(d.lastPrice).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}),
@@ -344,9 +346,10 @@ function Topbar({page,nav}){
         <button key={id} className={`nb${page===id?" on":""}`} onClick={()=>nav(id)}>{l}</button>
       ))}
       <div className="t-right">
-        <button className="pill p-gr hide-sm" onClick={()=>nav("register")}>✏ Join</button>
+        <button className="pill p-go hide-sm" onClick={()=>nav("about")}>⚡ How it works</button>
+        <button className="pill p-gr hide-sm" onClick={()=>nav("register")}>✏ Register</button>
         <button className="pill p-vi" onClick={()=>nav("login")}>🔑 Login</button>
-        <button className="pill p-cy hide-sm" onClick={()=>nav("guide")}>📘 Guide</button>
+        <button className="pill p-cy hide-sm" onClick={()=>nav("guide")}>📘 How to get API Key</button>
       </div>
     </div>
   );
@@ -465,15 +468,19 @@ function DashboardPage(){
   const[history,setHistory]=useState([]);
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState("");
+  const[visits,setVisits]=useState(null);
+  const[unique,setUnique]=useState(null);
 
   const load=useCallback(async()=>{
     try{
-      const[s,h]=await Promise.all([
+      const[s,h,v]=await Promise.all([
         fetch("/api/snapshot",{cache:"no-store"}).then(r=>r.json()),
         fetch("/api/history",{cache:"no-store"}).then(r=>r.json()),
+        fetch("/api/visits",{cache:"no-store"}).then(r=>r.json()),
       ]);
       if(s.ok){setStats(s.snapshot?.stats||{});setActive(s.snapshot?.active_trades||[]);}
       if(h.ok)setHistory(h.trades||[]);
+      if(v.ok){setVisits(v.visits);setUnique(v.unique??null);}
       setErr("");
     }catch(e){setErr(e.message);}
     finally{setLoading(false);}
@@ -492,6 +499,7 @@ function DashboardPage(){
         <NStat label="Total Trades" target={s.total||0}        dec={0} note="closed" delay=".18s"/>
         <NStat label="Profit Factor"target={s.profit_factor||0}dec={2} col="cy" note="gross W / L" delay=".24s"/>
       </div>
+      {visits!==null&&<div style={{textAlign:"right",fontSize:11,color:"var(--muted)",marginBottom:10,marginTop:-6}}>Since 18 Mar 2026 &nbsp;·&nbsp; 👁 <span style={{color:"var(--text)",fontWeight:600}}>{Number(visits).toLocaleString()}</span> views {unique!==null&&<>&nbsp;·&nbsp; 👤 <span style={{color:"var(--cy2)",fontWeight:600}}>{Number(unique).toLocaleString()}</span> unique visitors</>}</div>}
 
       <div className="card au2" style={{padding:"22px 24px",marginBottom:14}}>
         <div className="sh">
@@ -508,11 +516,11 @@ function DashboardPage(){
                 <td><span style={{fontWeight:700}}>{t.symbol.replace("USDT","")}</span><span className="dim">/USDT</span></td>
                 <td className="mono dim" style={{fontSize:11}}>{t.timeframe}</td>
                 <td><span className={`badge b-${t.side==="LONG"?"long":"short"}`}>{t.side==="LONG"?"▲":"▼"} {t.side}</span></td>
-                <td className="mono">{fmt(t.entry,2)}</td>
-                <td className="mono neg">{fmt(t.sl,0)}</td>
-                <td className="mono" style={{color:t.tp1_hit?"var(--green)":"var(--muted)"}}>{fmt(t.tp1,0)}{t.tp1_hit?" ✓":""}</td>
-                <td className="mono" style={{color:t.tp2_hit?"var(--green)":"var(--muted)"}}>{fmt(t.tp2,0)}{t.tp2_hit?" ✓":""}</td>
-                <td className="mono dim">{fmt(t.tp3,0)}</td>
+                <td className="mono">{fmtP(t.entry)}</td>
+                <td className="mono neg">{fmtP(t.sl)}</td>
+                <td className="mono" style={{color:t.tp1_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp1)}{t.tp1_hit?" ✓":""}</td>
+                <td className="mono" style={{color:t.tp2_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp2)}{t.tp2_hit?" ✓":""}</td>
+                <td className="mono dim">{fmtP(t.tp3)}</td>
                 <td><span className="badge b-st">{t.status}</span></td>
               </tr>
             ))}</tbody>
@@ -833,24 +841,138 @@ function ClientPage({token}){
 }
 
 /* ── GUIDE ── */
+/* ── ABOUT ── */
+function AboutPage({nav}){
+  const Step=({n,title,desc})=>(
+    <div className="card au" style={{padding:"20px 22px",marginBottom:10,display:"flex",gap:18,animation:`up .4s ${n*.06}s ease both`}}>
+      <div style={{minWidth:38,height:38,borderRadius:"50%",background:"linear-gradient(135deg,var(--vi),#6b21a8)",color:"#fff",fontSize:15,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 0 16px rgba(147,51,234,.5)"}}>{n}</div>
+      <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,marginBottom:6}}>{title}</div><div style={{fontSize:13,color:"var(--text2)",lineHeight:1.8}}>{desc}</div></div>
+    </div>
+  );
+  return(
+    <div className="page-sm">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>How it works</div>
+        <div style={{fontSize:13,color:"var(--text2)"}}>ระบบทำงานอย่างไร</div>
+      </div>
+      <Step n={1} title="วิเคราะห์ตลาดด้วย Elliott Wave" desc={<>
+        ระบบสแกนตลาด Crypto Futures ทั้งหมด 10 เหรียญ ได้แก่ BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK และ LTC พร้อมกันทั้ง 2 Timeframe คือ <strong style={{color:"var(--vi3)"}}>1D (Daily)</strong> และ <strong style={{color:"var(--vi3)"}}>4H</strong> ตลอด 24 ชั่วโมงโดยไม่หยุด
+        <br/><br/>
+        ทฤษฎี <strong style={{color:"var(--cy2)"}}>Elliott Wave</strong> เป็นหลักการวิเคราะห์ที่มองว่าราคาในตลาดเคลื่อนที่เป็น "คลื่น" ซ้ำกันตามพฤติกรรมของนักลงทุน — คลื่นขาขึ้น 5 ลูก สลับกับคลื่น Correction 3 ลูก ระบบจะระบุว่าตอนนี้ราคาอยู่ใน "คลื่นลูกที่เท่าไหร่" และคาดการณ์ทิศทางต่อไปได้
+        <br/><br/>
+        เมื่อโครงสร้างคลื่นชัดเจนพอ ระบบจะส่งสัญญาณว่าควร <strong style={{color:"var(--green)"}}>LONG</strong> หรือ <strong style={{color:"var(--red)"}}>SHORT</strong> พร้อมกำหนด bias ของตลาดในขณะนั้น
+      </>}/>
+      <Step n={2} title="คำนวณ Entry / SL / TP อัตโนมัติ" desc={<>
+        เมื่อได้สัญญาณแล้ว ระบบคำนวณจุดสำคัญ 5 จุดโดยอัตโนมัติ:
+        <br/><br/>
+        <div style={{paddingLeft:8}}>
+          <div style={{marginBottom:6}}>📍 <strong>Entry</strong> — ราคาเข้าเทรดที่คำนวณจากโครงสร้างคลื่น เป็นจุดที่มีความเสี่ยงต่ำที่สุดในการเข้า</div>
+          <div style={{marginBottom:6}}>🛑 <strong>Stop Loss (SL)</strong> — จุดตัดขาดทุน วางไว้ที่ระดับที่ถ้าราคาไปถึงแสดงว่าการวิเคราะห์คลื่นผิดพลาด ขาดทุนได้แค่ 1R ต่อเทรด</div>
+          <div style={{marginBottom:6}}>🎯 <strong>TP1</strong> — เป้าแรก อยู่ใกล้ที่สุด โอกาสโดนสูง ปิดกำไรบางส่วนที่นี่</div>
+          <div style={{marginBottom:6}}>🎯 <strong>TP2</strong> — เป้าที่สอง กำไรมากขึ้น ปิดเพิ่มอีกส่วน</div>
+          <div>🎯 <strong>TP3</strong> — เป้าสูงสุด ถ้าตลาดวิ่งต่อได้ดีจะได้กำไรสูงสุดที่นี่</div>
+        </div>
+        <br/>
+        ทุกจุดคำนวณจาก Elliott Wave structure ไม่ใช่การดู indicator ทั่วไป
+      </>}/>
+      <Step n={3} title="เปิด Order บน Binance Futures" desc={<>
+        ระบบส่งคำสั่งเทรดผ่าน <strong style={{color:"var(--cy2)"}}>Binance Futures API</strong> ของลูกค้าโดยตรง — เงินอยู่ในบัญชี Binance ของลูกค้าตลอดเวลา ระบบไม่ได้ถือเงิน ไม่มีสิทธิ์ถอนเงิน
+        <br/><br/>
+        ความปลอดภัย:
+        <div style={{paddingLeft:8,marginTop:8}}>
+          <div style={{marginBottom:6}}>🔒 API Key ถูก Restrict ให้ใช้ได้เฉพาะ IP ของเซิร์ฟเวอร์นี้เท่านั้น</div>
+          <div style={{marginBottom:6}}>🔒 Permission เปิดแค่ "Enable Reading" และ "Enable Futures" เท่านั้น</div>
+          <div>🔒 ไม่มีสิทธิ์ Withdraw ไม่มีสิทธิ์ Spot Trading</div>
+        </div>
+        <br/>
+        เมื่อเปิด Position แล้ว ระบบจะตั้ง Take Profit และ Stop Loss เป็น Order อัตโนมัติบน Binance ทันที
+      </>}/>
+      <Step n={4} title="บริหาร Position แบบ Partial TP" desc={<>
+        แทนที่จะรอขายทีเดียวที่เป้าเดียว ระบบใช้การ <strong style={{color:"var(--vi3)"}}>ปิดกำไรเป็นส่วน (Partial Take Profit)</strong> ซึ่งเป็นวิธีที่ Professional Trader ใช้กัน:
+        <br/><br/>
+        <div style={{paddingLeft:8}}>
+          <div style={{marginBottom:8}}>✅ <strong>TP1 โดน</strong> — ปิดบางส่วน ได้กำไรก้อนแรก พร้อมขยับ SL มาที่จุดทุน (Breakeven) ทำให้ที่เหลือ "ไม่มีความเสี่ยง" แล้ว</div>
+          <div style={{marginBottom:8}}>✅ <strong>TP2 โดน</strong> — ปิดอีกส่วน ได้กำไรก้อนที่สอง ที่เหลือรันต่อฟรี</div>
+          <div style={{marginBottom:8}}>✅ <strong>TP3 โดน</strong> — ปิดทั้งหมด ได้กำไรสูงสุด</div>
+          <div>❌ <strong>SL โดนก่อน TP1</strong> — ขาดทุนแค่ 1R ตามที่กำหนด</div>
+        </div>
+        <br/>
+        <div style={{background:"rgba(16,185,129,.07)",border:"1px solid rgba(16,185,129,.2)",borderRadius:8,padding:"11px 14px",fontSize:13,color:"var(--green)"}}>
+          ข้อดีคือแม้ราคาไม่วิ่งถึง TP3 ก็ยังได้กำไรจาก TP1 และ TP2 ระบบ Partial TP ช่วยให้ Win Rate และ Profit Factor ดีขึ้นในระยะยาว
+        </div>
+      </>}/>
+      <Step n={5} title="ดูผลได้ Real-time" desc="ลูกค้าเข้าดู Wallet, Open Positions และประวัติการเทรดได้ตลอดเวลาผ่านลิงค์ส่วนตัว — ไม่ต้องติดตั้งอะไร เปิดจากมือถือหรือคอมได้เลย"/>
+      <div style={{textAlign:"center",marginTop:24}}>
+        <button className="btn btn-vi" style={{marginRight:10}} onClick={()=>nav("register")}>สมัครใช้งาน →</button>
+        <button className="btn btn-gl" onClick={()=>nav("guide")}>วิธีเอา API Key</button>
+      </div>
+    </div>
+  );
+}
+
 function GuidePage({nav}){
+  const Tag=({c,children})=><span style={{display:"inline-block",background:c==="g"?"rgba(16,185,129,.12)":c==="r"?"rgba(244,63,94,.12)":"rgba(147,51,234,.12)",color:c==="g"?"var(--green)":c==="r"?"var(--red)":"var(--vi3)",padding:"2px 10px",borderRadius:5,fontSize:11,fontWeight:700,margin:"2px 3px 2px 0",border:`1px solid ${c==="g"?"rgba(16,185,129,.25)":c==="r"?"rgba(244,63,94,.25)":"rgba(147,51,234,.25)"}`}}>{children}</span>;
+  const Code=({children})=><code style={{background:"rgba(147,51,234,.15)",padding:"2px 9px",borderRadius:4,fontFamily:"var(--mono)",fontSize:12,color:"var(--vi3)",userSelect:"all"}}>{children}</code>;
+  const Warn=({children})=><div style={{marginTop:10,background:"rgba(251,191,36,.07)",border:"1px solid rgba(251,191,36,.2)",borderRadius:8,padding:"11px 14px",fontSize:13,color:"var(--gold)",lineHeight:1.6}}>⚠ {children}</div>;
+  const Note=({children})=><div style={{marginTop:10,background:"rgba(6,182,212,.07)",border:"1px solid rgba(6,182,212,.2)",borderRadius:8,padding:"11px 14px",fontSize:13,color:"var(--cy2)",lineHeight:1.6}}>💡 {children}</div>;
+
   const steps=[
-    {n:1,t:"Log in to Binance",b:"Go to binance.com. Desktop browser recommended."},
-    {n:2,t:"Open API Management",b:"Click profile icon (top right) → API Management."},
-    {n:3,t:"Create New API Key",b:<>Create API → System Generated → label <code style={{background:"rgba(147,51,234,.15)",padding:"2px 8px",borderRadius:4,fontFamily:"var(--mono)",fontSize:12,color:"var(--vi3)"}}>AlphaFutures</code> → Next.</>},
-    {n:4,t:"Complete 2FA",b:"OTP from email + Google Authenticator code."},
-    {n:5,t:"Set Permissions",b:<div style={{marginTop:10}}>{["✓ Enable Reading","✓ Enable Futures"].map(s=><span key={s} style={{display:"inline-block",background:"rgba(16,185,129,.1)",color:"var(--green)",padding:"3px 10px",borderRadius:5,fontSize:11,fontWeight:700,margin:"2px 3px 2px 0",border:"1px solid rgba(16,185,129,.2)"}}>{s}</span>)}{["✗ Spot & Margin","✗ Withdrawals"].map(s=><span key={s} style={{display:"inline-block",background:"rgba(244,63,94,.1)",color:"var(--red)",padding:"3px 10px",borderRadius:5,fontSize:11,fontWeight:700,margin:"2px 3px 2px 0",border:"1px solid rgba(244,63,94,.2)"}}>{s}</span>)}<div style={{marginTop:10,background:"rgba(251,191,36,.07)",border:"1px solid rgba(251,191,36,.2)",borderRadius:8,padding:"11px 14px",fontSize:13,color:"var(--gold)"}}>⚠ Never enable Withdrawals.</div></div>},
-    {n:6,t:"Restrict to Server IP",b:<>IP: <code style={{background:"rgba(147,51,234,.15)",padding:"2px 9px",borderRadius:4,fontFamily:"var(--mono)",fontSize:12,color:"var(--vi3)"}}>45.77.38.167</code></>},
-    {n:7,t:"Copy Both Keys",b:<><span style={{color:"var(--gold)",fontWeight:600}}>⚠ Secret is shown once only.</span> Save immediately.</>},
-    {n:8,t:"Paste into Register",b:"Enter keys on Register page. Admin activates within 24h.",cta:true},
+    {
+      n:1,t:"เข้าสู่ระบบ Binance",
+      b:<>เปิด <strong>binance.com</strong> แล้ว login เข้าบัญชี แนะนำให้ใช้ <strong>คอมพิวเตอร์</strong> จะสะดวกกว่ามือถือ<Note>ถ้ายังไม่มีบัญชี Binance ต้องสมัครและยืนยันตัวตน (KYC) ก่อน</Note></>
+    },
+    {
+      n:2,t:"ไปที่ API Management",
+      b:<><div style={{lineHeight:2}}>คลิก <strong>รูปโปรไฟล์</strong> มุมขวาบน → เลือก <strong>"API Management"</strong></div><div style={{marginTop:8,padding:"10px 14px",background:"rgba(255,255,255,.04)",borderRadius:8,fontSize:13,color:"var(--text2)"}}>หรือ URL ตรง: <Code>binance.com/my/settings/api-management</Code></div></>
+    },
+    {
+      n:3,t:"สร้าง API Key ใหม่",
+      b:<><div style={{lineHeight:2}}>กดปุ่ม <strong>"Create API"</strong> → เลือก <strong>"System generated"</strong> → ตั้งชื่อ Label ว่า <Code>AlphaFutures</Code> → กด <strong>"Next"</strong></div><Note>ชื่อ Label ไม่มีผลต่อการใช้งาน จะตั้งอะไรก็ได้ แค่ช่วยให้จำได้ว่า Key นี้ใช้กับระบบนี้</Note></>
+    },
+    {
+      n:4,t:"ยืนยัน 2FA",
+      b:<><div style={{lineHeight:2}}>Binance จะขอยืนยัน 2 ขั้นตอน:</div><div style={{marginTop:8}}><div style={{marginBottom:4}}>📧 <strong>Email OTP</strong> — กรอก code ที่ได้รับทางอีเมล</div><div>📱 <strong>Authenticator</strong> — กรอก code จาก Google Authenticator / Binance App</div></div><Warn>ถ้าไม่มี 2FA ให้ไป Settings เปิดก่อน Binance บังคับใช้สำหรับ API</Warn></>
+    },
+    {
+      n:5,t:"ตั้งค่า Permissions",
+      b:<><div style={{marginBottom:10,lineHeight:1.8}}>หลังสร้าง Key แล้ว จะมีหน้าตั้งค่า Permissions — ให้เลือกแค่นี้เท่านั้น:</div>
+        <div style={{marginBottom:8}}><Tag c="g">✓ Enable Reading</Tag><Tag c="g">✓ Enable Futures</Tag></div>
+        <div style={{marginBottom:10}}><Tag c="r">✗ Enable Spot & Margin Trading</Tag><Tag c="r">✗ Enable Withdrawals</Tag></div>
+        <Warn>ห้ามเปิด "Enable Withdrawals" เด็ดขาด — ระบบนี้ไม่ต้องการสิทธิ์นี้ เปิดแล้วอันตราย</Warn>
+      </>
+    },
+    {
+      n:6,t:"จำกัด IP (Restrict Access)",
+      b:<><div style={{lineHeight:1.8,marginBottom:10}}>ในช่อง <strong>"Restrict access to trusted IPs only"</strong> ให้ใส่ IP ของเซิร์ฟเวอร์:</div>
+        <div style={{padding:"10px 14px",background:"rgba(147,51,234,.1)",borderRadius:8,fontFamily:"var(--mono)",fontSize:15,color:"var(--vi3)",letterSpacing:1,textAlign:"center",userSelect:"all"}}>45.77.38.167</div>
+        <Note>การจำกัด IP ทำให้ API Key ปลอดภัยขึ้น — แม้ Key หลุดออกไป คนอื่นก็ใช้ไม่ได้</Note>
+      </>
+    },
+    {
+      n:7,t:"คัดลอก API Key และ Secret Key",
+      b:<><div style={{lineHeight:1.8,marginBottom:10}}>หลังบันทึกการตั้งค่า Binance จะแสดง Key 2 อัน:</div>
+        <div style={{marginBottom:6}}>🔑 <strong>API Key</strong> — ตัวยาว เริ่มต้นด้วยตัวอักษรสุ่ม</div>
+        <div style={{marginBottom:10}}>🔐 <strong>Secret Key</strong> — จะแสดง <strong>แค่ครั้งเดียวเท่านั้น!</strong></div>
+        <Warn>คัดลอก Secret Key ทันที ถ้าปิดหน้าต่างไปแล้วจะไม่มีทางดูได้อีก ต้องสร้าง Key ใหม่</Warn>
+      </>
+    },
+    {
+      n:8,t:"กรอก Keys ในหน้า Register",
+      b:<><div style={{lineHeight:1.8,marginBottom:16}}>นำ API Key และ Secret Key ที่ได้ไปกรอกในหน้า Register พร้อมชื่อและอีเมล แล้วรอแอดมิน <strong>Activate</strong> ภายใน 24 ชั่วโมง</div>
+        <button className="btn btn-cy" onClick={()=>nav("register")}>ไปหน้า Register →</button>
+      </>
+    },
   ];
   return(
     <div className="page-sm">
-      <div style={{marginBottom:18}}><div style={{fontSize:18,fontWeight:800,marginBottom:2}}>How to Create a Binance API Key</div><div style={{fontSize:13,color:"var(--text2)"}}>Follow each step carefully</div></div>
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>วิธีสร้าง Binance API Key</div>
+        <div style={{fontSize:13,color:"var(--text2)"}}>ทำตามขั้นตอนด้านล่างทีละขั้น — ใช้เวลาประมาณ 5 นาที</div>
+      </div>
       {steps.map((s,i)=>(
-        <div key={i} className="card" style={{padding:"18px 20px",marginBottom:10,display:"flex",gap:18,animation:`up .4s ${i*.04}s ease both`}}>
-          <div style={{minWidth:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,var(--vi),#6b21a8)",color:"#fff",fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 0 16px rgba(147,51,234,.5)"}}>{s.n}</div>
-          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>{s.t}</div><div style={{fontSize:13,color:"var(--text2)",lineHeight:1.75}}>{s.b}</div>{s.cta&&<button className="btn btn-cy" style={{marginTop:16}} onClick={()=>nav("register")}>Go to Register →</button>}</div>
+        <div key={i} className="card" style={{padding:"20px 22px",marginBottom:10,display:"flex",gap:18,animation:`up .4s ${i*.04}s ease both`}}>
+          <div style={{minWidth:38,height:38,borderRadius:"50%",background:"linear-gradient(135deg,var(--vi),#6b21a8)",color:"#fff",fontSize:15,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 0 16px rgba(147,51,234,.5)"}}>{s.n}</div>
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:15,marginBottom:10}}>{s.t}</div><div style={{fontSize:13,color:"var(--text2)",lineHeight:1.8}}>{s.b}</div></div>
         </div>
       ))}
     </div>
@@ -861,12 +983,16 @@ function GuidePage({nav}){
 function AdminPage(){
   const[pw,setPw]=useState("");const[auth,setAuth]=useState(false);
   const[accounts,setAccounts]=useState([]);const[err,setErr]=useState("");const[loading,setLoading]=useState(false);
+  const[snap,setSnap]=useState(null);
 
   const doLogin=async()=>{
     setErr("");setLoading(true);
     try{
-      const d=await fetch("/api/admin/accounts",{headers:{"X-Admin-Password":pw}}).then(r=>r.json());
-      if(d.ok){setAccounts(d.accounts);setAuth(true);}else setErr(d.error||"Wrong password.");
+      const[d,s]=await Promise.all([
+        fetch("/api/admin/accounts",{headers:{"X-Admin-Password":pw}}).then(r=>r.json()),
+        fetch("/api/snapshot",{cache:"no-store"}).then(r=>r.json()),
+      ]);
+      if(d.ok){setAccounts(d.accounts);setAuth(true);if(s.ok)setSnap(s.snapshot);}else setErr(d.error||"Wrong password.");
     }catch(e){setErr("Network error.");}
     finally{setLoading(false);}
   };
@@ -892,6 +1018,19 @@ function AdminPage(){
   const members=accounts.filter(a=>a.role!=="admin");
   return(
     <div className="page">
+      {snap&&<div className="card au" style={{padding:"18px 24px",marginBottom:14,background:"rgba(147,51,234,.06)",border:"1px solid rgba(147,51,234,.2)"}}>
+        <div className="sh-t" style={{marginBottom:12}}>Futures Account Balance</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10}}>
+          {[
+            {l:"Wallet Balance",v:`${fmt(snap.wallet,2)} USDT`,c:"var(--vi3)"},
+            {l:"Available Margin",v:`${fmt(snap.available,2)} USDT`,c:"var(--cy2)"},
+            {l:"Unrealized PnL",v:`${parseFloat(snap.upnl)>=0?"+":""}${fmt(snap.upnl,2)} USDT`,c:parseFloat(snap.upnl)>=0?"var(--green)":"var(--red)"},
+            {l:"Open Positions",v:`${(snap.positions||[]).length} positions`,c:"var(--text)"},
+          ].map((item,i)=>(
+            <div key={i} className="sc"><div className="sv mono" style={{color:item.c,fontSize:15}}>{item.v}</div><div className="sl">{item.l}</div></div>
+          ))}
+        </div>
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:14}}>
         {[{l:"Members",v:members.length,c:""},{l:"Active",v:members.filter(a=>a.active).length,c:"ngr"},{l:"Paid",v:members.filter(a=>a.payment_status==="paid").length,c:"ngr"},{l:"Unpaid",v:members.filter(a=>a.payment_status!=="paid"&&a.payment_status!=="admin").length,c:"ngo"}].map((s,i)=>(
           <div key={i} className="sc"><div className={`sv ${s.c}`}>{s.v}</div><div className="sl">{s.l}</div></div>
@@ -906,7 +1045,7 @@ function AdminPage(){
             const isAdm=a.role==="admin";
             return(
               <tr key={i} className="rin" style={{animationDelay:`${i*.06}s`,background:isAdm?"rgba(147,51,234,.04)":""}}>
-                <td style={{fontWeight:700}}>{a.label}</td>
+                <td style={{fontWeight:700}}>{isAdm?"👑 ":""}{a.label}</td>
                 <td className="mono dim" style={{fontSize:11}}>{a.email}</td>
                 <td><span className={`badge b-${a.active?"act":"ina"}`}>{a.active?"ACTIVE":"INACTIVE"}</span></td>
                 <td>{isAdm?<span className="badge b-vi">ADMIN</span>:a.payment_status==="paid"?<span className="badge b-win">Paid</span>:<span className="badge b-st">Unpaid</span>}</td>
@@ -969,6 +1108,7 @@ function App(){
         {page==="login"    &&<LoginPage nav={nav} onLogin={tok=>nav("client",{token:tok})}/>}
         {page==="register" &&<RegisterPage nav={nav}/>}
         {page==="guide"    &&<GuidePage nav={nav}/>}
+        {page==="about"    &&<AboutPage nav={nav}/>}
         {page==="client"   &&<ClientPage token={clientToken}/>}
         {page==="admin"    &&<AdminPage/>}
       </div>

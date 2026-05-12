@@ -13,7 +13,7 @@ from core.engine import build_timeframe_analysis
 from scheduler.daily_scheduler import maybe_run_combined_daily_job, maybe_run_daily_scenario_job
 from services.alert_state_store import AlertStateStore
 from services.binance_price_service import get_last_price
-from services.google_sheets_sync import compute_signal_tracking, safe_sync_signal
+from services.google_sheets_sync import safe_sync_signal
 from services.market_data_sync import sync_recent_market_data
 from services.notifier import send_notification
 from services.scenario_alert_service import check_scenario_and_alert
@@ -83,7 +83,8 @@ def _push_signal_to_sheet_if_enabled(signal_id: int, db_path: str) -> None:
 
 def _notify_signal_entry_after_exchange_fill(signal_id: int, db_path: str) -> None:
     try:
-        row = WaveRepository(db_path=db_path).fetch_signal(int(signal_id))
+        repo = WaveRepository(db_path=db_path)
+        row = repo.fetch_signal(int(signal_id))
         if row is None:
             return
         _push_signal_to_sheet_if_enabled(int(signal_id), db_path)
@@ -95,8 +96,46 @@ def _notify_signal_entry_after_exchange_fill(signal_id: int, db_path: str) -> No
                 symbol=row["symbol"],
                 include_layout=False,
             )
+            repo.mark_entry_notified(int(signal_id))
     except Exception as exc:
         print(f"[orchestrator] entry notify after exchange fill: {exc}")
+
+
+def _maybe_notify_new_signal_entry(signal_row, repository: WaveRepository | None = None) -> None:
+    """Send entry notification for an ACTIVE signal not yet notified.
+
+    Uses entry_notified_at in the DB as the idempotency flag so the notification
+    is guaranteed to fire exactly once — even across process restarts.
+    Skipped when exchange-managed entry is enabled (Binance fill controls timing).
+    """
+    if signal_row is None:
+        return
+    if _exchange_managed_signal_entry_enabled():
+        return
+    try:
+        status = str(signal_row["status"] or "").upper()
+        if status not in ("ACTIVE", "PARTIAL_TP1", "PARTIAL_TP2"):
+            return
+        if not signal_row["entry_triggered_at"]:
+            return
+        try:
+            already_notified = signal_row["entry_notified_at"]
+        except (IndexError, KeyError):
+            already_notified = None
+        if already_notified:
+            return
+        message = _build_signal_event_message(signal_row, "ENTRY_TRIGGERED")
+        if message:
+            send_notification(
+                message,
+                timeframe=signal_row["timeframe"],
+                symbol=signal_row["symbol"],
+                include_layout=False,
+            )
+            if repository is not None:
+                repository.mark_entry_notified(int(signal_row["id"]))
+    except Exception as exc:
+        print(f"[orchestrator] new signal entry notify: {exc}")
 
 
 def _signals_entry_only_enabled() -> bool:
@@ -836,6 +875,7 @@ def _refresh_runtime(
             safe_sync_signal(signal_row, sheets_logger)
             if signal_row is not None:
                 _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+                _maybe_notify_new_signal_entry(signal_row, repository)
         _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
     if not _telegram_sheet_only_enabled():
         for analysis in refreshed.analyses:
@@ -884,8 +924,26 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
             return signal_row.get(key)
         return signal_row[key]
 
+    symbol = _signal_value("symbol")
     timeframe = _signal_value("timeframe")
-    scenario_name = _signal_value("scenario_name")
+
+    # TP / SL / exit events — one-liner
+    if event_type in {"TP1_HIT", "TP2_HIT", "TP3_HIT"}:
+        label = event_type.replace("_HIT", "")
+        return f"✅ {symbol} | {timeframe} {label}"
+
+    if event_type == "STOP_LOSS_HIT":
+        return f"❌ {symbol} | {timeframe} SL"
+
+    if event_type in {"TIME_STOP_HIT", "OPPOSITE_STRUCTURE_HIT", "VOLATILITY_EXIT_HIT"}:
+        labels = {
+            "TIME_STOP_HIT": "Time Exit",
+            "OPPOSITE_STRUCTURE_HIT": "Structure Exit",
+            "VOLATILITY_EXIT_HIT": "Volatility Exit",
+        }
+        return f"🛡 {symbol} | {timeframe} {labels[event_type]}"
+
+    # ENTRY_TRIGGERED — full detail
     entry_price = _signal_value("entry_price")
     stop_loss = _signal_value("stop_loss")
     managed_stop_loss = _signal_value("managed_stop_loss")
@@ -893,58 +951,16 @@ def _build_signal_event_message(signal_row, event_type: str) -> str | None:
     tp1 = _signal_value("tp1")
     tp2 = _signal_value("tp2")
     tp3 = _signal_value("tp3")
-    status = _signal_value("status")
-    symbol = _signal_value("symbol")
     side = _signal_value("side")
-    rr_tp1 = _signal_value("rr_tp1")
-    rr_tp2 = _signal_value("rr_tp2")
-    rr_tp3 = _signal_value("rr_tp3")
-    tracking = compute_signal_tracking(signal_row)
-    tg_marks = {"✓": "✅", "✗": "❌"}
-    tp1_mark = f" {tg_marks[tracking['tp1_mark']]}" if tracking["tp1_mark"] else ""
-    tp2_mark = f" {tg_marks[tracking['tp2_mark']]}" if tracking["tp2_mark"] else ""
-    tp3_mark = f" {tg_marks[tracking['tp3_mark']]}" if tracking["tp3_mark"] else ""
-    sl_mark = f" {tg_marks[tracking['sl_mark']]}" if tracking["sl_mark"] else ""
-    event_titles = {
-        "ENTRY_TRIGGERED": "Entry Triggered",
-        "TP1_HIT": "TP1 Hit",
-        "TP2_HIT": "TP2 Hit",
-        "TP3_HIT": "TP3 Hit",
-        "STOP_LOSS_HIT": "Stop Loss Hit",
-        "TIME_STOP_HIT": "Time Stop Hit",
-        "OPPOSITE_STRUCTURE_HIT": "Opposite Structure Exit",
-        "VOLATILITY_EXIT_HIT": "Volatility Exit",
-    }
-    event_icons = {
-        "ENTRY_TRIGGERED": "🎯",
-        "TP1_HIT": "✅",
-        "TP2_HIT": "✅",
-        "TP3_HIT": "✅",
-        "STOP_LOSS_HIT": "❌",
-        "TIME_STOP_HIT": "⏱",
-        "OPPOSITE_STRUCTURE_HIT": "🛡",
-        "VOLATILITY_EXIT_HIT": "🛡",
-    }
-
-    def _rr_suffix(value) -> str:
-        if value is None:
-            return ""
-        return f" ({_fmt_value(value)}R)"
 
     lines = [
-        f"{event_icons[event_type]} {symbol} | {timeframe} {event_titles[event_type]}",
-        "",
-        f"• Scenario: {scenario_name}",
-        f"• Status: {_humanize_token(status)}",
+        f"🎯 {symbol} | {timeframe} Entry",
         f"• Side: {_format_trade_side(side)}",
         f"• Entry: {_fmt_value(entry_price)}",
-        f"• SL: {_fmt_value(display_stop_loss)}{sl_mark}",
-        _optional_level_line("TP1", tp1, f"{tp1_mark}{_rr_suffix(rr_tp1)}"),
-        _optional_level_line("TP2", tp2, f"{tp2_mark}{_rr_suffix(rr_tp2)}"),
-        _optional_level_line("TP3", tp3, f"{tp3_mark}{_rr_suffix(rr_tp3)}"),
-        _optional_text_line("Result", _humanize_token(tracking["result"])),
-        _optional_text_line("Realized RR", tracking["realized_rr"], "R"),
-        _optional_text_line("Win Rate", tracking["win_rate_pct"], "%"),
+        f"• SL: {_fmt_value(display_stop_loss)}",
+        _optional_level_line("TP1", tp1),
+        _optional_level_line("TP2", tp2),
+        _optional_level_line("TP3", tp3),
     ]
     return "\n".join(line for line in lines if line is not None)
 
@@ -997,6 +1013,8 @@ def process_market_update(
                     symbol=signal_row["symbol"],
                     include_layout=False,
                 )
+                if event_type == "ENTRY_TRIGGERED":
+                    repository.mark_entry_notified(signal_id)
             _maybe_run_exchange_execution(runtime.symbol, event_type, signal_row)
 
     return runtime
@@ -1063,6 +1081,7 @@ def run_orchestrator(
             safe_sync_signal(signal_row, sheets_logger)
             if signal_row is not None:
                 _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+                _maybe_notify_new_signal_entry(signal_row, repository)
         _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
         # Recovery sync (startup only): upsert a small window of syncable rows.
         # Kept small to avoid blocking service startup on Google Sheets latency.
@@ -1070,6 +1089,12 @@ def run_orchestrator(
             for row in repository.fetch_recent_syncable_signals(runtime.symbol, limit=3):
                 safe_sync_signal(row, sheets_logger)
     _reconcile_live_signal_state(repository, sheets_logger=sheets_logger)
+
+    # Startup sweep: notify any active signal that was never notified
+    # (covers crash recovery and signals created while the process was down).
+    if hasattr(repository, "fetch_unnotified_active_signals"):
+        for row in repository.fetch_unnotified_active_signals():
+            _maybe_notify_new_signal_entry(row, repository)
 
     print("Starting trading orchestrator...")
     for runtime in runtimes.values():
@@ -1104,6 +1129,7 @@ def run_orchestrator(
                         safe_sync_signal(signal_row, sheets_logger)
                         if signal_row is not None:
                             _maybe_run_exchange_open_for_synced_entry(runtime.symbol, signal_row)
+                            _maybe_notify_new_signal_entry(signal_row, repository)
                     _maybe_enqueue_open_for_any_active_synced_entries(runtime.symbol, repository)
                 price = get_last_price(runtime.symbol)
                 price_updates[runtime.symbol] = price

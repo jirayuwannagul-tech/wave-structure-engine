@@ -1755,6 +1755,8 @@ def run_web_dashboard(
             _visit_counter: dict = _j.load(_f)
     except Exception:
         _visit_counter = {"count": 0}
+    if "unique_ips" not in _visit_counter:
+        _visit_counter["unique_ips"] = []
 
     def _save_visits() -> None:
         try:
@@ -1794,9 +1796,12 @@ def run_web_dashboard(
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
-            if path in ("/", "/history", "/login", "/register", "/admin", "/guide", "/board"):
+            if path in ("/", "/history", "/login", "/register", "/admin", "/guide", "/board", "/about"):
                 if path == "/":
                     _visit_counter["count"] = _visit_counter.get("count", 0) + 1
+                    ip = self.client_address[0]
+                    if ip not in _visit_counter["unique_ips"]:
+                        _visit_counter["unique_ips"].append(ip)
                     _save_visits()
                 self._send_html(spa_html)
                 return
@@ -1888,7 +1893,18 @@ def run_web_dashboard(
                 self._send_json(200, {"ok": True, "posts": posts})
                 return
             if path == "/api/visits":
-                self._send_json(200, {"ok": True, "visits": _visit_counter["count"]})
+                self._send_json(200, {"ok": True, "visits": _visit_counter["count"], "unique": len(_visit_counter.get("unique_ips", []))})
+                return
+            if path == "/api/ticker":
+                try:
+                    import urllib.request as _ur
+                    syms = '["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT"]'
+                    url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={_ur.quote(syms)}"
+                    with _ur.urlopen(url, timeout=5) as _resp:
+                        data = _resp.read()
+                    self._send_json(200, {"ok": True, "data": __import__("json").loads(data)})
+                except Exception as e:
+                    self._send_json(200, {"ok": False, "error": str(e)})
                 return
             if path == "/healthz":
                 self._send_json(200, {"ok": True})

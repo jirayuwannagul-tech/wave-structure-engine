@@ -421,6 +421,7 @@ class WaveRepository:
             self._ensure_column(conn, "signals", "rr_tp2", "REAL")
             self._ensure_column(conn, "signals", "rr_tp3", "REAL")
             self._ensure_column(conn, "signals", "managed_stop_loss", "REAL")
+            self._ensure_column(conn, "signals", "entry_notified_at", "TEXT")
 
     def _ensure_column(
         self,
@@ -548,6 +549,29 @@ class WaveRepository:
                 "SELECT * FROM signals WHERE id = ?",
                 (signal_id,),
             ).fetchone()
+
+    def mark_entry_notified(self, signal_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE signals SET entry_notified_at = ? WHERE id = ? AND entry_notified_at IS NULL",
+                (_utc_now(), signal_id),
+            )
+
+    def fetch_unnotified_active_signals(self, symbol: str | None = None) -> list[sqlite3.Row]:
+        """Return ACTIVE signals that have been entered but not yet notified via Telegram."""
+        query = """
+            SELECT * FROM signals
+            WHERE status IN ('ACTIVE', 'PARTIAL_TP1', 'PARTIAL_TP2')
+              AND entry_triggered_at IS NOT NULL
+              AND entry_notified_at IS NULL
+        """
+        params: list = []
+        if symbol is not None:
+            query += " AND symbol = ?"
+            params.append(symbol.upper())
+        query += " ORDER BY id ASC"
+        with self._connect() as conn:
+            return conn.execute(query, params).fetchall()
 
     def close_open_signal(
         self,
