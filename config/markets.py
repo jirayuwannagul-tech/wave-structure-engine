@@ -35,14 +35,39 @@ def get_default_monitor_symbols() -> list[str]:
 # Symbol-specific trading rules — only override what's necessary.
 SYMBOL_RULES: dict[str, dict] = {
     "DOGEUSDT": {
-        # SHORT requires price below EMA200 (long-term bearish confirmed)
         "short_requires_ema200_bearish": True,
-        # SHORT requires RSI < 45 (stronger momentum, not just < 50)
         "short_rsi_threshold": 45.0,
-        # Minimum R:R for any trade (default is 0.8)
         "min_rr": 1.2,
-        # 4H SHORT requires 2 confirmations like 1D (not just 1)
         "short_4h_min_confirmations": 2,
+    },
+    # NEAR — L1, ประวัติตั้งแต่ 2020, trending ชัด
+    "NEARUSDT": {
+        "short_requires_ema200_bearish": True,
+        "min_rr": 1.2,
+    },
+    # TRX — volume สูง, ประวัติยาวตั้งแต่ 2018, ตาม BTC ใกล้ชิด
+    "TRXUSDT": {
+        "short_requires_ema200_bearish": True,
+        "short_rsi_threshold": 45.0,
+        "min_rr": 1.2,
+        "short_4h_min_confirmations": 2,
+    },
+    # TON — ประวัติสั้น (2023), volatile กว่า ต้องการ RR สูง
+    "TONUSDT": {
+        "short_requires_ema200_bearish": True,
+        "min_rr": 1.5,
+        "short_4h_min_confirmations": 2,
+    },
+    # ARB — L2, ประวัติสั้น (2022), ตาม ETH ใกล้ชิด
+    "ARBUSDT": {
+        "short_requires_ema200_bearish": True,
+        "min_rr": 1.5,
+        "short_4h_min_confirmations": 2,
+    },
+    # ATOM — Cosmos, ประวัติตั้งแต่ 2019, trending ชัด
+    "ATOMUSDT": {
+        "short_requires_ema200_bearish": True,
+        "min_rr": 1.2,
     },
 }
 
