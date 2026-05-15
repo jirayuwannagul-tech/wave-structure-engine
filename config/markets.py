@@ -15,6 +15,11 @@ DEFAULT_MONITOR_SYMBOLS: tuple[str, ...] = (
     "AVAXUSDT",
     "LINKUSDT",
     "LTCUSDT",
+    "NEARUSDT",
+    "TRXUSDT",
+    "TONUSDT",
+    "ARBUSDT",
+    "ATOMUSDT",
 )
 
 
