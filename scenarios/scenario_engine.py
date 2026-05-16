@@ -293,13 +293,17 @@ def _edge_is_prunable_negative(edge, *, min_samples: int, max_avg_r: float = -0.
 
 
 def _pair_edge_is_prunable(edge, *, timeframe: str) -> bool:
-    return bool(
-        edge is not None
-        and timeframe.upper() == "4H"
-        and int(edge.sample_count) >= 50
-        and float(edge.avg_r) <= -0.02
-        and float(edge.win_rate) <= 0.46
-    )
+    if edge is None:
+        return False
+    tf = timeframe.upper()
+    n = int(edge.sample_count)
+    ar = float(edge.avg_r)
+    wr = float(edge.win_rate)
+    if tf == "4H":
+        return n >= 50 and ar <= -0.02 and wr <= 0.46
+    if tf == "1D":
+        return n >= 10 and ar <= -0.08 and wr <= 0.44
+    return False
 
 
 def _pair_edge_is_positive(edge) -> bool:

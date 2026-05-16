@@ -445,13 +445,29 @@ def _passes_quality_gate(
         elif htf_wave_number == "C":
             main_confidence_threshold = max(0.62, main_confidence_threshold - 0.04)
 
-    GLOBALLY_DISABLED = {"RUNNING_FLAT", "LEADING_DIAGONAL"}
+    GLOBALLY_DISABLED = {"LEADING_DIAGONAL"}
     if pattern.upper() in GLOBALLY_DISABLED:
         return False, f"{pattern.upper()} disabled globally (win rate too low)"
 
-    SHORT_TF_DISABLED = {"ENDING_DIAGONAL", "EXPANDED_FLAT"}
+    SHORT_TF_DISABLED = {"ENDING_DIAGONAL"}
     if timeframe.upper() in ("4H", "1H") and pattern.upper() in SHORT_TF_DISABLED:
         return False, f"{pattern.upper()} disabled on {timeframe.upper()}"
+
+    # EXPANDED_FLAT on 4H/1H: block when experience store shows it's clearly losing,
+    # or when there's no data yet. BNB LONG is a known loser (-23R); allow DOGE/ETH SHORT.
+    if timeframe.upper() in ("4H", "1H") and pattern.upper() == "EXPANDED_FLAT":
+        if pattern_edge is None:
+            return False, "EXPANDED_FLAT on short TF requires established pattern edge"
+        if pattern_edge.negative or float(pattern_edge.avg_r) <= -0.08:
+            return False, "EXPANDED_FLAT blocked by negative pattern edge"
+
+    # RUNNING_FLAT: block when clearly negative or no data.
+    # DOGE/BTC/BNB 4H are positive; SOLUSDT SHORT (-0.132R) should be blocked.
+    if pattern.upper() == "RUNNING_FLAT":
+        if pattern_edge is None:
+            return False, "RUNNING_FLAT requires established pattern edge"
+        if pattern_edge.negative or float(pattern_edge.avg_r) <= -0.08:
+            return False, "RUNNING_FLAT blocked by negative pattern edge"
 
     WEAK_4H_CORRECTIVE = {"TRIANGLE", "FLAT"}
     if timeframe.upper() == "4H" and pattern.upper() in WEAK_4H_CORRECTIVE:
