@@ -140,6 +140,73 @@ def _build_signals(runtimes: list) -> list[dict[str, Any]]:
     return signals
 
 
+def _normalize_side(bias: Any) -> str | None:
+    side = str(bias or "").upper()
+    if side == "BULLISH":
+        return "LONG"
+    if side == "BEARISH":
+        return "SHORT"
+    return None
+
+
+def _build_intelligence(runtimes: list) -> list[dict[str, Any]]:
+    """Per (symbol, timeframe) pattern detail, including setups blocked by the quality gate."""
+    intelligence: list[dict[str, Any]] = []
+    for runtime in runtimes:
+        for analysis in runtime.analyses:
+            scenarios = analysis.get("scenarios") or analysis.get("all_scenarios") or []
+            scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
+            wave_summary = analysis.get("wave_summary") or {}
+
+            summary_bias = wave_summary.get("bias")
+            summary_entry = wave_summary.get("confirm")
+            summary_stop = wave_summary.get("stop_loss")
+            summary_targets = list(wave_summary.get("targets", []) or [])
+            summary_tp1 = summary_targets[0] if summary_targets else None
+
+            scenario_bias = getattr(scenario, "bias", None) if scenario is not None else None
+            scenario_entry = getattr(scenario, "confirmation", None) if scenario is not None else None
+            scenario_stop = getattr(scenario, "stop_loss", None) if scenario is not None else None
+            scenario_targets = list(getattr(scenario, "targets", []) or []) if scenario is not None else []
+            scenario_tp1 = scenario_targets[0] if scenario_targets else None
+
+            use_summary = _is_valid_signal_shape(summary_bias, summary_entry, summary_stop, summary_tp1)
+            use_scenario = _is_valid_signal_shape(scenario_bias, scenario_entry, scenario_stop, scenario_tp1)
+
+            side = entry = sl = None
+            targets: list[float] = []
+            has_setup = False
+            if use_summary:
+                side, entry, sl = _normalize_side(summary_bias), summary_entry, summary_stop
+                targets = summary_targets or _fallback_targets(summary_bias, summary_entry, summary_stop)
+                has_setup = True
+            elif use_scenario:
+                side, entry, sl = _normalize_side(scenario_bias), scenario_entry, scenario_stop
+                targets = scenario_targets or _fallback_targets(scenario_bias, scenario_entry, scenario_stop)
+                has_setup = True
+
+            trend = analysis.get("trend")
+            intelligence.append(
+                {
+                    "symbol": runtime.symbol,
+                    "timeframe": analysis.get("timeframe"),
+                    "pattern_type": analysis.get("primary_pattern_type"),
+                    "direction": _normalize_side(wave_summary.get("pattern_direction")),
+                    "confidence": analysis.get("confidence"),
+                    "probability": analysis.get("probability"),
+                    "trend": getattr(trend, "state", None),
+                    "has_setup": has_setup,
+                    "side": side,
+                    "entry": entry,
+                    "sl": sl,
+                    "tp1": targets[0] if len(targets) >= 1 else None,
+                    "tp2": targets[1] if len(targets) >= 2 else None,
+                    "tp3": targets[2] if len(targets) >= 3 else None,
+                }
+            )
+    return intelligence
+
+
 def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
     config = load_execution_config()
     client = BinanceFuturesClient(config)
@@ -193,6 +260,7 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
         "upnl": _fmt_number((usdt_balance or {}).get("crossUnPnl")),
         "positions": open_positions,
         "signals": _build_signals(runtimes),
+        "intelligence": _build_intelligence(runtimes),
         "account_assets": len(account.get("assets", [])) if isinstance(account, dict) else 0,
     }
 
