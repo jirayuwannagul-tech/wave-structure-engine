@@ -586,7 +586,7 @@ function CoinsPage({nav}){
                   <div style={{fontWeight:700,fontSize:14}}>{sym.replace("USDT","")}<span className="dim">/USDT</span></div>
                   {row&&row.has_setup?<span className={`badge b-${row.side==="LONG"?"long":"short"}`}>{row.side==="LONG"?"▲":"▼"} {row.side}</span>:<span className="badge b-st">SCANNING</span>}
                 </div>
-                <div className="mono" style={{fontSize:18,fontWeight:700,marginBottom:4}}>{t.price?fmtP(t.price):"–"}</div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,marginBottom:4}}>{t.price!=null?fmtP(t.price):"–"}</div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span className="mono" style={{fontSize:12,fontWeight:700,color:up?"var(--green)":"var(--red)"}}>{t.chg!=null&&!isNaN(t.chg)?`${up?"+":""}${t.chg.toFixed(2)}%`:"–"}</span>
                   <span style={{fontSize:11,color:"var(--muted)"}}>{row&&row.pattern_type?row.pattern_type.replace(/_/g," "):"—"}</span>
@@ -610,7 +610,7 @@ function CoinPage({symbol,nav}){
   const[err,setErr]=useState("");
 
   const load=useCallback(async()=>{
-    if(!symbol)return;
+    if(!symbol){setLoading(false);return;}
     try{
       const r=await fetch(`/api/coin/${symbol}`,{cache:"no-store"});
       const d=await r.json();

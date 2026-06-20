@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 import threading
 import time
@@ -1890,27 +1891,35 @@ def run_web_dashboard(
             if path == "/api/history":
                 try:
                     qs = self.path.split("?", 1)[-1] if "?" in self.path else ""
-                    qs_params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
-                    sym = (qs_params.get("symbol") or "").upper() or None
+                    qs_params = parse_qs(qs)
+                    sym = (qs_params.get("symbol", [""])[0] or "").upper() or None
                     trades = _build_trade_history(db_path, symbol=sym)
                     self._send_json(200, {"ok": True, "trades": trades})
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
             if path == "/api/symbols":
-                self._send_json(200, {"ok": True, "symbols": get_default_monitor_symbols()})
+                with _cache_lock:
+                    payload = _cache["payload"]
+                monitored = None
+                if payload and payload.get("ok"):
+                    monitored = payload["snapshot"].get("monitored_symbols")
+                self._send_json(200, {"ok": True, "symbols": monitored or get_default_monitor_symbols()})
                 return
             if path.startswith("/api/coin/"):
                 sym = path[len("/api/coin/"):].upper()
-                monitored = get_default_monitor_symbols()
+                with _cache_lock:
+                    payload = _cache["payload"]
+                if payload is None:
+                    self._send_json(503, {"ok": False, "error": "snapshot not ready yet, please retry"})
+                    return
+                monitored = (payload.get("snapshot") or {}).get("monitored_symbols") or get_default_monitor_symbols()
                 if sym not in monitored:
                     self._send_json(404, {"ok": False, "error": "unknown symbol"})
                     return
                 try:
-                    with _cache_lock:
-                        payload = _cache["payload"]
                     intelligence = []
-                    if payload and payload.get("ok"):
+                    if payload.get("ok"):
                         intelligence = [
                             row for row in (payload["snapshot"].get("intelligence") or [])
                             if row.get("symbol") == sym
