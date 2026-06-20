@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from scheduler.daily_scheduler import build_daily_scenario_message
 
 
-THAI_TZ = ZoneInfo("Asia/Bangkok")
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
 
 @dataclass
@@ -37,7 +37,7 @@ class Runtime:
 
 
 def test_build_daily_scenario_message_includes_support_resistance_and_wave():
-    now = datetime(2026, 3, 18, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 18, 7, 5, tzinfo=LOCAL_TZ)
     msg = build_daily_scenario_message(
         [Runtime("AAAUSDT", bias="BULLISH"), Runtime("BBBUSDT", bias="BEARISH")],
         now=now,

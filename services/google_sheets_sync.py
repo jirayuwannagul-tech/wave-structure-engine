@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from execution.settings import load_execution_config
 
 
-THAI_TZ = ZoneInfo("America/Los_Angeles")
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 SHEET_HEADERS = [
     "date",
     "symbol",
@@ -61,7 +61,7 @@ def _signal_date(signal_row) -> str:
     dt = datetime.fromisoformat(raw)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _tp_allocations() -> tuple[float, float, float]:
