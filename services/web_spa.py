@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
+
+from config.markets import get_default_monitor_symbols
 
 _TWEAKS_CSS = r"""
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
@@ -545,20 +548,18 @@ function CoinsPage({nav}){
   const[loading,setLoading]=useState(true);
 
   const load=useCallback(async()=>{
-    try{
-      const[sy,tk,sn]=await Promise.all([
-        fetch("/api/symbols",{cache:"no-store"}).then(r=>r.json()),
-        fetch("/api/ticker",{cache:"no-store"}).then(r=>r.json()),
-        fetch("/api/snapshot",{cache:"no-store"}).then(r=>r.json()),
-      ]);
-      if(sy.ok)setSyms(sy.symbols);
-      if(tk.ok&&Array.isArray(tk.data)){
-        const m={};tk.data.forEach(d=>{m[d.symbol]={price:parseFloat(d.lastPrice),chg:parseFloat(d.priceChangePercent)};});
-        setTicker(m);
-      }
-      if(sn.ok)setIntel(sn.snapshot?.intelligence||[]);
-    }catch(e){}
-    finally{setLoading(false);}
+    const[sy,tk,sn]=await Promise.allSettled([
+      fetch("/api/symbols",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/ticker",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/snapshot",{cache:"no-store"}).then(r=>r.json()),
+    ]);
+    if(sy.status==="fulfilled"&&sy.value.ok)setSyms(sy.value.symbols);
+    if(tk.status==="fulfilled"&&tk.value.ok&&Array.isArray(tk.value.data)){
+      const m={};tk.value.data.forEach(d=>{m[d.symbol]={price:parseFloat(d.lastPrice),chg:parseFloat(d.priceChangePercent)};});
+      setTicker(m);
+    }
+    if(sn.status==="fulfilled"&&sn.value.ok)setIntel(sn.value.snapshot?.intelligence||[]);
+    setLoading(false);
   },[]);
 
   useEffect(()=>{load();const id=setInterval(load,30000);return()=>clearInterval(id);},[load]);
@@ -579,7 +580,8 @@ function CoinsPage({nav}){
           {syms.map((sym,i)=>{
             const t=ticker[sym]||{};
             const row=bestRow(sym);
-            const up=(t.chg||0)>=0;
+            const hasChg=t.chg!=null&&!isNaN(t.chg);
+            const up=hasChg&&t.chg>=0;
             return(
               <div key={sym} className="card au" style={{padding:"16px 18px",cursor:"pointer",animationDelay:`${i*.03}s`}} onClick={()=>nav("coin",{symbol:sym})}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -588,7 +590,7 @@ function CoinsPage({nav}){
                 </div>
                 <div className="mono" style={{fontSize:18,fontWeight:700,marginBottom:4}}>{t.price!=null?fmtP(t.price):"–"}</div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span className="mono" style={{fontSize:12,fontWeight:700,color:up?"var(--green)":"var(--red)"}}>{t.chg!=null&&!isNaN(t.chg)?`${up?"+":""}${t.chg.toFixed(2)}%`:"–"}</span>
+                  <span className="mono" style={{fontSize:12,fontWeight:700,color:hasChg?(up?"var(--green)":"var(--red)"):"var(--muted)"}}>{hasChg?`${up?"+":""}${t.chg.toFixed(2)}%`:"–"}</span>
                   <span style={{fontSize:11,color:"var(--muted)"}}>{row&&row.pattern_type?row.pattern_type.replace(/_/g," "):"—"}</span>
                 </div>
               </div>
@@ -624,7 +626,7 @@ function CoinPage({symbol,nav}){
 
   useEffect(()=>{setLoading(true);load();const id=setInterval(load,15000);return()=>clearInterval(id);},[load]);
 
-  const cards=["1D","4H"].map(tf=>intel.find(r=>r.timeframe===tf)).filter(Boolean);
+  const cards=["1W","1D","4H"].map(tf=>intel.find(r=>r.timeframe===tf)).filter(Boolean);
 
   return(
     <div className="page">
@@ -1330,4 +1332,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>"""
+    ).replace(
+        'const DEFAULT_SYMS=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","DOGEUSDT","XRPUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","NEARUSDT","TRXUSDT","TONUSDT","ARBUSDT","ATOMUSDT"];',
+        f"const DEFAULT_SYMS={json.dumps(get_default_monitor_symbols())};",
     )

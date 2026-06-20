@@ -116,10 +116,18 @@ def _trade_result(row) -> tuple[str, float]:
     return reason, rr
 
 
-def _build_trade_stats(db_path: str, symbol: str | None = None) -> dict:
+def _connect(db: "str | sqlite3.Connection") -> tuple[sqlite3.Connection, bool]:
+    """Open a connection if given a path; reuse it (and skip closing) if already a Connection."""
+    if isinstance(db, sqlite3.Connection):
+        return db, False
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    return conn, True
+
+
+def _build_trade_stats(db: "str | sqlite3.Connection", symbol: str | None = None) -> dict:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
         query = """
             SELECT close_reason, side, entry_price, entry_triggered_price, stop_loss,
@@ -136,7 +144,8 @@ def _build_trade_stats(db_path: str, symbol: str | None = None) -> dict:
         query += " ORDER BY closed_at ASC"
         cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return {"win_rate": 0, "avg_rr": 0, "total": 0, "wins": 0, "losses": 0, "profit_factor": 0, "max_dd": 0}
 
@@ -175,10 +184,9 @@ def _build_trade_stats(db_path: str, symbol: str | None = None) -> dict:
     }
 
 
-def _build_trade_history(db_path: str, limit: int = 200, symbol: str | None = None) -> list[dict]:
+def _build_trade_history(db: "str | sqlite3.Connection", limit: int = 200, symbol: str | None = None) -> list[dict]:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
         query = """
             SELECT symbol, timeframe, side, entry_price, stop_loss, managed_stop_loss,
@@ -199,7 +207,8 @@ def _build_trade_history(db_path: str, limit: int = 200, symbol: str | None = No
         params.append(limit)
         cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return []
 
@@ -221,10 +230,9 @@ def _build_trade_history(db_path: str, limit: int = 200, symbol: str | None = No
     return result
 
 
-def _build_active_trades(db_path: str, symbol: str | None = None) -> list[dict]:
+def _build_active_trades(db: "str | sqlite3.Connection", symbol: str | None = None) -> list[dict]:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
         query = """
             SELECT symbol, timeframe, side, status, entry_price, entry_triggered_price,
@@ -240,7 +248,8 @@ def _build_active_trades(db_path: str, symbol: str | None = None) -> list[dict]:
         query += " ORDER BY created_at DESC"
         cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return []
 
@@ -260,6 +269,28 @@ def _build_active_trades(db_path: str, symbol: str | None = None) -> list[dict]:
             "tp2_hit": bool(row["tp2_hit_at"]),
         })
     return result
+
+
+def _resolve_monitored_symbols(payload: dict | None) -> list[str]:
+    if payload and payload.get("ok"):
+        monitored = (payload.get("snapshot") or {}).get("monitored_symbols")
+        if monitored:
+            return monitored
+    return get_default_monitor_symbols()
+
+
+def _build_coin_detail(db_path: str, symbol: str) -> dict:
+    """Stats + active trades + history for one symbol over a single shared connection."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return {
+            "stats": _build_trade_stats(conn, symbol=symbol),
+            "active_trades": _build_active_trades(conn, symbol=symbol),
+            "history": _build_trade_history(conn, limit=50, symbol=symbol),
+        }
+    finally:
+        conn.close()
 
 
 _SHARED_CSS = """
@@ -1901,10 +1932,7 @@ def run_web_dashboard(
             if path == "/api/symbols":
                 with _cache_lock:
                     payload = _cache["payload"]
-                monitored = None
-                if payload and payload.get("ok"):
-                    monitored = payload["snapshot"].get("monitored_symbols")
-                self._send_json(200, {"ok": True, "symbols": monitored or get_default_monitor_symbols()})
+                self._send_json(200, {"ok": True, "symbols": _resolve_monitored_symbols(payload)})
                 return
             if path.startswith("/api/coin/"):
                 sym = path[len("/api/coin/"):].upper()
@@ -1913,24 +1941,24 @@ def run_web_dashboard(
                 if payload is None:
                     self._send_json(503, {"ok": False, "error": "snapshot not ready yet, please retry"})
                     return
-                monitored = (payload.get("snapshot") or {}).get("monitored_symbols") or get_default_monitor_symbols()
+                monitored = _resolve_monitored_symbols(payload)
                 if sym not in monitored:
                     self._send_json(404, {"ok": False, "error": "unknown symbol"})
                     return
+                if not payload.get("ok"):
+                    self._send_json(502, {"ok": False, "error": payload.get("error") or "snapshot unavailable"})
+                    return
                 try:
-                    intelligence = []
-                    if payload.get("ok"):
-                        intelligence = [
-                            row for row in (payload["snapshot"].get("intelligence") or [])
-                            if row.get("symbol") == sym
-                        ]
+                    intelligence = [
+                        row for row in (payload["snapshot"].get("intelligence") or [])
+                        if row.get("symbol") == sym
+                    ]
+                    detail = _build_coin_detail(db_path, sym)
                     self._send_json(200, {
                         "ok": True,
                         "symbol": sym,
                         "intelligence": intelligence,
-                        "stats": _build_trade_stats(db_path, symbol=sym),
-                        "active_trades": _build_active_trades(db_path, symbol=sym),
-                        "history": _build_trade_history(db_path, limit=50, symbol=sym),
+                        **detail,
                     })
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})

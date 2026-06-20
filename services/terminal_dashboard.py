@@ -11,6 +11,15 @@ from services.binance_price_service import get_last_price
 from services.trading_orchestrator import _fallback_targets, _load_runtime, _select_display_scenario
 
 
+def _normalize_side(bias: Any) -> str | None:
+    side = str(bias or "").upper()
+    if side == "BULLISH":
+        return "LONG"
+    if side == "BEARISH":
+        return "SHORT"
+    return None
+
+
 def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> bool:
     if bias is None or entry is None or stop_loss is None:
         return False
@@ -20,8 +29,8 @@ def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> b
     except (TypeError, ValueError):
         return False
 
-    side = str(bias).upper()
-    if side == "BULLISH":
+    side = _normalize_side(bias)
+    if side == "LONG":
         if stop_value >= entry_value:
             return False
         if tp1 is not None:
@@ -32,7 +41,7 @@ def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> b
                 return False
         return True
 
-    if side == "BEARISH":
+    if side == "SHORT":
         if stop_value <= entry_value:
             return False
         if tp1 is not None:
@@ -119,26 +128,6 @@ def _extract_setup_candidate(analysis: dict) -> tuple[Any, Any, Any, list[float]
         return None, None, None, [], False
 
     return bias, entry, stop_loss, targets, True
-
-
-def _build_signals(runtimes: list) -> list[dict[str, Any]]:
-    signals, _ = _build_signals_and_intelligence(runtimes)
-    return signals
-
-
-def _normalize_side(bias: Any) -> str | None:
-    side = str(bias or "").upper()
-    if side == "BULLISH":
-        return "LONG"
-    if side == "BEARISH":
-        return "SHORT"
-    return None
-
-
-def _build_intelligence(runtimes: list) -> list[dict[str, Any]]:
-    """Per (symbol, timeframe) pattern detail, including setups blocked by the quality gate."""
-    _, intelligence = _build_signals_and_intelligence(runtimes)
-    return intelligence
 
 
 def _build_signals_and_intelligence(runtimes: list) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
