@@ -43,8 +43,10 @@ def test_generate_scenarios_for_bullish_abc():
     assert scenarios[0].confirmation == 74050.0
     assert scenarios[0].stop_loss == 65618.49
     assert scenarios[0].condition == "price breaks above 74050.0"
-    assert len(scenarios[0].targets) == 1
-    assert scenarios[0].targets == [76271.5]
+    # Every scenario now always carries TP1/TP2/TP3 (commit da79c26); TP1 stays the
+    # projection target, TP2/TP3 are filled via Fibonacci/risk extensions.
+    assert len(scenarios[0].targets) == 3
+    assert scenarios[0].targets[0] == 76271.5
 
 
 def test_generate_scenarios_for_bearish_corrective_uses_confirmation_break():
@@ -383,7 +385,22 @@ def test_prioritize_scenarios_skips_pair_with_negative_pair_edge(monkeypatch):
     assert prioritized == []
 
 
-def test_prioritize_scenarios_does_not_pair_prune_1d_history(monkeypatch):
+def _bearish_1d_scenario():
+    return Scenario(
+        name="Main Bearish",
+        condition="price breaks below 32.0",
+        interpretation="downside continuation",
+        target="28.0",
+        bias="BEARISH",
+        invalidation=35.0,
+        confirmation=32.0,
+        stop_loss=35.0,
+        targets=[30.0, 28.0, 26.0],
+    )
+
+
+def test_prioritize_scenarios_pair_prunes_negative_1d_history(monkeypatch):
+    # Pair pruning now covers 1D (commit d4b4a4d): n>=10, avg_r<=-0.08, win_rate<=0.44.
     class Edge:
         sample_count = 80
         win_rate = 0.42
@@ -396,18 +413,32 @@ def test_prioritize_scenarios_does_not_pair_prune_1d_history(monkeypatch):
     monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
     monkeypatch.setattr("scenarios.scenario_engine.get_scenario_edge", lambda *args, **kwargs: None)
 
-    scenario = Scenario(
-        name="Main Bearish",
-        condition="price breaks below 32.0",
-        interpretation="downside continuation",
-        target="28.0",
-        bias="BEARISH",
-        invalidation=35.0,
-        confirmation=32.0,
-        stop_loss=35.0,
-        targets=[30.0, 28.0, 26.0],
+    prioritized = prioritize_scenarios(
+        symbol="AVAXUSDT",
+        timeframe="1D",
+        structure="RUNNING_FLAT",
+        projection=None,
+        scenarios=[_bearish_1d_scenario()],
     )
 
+    assert prioritized == []
+
+
+def test_prioritize_scenarios_keeps_1d_history_above_prune_threshold(monkeypatch):
+    # Win rate above the 0.44 cutoff → the 1D pair edge is NOT prunable.
+    class Edge:
+        sample_count = 80
+        win_rate = 0.45
+        avg_r = -0.08
+        positive = False
+        negative = False
+        severe_negative = False
+
+    monkeypatch.setattr("scenarios.scenario_engine.get_pair_edge", lambda *args, **kwargs: Edge())
+    monkeypatch.setattr("scenarios.scenario_engine.get_pattern_edge", lambda *args, **kwargs: None)
+    monkeypatch.setattr("scenarios.scenario_engine.get_scenario_edge", lambda *args, **kwargs: None)
+
+    scenario = _bearish_1d_scenario()
     prioritized = prioritize_scenarios(
         symbol="AVAXUSDT",
         timeframe="1D",

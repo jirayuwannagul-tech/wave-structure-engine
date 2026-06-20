@@ -15,7 +15,7 @@ from services.trading_orchestrator import (
 from storage.wave_repository import WaveRepository
 
 
-def test_build_signal_event_message_includes_tracking_summary():
+def test_build_signal_event_message_stop_loss_is_one_liner():
     signal_row = {
         "symbol": "BTCUSDT",
         "timeframe": "4H",
@@ -38,18 +38,15 @@ def test_build_signal_event_message_includes_tracking_summary():
 
     message = _build_signal_event_message(signal_row, "STOP_LOSS_HIT")
 
-    assert message is not None
-    assert message.startswith("❌ BTCUSDT | 4H Stop Loss Hit")
-    assert "• Scenario: Main Bullish" in message
-    assert "• Status: Stopped" in message
-    assert "• Side: 🟢 Long" in message
-    assert "• SL: 95 ❌" in message
-    assert "• TP1: 110 ✅ (2R)" in message
-    assert "• TP2: 120 (4R)" in message
-    assert "• TP3: 130 (6R)" in message
-    assert "• Result: TP1 Then SL" in message
-    assert "• Realized RR: 0.2R" in message
-    assert "• Win Rate: 33.33%" in message
+    # Alert format was simplified (commit 45d1b67): TP/SL exits are single-line.
+    assert message == "❌ BTCUSDT | 4H SL"
+
+
+def test_build_signal_event_message_tp_hits_are_one_liners():
+    signal_row = {"symbol": "BTCUSDT", "timeframe": "4H"}
+    assert _build_signal_event_message(signal_row, "TP1_HIT") == "✅ BTCUSDT | 4H TP1"
+    assert _build_signal_event_message(signal_row, "TP2_HIT") == "✅ BTCUSDT | 4H TP2"
+    assert _build_signal_event_message(signal_row, "TP3_HIT") == "✅ BTCUSDT | 4H TP3"
 
 
 def test_build_signal_event_message_supports_protective_exit_types():
@@ -76,10 +73,10 @@ def test_build_signal_event_message_supports_protective_exit_types():
 
     message = _build_signal_event_message(signal_row, "OPPOSITE_STRUCTURE_HIT")
 
-    assert message is not None
-    assert message.startswith("🛡 ETHUSDT | 4H Opposite Structure Exit")
-    assert "• Side: 🔴 Short" in message
-    assert "• Result: Opposite Structure Exit" in message
+    # Protective exits are single-line: "🛡 {sym} | {tf} {label} Exit".
+    assert message == "🛡 ETHUSDT | 4H Structure Exit"
+    assert _build_signal_event_message(signal_row, "TIME_STOP_HIT") == "🛡 ETHUSDT | 4H Time Exit"
+    assert _build_signal_event_message(signal_row, "VOLATILITY_EXIT_HIT") == "🛡 ETHUSDT | 4H Volatility Exit"
 
 
 def test_build_levels_from_analysis():
@@ -447,8 +444,9 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
 
     process_market_update(runtime, current_price=100.5, store=AlertStateStore(), repository=repository)
     assert len(notifications) == 1
-    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry Triggered")
-    assert "• Status: Active" in notifications[0][0]
+    # Entry notification keeps full detail; header is "Entry" (no "Triggered").
+    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry")
+    assert "• Side: 🟢 Long" in notifications[0][0]
     assert "• Entry: 100" in notifications[0][0]
     assert notifications[0][1]["timeframe"] == "4H"
     assert notifications[0][1]["include_layout"] is False
@@ -456,11 +454,8 @@ def test_process_market_update_notifies_tp_event_for_single_timeframe(tmp_path, 
     process_market_update(runtime, current_price=111.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 2
-    assert notifications[1][0].startswith("✅ BTCUSDT | 4H TP1 Hit")
-    assert "• Status: Partial TP1" in notifications[1][0]
-    assert "• Scenario: Main Bullish" in notifications[1][0]
-    assert "• TP1: 110 ✅" in notifications[1][0]
-    assert "• TP2: 120" in notifications[1][0]
+    # TP hits are single-line after the alert-format simplification.
+    assert notifications[1][0] == "✅ BTCUSDT | 4H TP1"
     assert "1D" not in notifications[1][0]
     assert notifications[1][1]["timeframe"] == "4H"
     assert notifications[1][1]["include_layout"] is False
@@ -510,12 +505,9 @@ def test_process_market_update_notifies_stop_after_tp1(tmp_path, monkeypatch):
     process_market_update(runtime, current_price=94.0, store=AlertStateStore(), repository=repository)
 
     assert len(notifications) == 3
-    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry Triggered")
-    assert "• TP1: 110 ✅" in notifications[1][0]
-    assert notifications[2][0].startswith("❌ BTCUSDT | 4H Stop Loss Hit")
-    assert "• Status: Stopped" in notifications[2][0]
-    assert "• SL: 100.5 ❌" in notifications[2][0]
-    assert "• TP1: 110 ✅" in notifications[2][0]
+    assert notifications[0][0].startswith("🎯 BTCUSDT | 4H Entry")
+    assert notifications[1][0] == "✅ BTCUSDT | 4H TP1"
+    assert notifications[2][0] == "❌ BTCUSDT | 4H SL"
     assert notifications[2][1]["timeframe"] == "4H"
 
 
