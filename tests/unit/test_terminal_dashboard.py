@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
 from config.markets import DEFAULT_MONITOR_SYMBOLS
-from services.terminal_dashboard import _build_signals, _resolve_dashboard_symbols, render_terminal_dashboard
+from services.terminal_dashboard import (
+    _build_signals_and_intelligence,
+    _resolve_dashboard_symbols,
+    render_terminal_dashboard,
+)
 
 
 def test_render_terminal_dashboard_shows_read_only_sections():
@@ -102,7 +106,7 @@ def test_build_signals_falls_back_to_all_scenarios_and_wave_summary():
         )
     ]
 
-    signals = _build_signals(runtimes)
+    signals, _ = _build_signals_and_intelligence(runtimes)
 
     assert signals == [
         {
@@ -145,7 +149,7 @@ def test_build_signals_prefers_valid_wave_summary_over_invalid_selected_scenario
         )
     ]
 
-    signals = _build_signals(runtimes)
+    signals, _ = _build_signals_and_intelligence(runtimes)
 
     assert signals == [
         {

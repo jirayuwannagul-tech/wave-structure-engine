@@ -10,12 +10,12 @@ from scheduler.daily_scheduler import (
 )
 
 
-THAI_TZ = ZoneInfo("Asia/Bangkok")
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def test_run_daily_job_calls_notification(monkeypatch):
     calls = {"message": None}
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
     runtime = object()
 
     monkeypatch.setattr(
@@ -46,7 +46,7 @@ def test_maybe_run_daily_job_runs_once_per_day(monkeypatch, tmp_path):
 
     repository = WaveRepository(db_path=str(repo_path))
     runtime = object()
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.run_daily_job",
@@ -70,7 +70,7 @@ def test_maybe_run_daily_job_runs_once_per_day_per_symbol(monkeypatch, tmp_path)
             self.symbol = symbol
 
     repository = WaveRepository(db_path=str(repo_path))
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.run_daily_job",
@@ -103,7 +103,7 @@ def test_build_combined_daily_summary_message_lists_long_and_short_watch_prices(
                 }
             ]
 
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     message = build_combined_daily_summary_message([Runtime("BTCUSDT"), Runtime("ETHUSDT")], now=now)
 
@@ -131,7 +131,7 @@ def test_build_combined_daily_summary_message_falls_back_to_key_levels():
                 }
             ]
 
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     message = build_combined_daily_summary_message([Runtime("LINKUSDT")], now=now)
 
@@ -167,7 +167,7 @@ def test_build_combined_daily_summary_message_ignores_already_crossed_scenario_l
                 }
             ]
 
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     message = build_combined_daily_summary_message([Runtime("TESTUSDT")], now=now)
 
@@ -182,7 +182,7 @@ def test_run_combined_daily_job_sends_single_message(monkeypatch):
             self.analyses = []
 
     calls = {}
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
     monkeypatch.delenv("TELEGRAM_TOPIC_ID", raising=False)
     monkeypatch.delenv("DAILY_WATCH_TOPIC_ID", raising=False)
 
@@ -216,7 +216,7 @@ def test_maybe_run_combined_daily_job_runs_once_per_day(monkeypatch, tmp_path):
             self.analyses = []
 
     repository = WaveRepository(db_path=str(repo_path))
-    now = datetime(2026, 3, 12, 7, 5, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 7, 5, tzinfo=LOCAL_TZ)
 
     monkeypatch.setattr(
         "scheduler.daily_scheduler.run_combined_daily_job",
@@ -254,7 +254,7 @@ def test_maybe_run_combined_skips_outside_morning_window(monkeypatch, tmp_path):
         "scheduler.daily_scheduler.run_combined_daily_job",
         lambda **kwargs: calls.append(kwargs),
     )
-    now = datetime(2026, 3, 12, 8, 0, tzinfo=THAI_TZ)
+    now = datetime(2026, 3, 12, 8, 0, tzinfo=LOCAL_TZ)
     assert (
         maybe_run_combined_daily_job(
             repository,

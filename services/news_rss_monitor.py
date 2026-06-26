@@ -17,7 +17,7 @@ from services.notifier import send_notification
 from storage.wave_repository import WaveRepository
 
 
-THAI_TZ = ZoneInfo("America/Los_Angeles")
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 NEWS_FEEDS = [
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
@@ -103,7 +103,7 @@ def _parse_datetime(raw: str | None) -> tuple[str | None, str | None]:
         dt = dt.replace(tzinfo=UTC)
 
     published_at = dt.astimezone(UTC).replace(microsecond=0).isoformat()
-    display = dt.astimezone(THAI_TZ).strftime("%Y-%m-%d %H:%M PT")
+    display = dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M PT")
     return published_at, display
 
 
@@ -207,11 +207,11 @@ def fetch_relevant_btc_news() -> list[dict]:
 
 def build_news_digest(items: list[dict], now: datetime | None = None) -> str:
     if now is None:
-        now = datetime.now(THAI_TZ)
+        now = datetime.now(LOCAL_TZ)
     elif now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
+        now = now.replace(tzinfo=LOCAL_TZ)
     else:
-        now = now.astimezone(THAI_TZ)
+        now = now.astimezone(LOCAL_TZ)
 
     lines = [
         "📰 BTC News Context",
@@ -268,7 +268,7 @@ def process_news_cycle(
 
 def _seconds_until_next_8am() -> float:
     """Return seconds to sleep until the next 08:00 PT."""
-    now = datetime.now(THAI_TZ)
+    now = datetime.now(LOCAL_TZ)
     target = now.replace(hour=8, minute=0, second=0, microsecond=0)
     if now >= target:
         # Already past 8 AM today — aim for 8 AM tomorrow
@@ -292,7 +292,7 @@ def run_news_monitor(
     while True:
         if not once:
             wait = _seconds_until_next_8am()
-            now_str = datetime.now(THAI_TZ).strftime("%H:%M PT")
+            now_str = datetime.now(LOCAL_TZ).strftime("%H:%M PT")
             print(f"[news_monitor] now={now_str} | sleeping {wait/3600:.1f}h until 08:00 PT…")
             time.sleep(wait)
 

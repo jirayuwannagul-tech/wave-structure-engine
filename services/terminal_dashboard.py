@@ -11,6 +11,15 @@ from services.binance_price_service import get_last_price
 from services.trading_orchestrator import _fallback_targets, _load_runtime, _select_display_scenario
 
 
+def _normalize_side(bias: Any) -> str | None:
+    side = str(bias or "").upper()
+    if side == "BULLISH":
+        return "LONG"
+    if side == "BEARISH":
+        return "SHORT"
+    return None
+
+
 def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> bool:
     if bias is None or entry is None or stop_loss is None:
         return False
@@ -20,8 +29,8 @@ def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> b
     except (TypeError, ValueError):
         return False
 
-    side = str(bias).upper()
-    if side == "BULLISH":
+    side = _normalize_side(bias)
+    if side == "LONG":
         if stop_value >= entry_value:
             return False
         if tp1 is not None:
@@ -32,7 +41,7 @@ def _is_valid_signal_shape(bias: Any, entry: Any, stop_loss: Any, tp1: Any) -> b
                 return False
         return True
 
-    if side == "BEARISH":
+    if side == "SHORT":
         if stop_value <= entry_value:
             return False
         if tp1 is not None:
@@ -83,61 +92,84 @@ def _resolve_dashboard_symbols(symbol: str) -> list[str]:
     return symbols
 
 
-def _build_signals(runtimes: list) -> list[dict[str, Any]]:
+def _extract_setup_candidate(analysis: dict) -> tuple[Any, Any, Any, list[float], bool]:
+    """Derive (bias, entry, stop_loss, targets, has_setup) for one timeframe's analysis."""
+    scenarios = analysis.get("scenarios") or analysis.get("all_scenarios") or []
+    scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
+    wave_summary = analysis.get("wave_summary") or {}
+
+    summary_bias = wave_summary.get("bias")
+    summary_entry = wave_summary.get("confirm")
+    summary_stop = wave_summary.get("stop_loss")
+    summary_targets = list(wave_summary.get("targets", []) or [])
+    summary_tp1 = summary_targets[0] if len(summary_targets) >= 1 else None
+
+    scenario_bias = getattr(scenario, "bias", None) if scenario is not None else None
+    scenario_entry = getattr(scenario, "confirmation", None) if scenario is not None else None
+    scenario_stop = getattr(scenario, "stop_loss", None) if scenario is not None else None
+    scenario_targets = list(getattr(scenario, "targets", []) or []) if scenario is not None else []
+    scenario_tp1 = scenario_targets[0] if len(scenario_targets) >= 1 else None
+
+    use_summary = _is_valid_signal_shape(summary_bias, summary_entry, summary_stop, summary_tp1)
+    use_scenario = _is_valid_signal_shape(scenario_bias, scenario_entry, scenario_stop, scenario_tp1)
+
+    if use_summary:
+        bias, entry, stop_loss, targets = summary_bias, summary_entry, summary_stop, summary_targets
+    elif use_scenario:
+        bias, entry, stop_loss, targets = scenario_bias, scenario_entry, scenario_stop, scenario_targets
+    else:
+        return None, None, None, [], False
+
+    if not targets:
+        targets = _fallback_targets(bias, entry, stop_loss)
+    tp1 = targets[0] if len(targets) >= 1 else None
+
+    if not _is_valid_signal_shape(bias, entry, stop_loss, tp1):
+        return None, None, None, [], False
+
+    return bias, entry, stop_loss, targets, True
+
+
+def _build_signals_and_intelligence(runtimes: list) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     signals: list[dict[str, Any]] = []
+    intelligence: list[dict[str, Any]] = []
     for runtime in runtimes:
         for analysis in runtime.analyses:
-            scenarios = analysis.get("scenarios") or analysis.get("all_scenarios") or []
-            scenario, _ = _select_display_scenario(scenarios, analysis.get("current_price"))
+            bias, entry, stop_loss, targets, has_setup = _extract_setup_candidate(analysis)
+
+            if has_setup:
+                signals.append(
+                    {
+                        "symbol": runtime.symbol,
+                        "timeframe": analysis.get("timeframe"),
+                        "bias": bias or "NONE",
+                        "entry": entry,
+                        "sl": stop_loss,
+                        "tp1": targets[0] if len(targets) >= 1 else None,
+                    }
+                )
+
             wave_summary = analysis.get("wave_summary") or {}
-            summary_bias = wave_summary.get("bias")
-            summary_entry = wave_summary.get("confirm")
-            summary_stop = wave_summary.get("stop_loss")
-            summary_targets = list(wave_summary.get("targets", []) or [])
-            summary_tp1 = summary_targets[0] if len(summary_targets) >= 1 else None
-
-            scenario_bias = getattr(scenario, "bias", None) if scenario is not None else None
-            scenario_entry = getattr(scenario, "confirmation", None) if scenario is not None else None
-            scenario_stop = getattr(scenario, "stop_loss", None) if scenario is not None else None
-            scenario_targets = list(getattr(scenario, "targets", []) or []) if scenario is not None else []
-            scenario_tp1 = scenario_targets[0] if len(scenario_targets) >= 1 else None
-
-            use_summary = _is_valid_signal_shape(summary_bias, summary_entry, summary_stop, summary_tp1)
-            use_scenario = _is_valid_signal_shape(scenario_bias, scenario_entry, scenario_stop, scenario_tp1)
-
-            if use_summary:
-                bias = summary_bias
-                entry = summary_entry
-                stop_loss = summary_stop
-                targets = summary_targets
-            elif use_scenario:
-                bias = scenario_bias
-                entry = scenario_entry
-                stop_loss = scenario_stop
-                targets = scenario_targets
-            else:
-                # No valid signal shape — skip this timeframe entirely
-                continue
-
-            if not targets:
-                targets = _fallback_targets(bias, entry, stop_loss)
-            tp1 = targets[0] if len(targets) >= 1 else None
-
-            # Final sanity check before appending
-            if not _is_valid_signal_shape(bias, entry, stop_loss, tp1):
-                continue
-
-            signals.append(
+            trend = analysis.get("trend")
+            intelligence.append(
                 {
                     "symbol": runtime.symbol,
                     "timeframe": analysis.get("timeframe"),
-                    "bias": bias or "NONE",
-                    "entry": entry,
-                    "sl": stop_loss,
-                    "tp1": tp1,
+                    "pattern_type": analysis.get("primary_pattern_type"),
+                    "direction": _normalize_side(wave_summary.get("pattern_direction")),
+                    "confidence": analysis.get("confidence"),
+                    "probability": analysis.get("probability"),
+                    "trend": getattr(trend, "state", None),
+                    "has_setup": has_setup,
+                    "side": _normalize_side(bias) if has_setup else None,
+                    "entry": entry if has_setup else None,
+                    "sl": stop_loss if has_setup else None,
+                    "tp1": targets[0] if has_setup and len(targets) >= 1 else None,
+                    "tp2": targets[1] if has_setup and len(targets) >= 2 else None,
+                    "tp3": targets[2] if has_setup and len(targets) >= 3 else None,
                 }
             )
-    return signals
+    return signals, intelligence
 
 
 def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
@@ -180,6 +212,8 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
         usdt_balance = None
         open_positions = []
 
+    signals, intelligence = _build_signals_and_intelligence(runtimes)
+
     return {
         "exchange": "binance futures",
         "symbol": symbol,
@@ -192,7 +226,8 @@ def build_dashboard_snapshot(symbol: str = "BTCUSDT") -> dict[str, Any]:
         "available": _fmt_number((usdt_balance or {}).get("availableBalance")),
         "upnl": _fmt_number((usdt_balance or {}).get("crossUnPnl")),
         "positions": open_positions,
-        "signals": _build_signals(runtimes),
+        "signals": signals,
+        "intelligence": intelligence,
         "account_assets": len(account.get("assets", [])) if isinstance(account, dict) else 0,
     }
 

@@ -9,10 +9,9 @@ from services.notifier import send_notification
 from analysis.wave_position import describe_current_leg
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
-THAI_TZ = LOCAL_TZ  # backward-compat alias
 
 
-def _now_bangkok(now: datetime | None) -> datetime:
+def _now_local(now: datetime | None) -> datetime:
     if now is None:
         return datetime.now(LOCAL_TZ)
     if now.tzinfo is None:
@@ -26,7 +25,7 @@ def in_daily_watch_window(now: datetime | None = None) -> bool:
     Optional: DAILY_WATCH_START_HOUR (default 7), DAILY_WATCH_START_MINUTE (5),
     DAILY_WATCH_END_HOUR (default 7) — if end hour > start, extends window (e.g. catch-up until 08:30).
     """
-    n = _now_bangkok(now)
+    n = _now_local(now)
     sh = int(os.getenv("DAILY_WATCH_START_HOUR", "7"))
     sm = int(os.getenv("DAILY_WATCH_START_MINUTE", "5"))
     eh = int(os.getenv("DAILY_WATCH_END_HOUR", "7"))
@@ -151,12 +150,12 @@ def build_combined_daily_summary_message(
     now: datetime | None = None,
 ) -> str:
     if now is None:
-        now = datetime.now(THAI_TZ)
+        now = datetime.now(LOCAL_TZ)
 
     if now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
+        now = now.replace(tzinfo=LOCAL_TZ)
     else:
-        now = now.astimezone(THAI_TZ)
+        now = now.astimezone(LOCAL_TZ)
 
     rows = []
     for runtime in runtimes:
@@ -175,22 +174,22 @@ def build_combined_daily_summary_message(
 
 def is_daily_run_time(now: datetime | None = None) -> bool:
     if now is None:
-        now = datetime.now(THAI_TZ)
+        now = datetime.now(LOCAL_TZ)
 
     if now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
+        now = now.replace(tzinfo=LOCAL_TZ)
 
     return now.hour == 7 and now.minute == 5
 
 
 def build_daily_summary_message(report: str, symbol: str = "BTCUSDT", now: datetime | None = None) -> str:
     if now is None:
-        now = datetime.now(THAI_TZ)
+        now = datetime.now(LOCAL_TZ)
 
     if now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
+        now = now.replace(tzinfo=LOCAL_TZ)
     else:
-        now = now.astimezone(THAI_TZ)
+        now = now.astimezone(LOCAL_TZ)
 
     return (
         f"{symbol} | Daily Summary\n"
@@ -306,7 +305,7 @@ def build_daily_scenario_message(
     now: datetime | None = None,
     timeframe: str | None = None,
 ) -> str:
-    now = _now_bangkok(now)
+    now = _now_local(now)
     tf = (timeframe or os.getenv("DAILY_SCENARIO_TIMEFRAME", "1D") or "1D").upper().strip()
 
     rows: list[str] = []
@@ -381,11 +380,11 @@ def maybe_run_daily_job(
     now: datetime | None = None,
 ) -> bool:
     if now is None:
-        now = datetime.now(THAI_TZ)
+        now = datetime.now(LOCAL_TZ)
     elif now.tzinfo is None:
-        now = now.replace(tzinfo=THAI_TZ)
+        now = now.replace(tzinfo=LOCAL_TZ)
     else:
-        now = now.astimezone(THAI_TZ)
+        now = now.astimezone(LOCAL_TZ)
 
     if now.hour < 7 or (now.hour == 7 and now.minute < 5):
         return False
@@ -413,7 +412,7 @@ def maybe_run_combined_daily_job(
 ) -> bool:
     if not _daily_enabled("DAILY_WATCH_ENABLED", default="0"):
         return False
-    now = _now_bangkok(now)
+    now = _now_local(now)
 
     if not in_daily_watch_window(now):
         return False
@@ -444,7 +443,7 @@ def maybe_run_daily_scenario_job(
 ) -> bool:
     if not _daily_enabled("DAILY_SCENARIO_ENABLED", default="1"):
         return False
-    now = _now_bangkok(now)
+    now = _now_local(now)
     if not in_daily_watch_window(now):
         return False
 
@@ -463,7 +462,7 @@ def maybe_run_daily_scenario_job(
 if __name__ == "__main__":
     force_run = "--force" in sys.argv
 
-    now = datetime.now(THAI_TZ)
+    now = datetime.now(LOCAL_TZ)
 
     print("now =", now.strftime("%Y-%m-%d %H:%M:%S %Z"))
     print("is_daily_run_time =", is_daily_run_time(now))

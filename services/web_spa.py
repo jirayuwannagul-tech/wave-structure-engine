@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
+
+from config.markets import get_default_monitor_symbols
 
 _TWEAKS_CSS = r"""
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
@@ -309,15 +312,16 @@ function Spin(){return<svg width="14" height="14" viewBox="0 0 24 24" fill="none
 
 function getInitPage(){
   const p=window.location.pathname;
-  if(p.startsWith("/u/"))return{page:"client",token:p.slice(3)};
-  const MAP={"/login":"login","/register":"register","/guide":"guide","/board":"board","/history":"history","/admin":"admin","/about":"about"};
-  return{page:MAP[p]||"dashboard",token:""};
+  if(p.startsWith("/u/"))return{page:"client",token:p.slice(3),symbol:""};
+  if(p.startsWith("/coin/"))return{page:"coin",token:"",symbol:p.slice(6).toUpperCase()};
+  const MAP={"/login":"login","/register":"register","/guide":"guide","/board":"board","/history":"history","/admin":"admin","/about":"about","/coins":"coins"};
+  return{page:MAP[p]||"dashboard",token:"",symbol:""};
 }
 
 /* ── TICKER ── */
+const DEFAULT_SYMS=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","DOGEUSDT","XRPUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","NEARUSDT","TRXUSDT","TONUSDT","ARBUSDT","ATOMUSDT"];
 function Ticker(){
-  const SYMS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT"];
-  const [items,setItems]=React.useState(SYMS.map(s=>({s:s.replace("USDT","/USDT"),p:"–",c:"–",up:true})));
+  const [items,setItems]=React.useState(DEFAULT_SYMS.map(s=>({s:s.replace("USDT","/USDT"),p:"–",c:"–",up:true})));
   const load=React.useCallback(async()=>{
     try{
       const r=await fetch("/api/ticker",{cache:"no-store"});
@@ -342,7 +346,7 @@ function Topbar({page,nav}){
     <div className="topbar">
       <div className="t-logo" onClick={()=>nav("dashboard")}><div className="t-icon">⚡</div><span className="t-name">AlphaFutures</span></div>
       <div className="t-sep hide-sm"/>
-      {[["dashboard","Dashboard"],["history","History"],["board","Board"]].map(([id,l])=>(
+      {[["dashboard","Dashboard"],["coins","Coins"],["history","History"],["board","Board"]].map(([id,l])=>(
         <button key={id} className={`nb${page===id?" on":""}`} onClick={()=>nav(id)}>{l}</button>
       ))}
       <div className="t-right">
@@ -531,6 +535,202 @@ function DashboardPage(){
       <div style={{display:"grid",gridTemplateColumns:"1fr 360px",gap:14}}>
         <EquityCurve history={history}/>
         <PerfBars stats={stats}/>
+      </div>
+    </div>
+  );
+}
+
+/* ── COINS (index) ── */
+function CoinsPage({nav}){
+  const[syms,setSyms]=useState(DEFAULT_SYMS);
+  const[ticker,setTicker]=useState({});
+  const[intel,setIntel]=useState([]);
+  const[loading,setLoading]=useState(true);
+
+  const load=useCallback(async()=>{
+    const[sy,tk,sn]=await Promise.allSettled([
+      fetch("/api/symbols",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/ticker",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/snapshot",{cache:"no-store"}).then(r=>r.json()),
+    ]);
+    if(sy.status==="fulfilled"&&sy.value.ok)setSyms(sy.value.symbols);
+    if(tk.status==="fulfilled"&&tk.value.ok&&Array.isArray(tk.value.data)){
+      const m={};tk.value.data.forEach(d=>{m[d.symbol]={price:parseFloat(d.lastPrice),chg:parseFloat(d.priceChangePercent)};});
+      setTicker(m);
+    }
+    if(sn.status==="fulfilled"&&sn.value.ok)setIntel(sn.value.snapshot?.intelligence||[]);
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{load();const id=setInterval(load,30000);return()=>clearInterval(id);},[load]);
+
+  const bestRow=sym=>{
+    const rows=intel.filter(r=>r.symbol===sym);
+    return rows.find(r=>r.timeframe==="1D")||rows[0]||null;
+  };
+
+  return(
+    <div className="page">
+      <div style={{marginBottom:18}}>
+        <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>Coins</div>
+        <div style={{fontSize:13,color:"var(--text2)"}}>เลือกเหรียญเพื่อดู Elliott Wave intelligence แยกตามเหรียญ — {syms.length} เหรียญที่ติดตาม</div>
+      </div>
+      {loading?<p style={{color:"var(--muted)",fontSize:13,textAlign:"center",padding:"30px 0"}}>Loading…</p>:(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+          {syms.map((sym,i)=>{
+            const t=ticker[sym]||{};
+            const row=bestRow(sym);
+            const hasChg=t.chg!=null&&!isNaN(t.chg);
+            const up=hasChg&&t.chg>=0;
+            return(
+              <div key={sym} className="card au" style={{padding:"16px 18px",cursor:"pointer",animationDelay:`${i*.03}s`}} onClick={()=>nav("coin",{symbol:sym})}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{sym.replace("USDT","")}<span className="dim">/USDT</span></div>
+                  {row&&row.has_setup?<span className={`badge b-${row.side==="LONG"?"long":"short"}`}>{row.side==="LONG"?"▲":"▼"} {row.side}</span>:<span className="badge b-st">SCANNING</span>}
+                </div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,marginBottom:4}}>{t.price!=null?fmtP(t.price):"–"}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span className="mono" style={{fontSize:12,fontWeight:700,color:hasChg?(up?"var(--green)":"var(--red)"):"var(--muted)"}}>{hasChg?`${up?"+":""}${t.chg.toFixed(2)}%`:"–"}</span>
+                  <span style={{fontSize:11,color:"var(--muted)"}}>{row&&row.pattern_type?row.pattern_type.replace(/_/g," "):"—"}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── COIN (detail) ── */
+function CoinPage({symbol,nav}){
+  const[stats,setStats]=useState({});
+  const[active,setActive]=useState([]);
+  const[history,setHistory]=useState([]);
+  const[intel,setIntel]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+
+  const load=useCallback(async()=>{
+    if(!symbol){setLoading(false);return;}
+    try{
+      const r=await fetch(`/api/coin/${symbol}`,{cache:"no-store"});
+      const d=await r.json();
+      if(d.ok){
+        setStats(d.stats||{});setActive(d.active_trades||[]);setHistory(d.history||[]);setIntel(d.intelligence||[]);
+        setErr("");
+      }else setErr(d.error||"failed to load");
+    }catch(e){setErr(e.message);}
+    finally{setLoading(false);}
+  },[symbol]);
+
+  useEffect(()=>{setLoading(true);load();const id=setInterval(load,15000);return()=>clearInterval(id);},[load]);
+
+  const cards=["1W","1D","4H"].map(tf=>intel.find(r=>r.timeframe===tf)).filter(Boolean);
+
+  return(
+    <div className="page">
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{fontSize:22,fontWeight:800}}>{(symbol||"").replace("USDT","")}<span className="dim">/USDT</span></div>
+          <div style={{fontSize:12,color:"var(--muted)"}}>Elliott Wave intelligence · live</div>
+        </div>
+        <button className="btn btn-gl" style={{fontSize:12}} onClick={()=>nav("coins")}>← All Coins</button>
+      </div>
+      {err&&<div className="err" style={{marginBottom:12}}>⚠ {err}</div>}
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
+        <NStat label="Win Rate"      target={stats.win_rate||0}      dec={1} suf="%" col="gr" note={`${stats.wins||0}W · ${stats.losses||0}L`} delay="0s"/>
+        <NStat label="Avg R:R"       target={stats.avg_rr||0}        dec={2} note="risk : reward" delay=".06s"/>
+        <NStat label="Max Drawdown"  target={stats.max_dd||0}        dec={1} pre="-" suf="R" col="re" delay=".12s"/>
+        <NStat label="Total Trades"  target={stats.total||0}         dec={0} note="closed" delay=".18s"/>
+        <NStat label="Profit Factor" target={stats.profit_factor||0} dec={2} col="cy" delay=".24s"/>
+      </div>
+
+      <div className="card au2" style={{padding:"22px 24px",marginBottom:14}}>
+        <div className="sh"><div><div className="sh-t">Timeframe Intelligence</div><div className="sh-s">Pattern · confidence · probability ต่อ timeframe</div></div></div>
+        <div className="dv"/>
+        {loading?<p style={{color:"var(--muted)",fontSize:13,padding:"16px 0",textAlign:"center"}}>Loading…</p>:
+         cards.length===0?<p style={{color:"var(--muted)",fontSize:13,padding:"16px 0",textAlign:"center"}}>No analysis yet</p>:(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
+            {cards.map((c,i)=>{
+              const conf=Math.round((c.confidence||0)*100);
+              const prob=Math.round((c.probability||0)*100);
+              return(
+                <div key={i} className="card" style={{padding:"16px 18px",background:"rgba(255,255,255,.02)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <span className="badge b-vi">{c.timeframe}</span>
+                    {c.has_setup?<span className={`badge b-${c.side==="LONG"?"long":"short"}`}>{c.side==="LONG"?"▲":"▼"} {c.side}</span>:<span className="badge b-st">NO SETUP</span>}
+                  </div>
+                  <div style={{fontWeight:700,fontSize:14,marginBottom:2}}>{(c.pattern_type||"UNKNOWN").replace(/_/g," ")}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>direction: {c.direction||"—"} · trend: {c.trend||"—"}</div>
+                  <div style={{marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:12,color:"var(--text2)"}}>Confidence</span><span className="mono" style={{fontSize:12,fontWeight:700,color:"var(--vi3)"}}>{conf}%</span></div>
+                    <div className="prog"><div className="pf" style={{width:`${conf}%`,background:"var(--vi3)"}}/></div>
+                  </div>
+                  <div style={{marginBottom:c.has_setup?12:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:12,color:"var(--text2)"}}>Probability</span><span className="mono" style={{fontSize:12,fontWeight:700,color:"var(--cy2)"}}>{prob}%</span></div>
+                    <div className="prog"><div className="pf" style={{width:`${prob}%`,background:"var(--cy2)"}}/></div>
+                  </div>
+                  {c.has_setup&&(
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:12,paddingTop:10,borderTop:"1px solid var(--b)"}}>
+                      <div><span className="dim">Entry</span> <span className="mono">{fmtP(c.entry)}</span></div>
+                      <div><span className="dim">SL</span> <span className="mono neg">{fmtP(c.sl)}</span></div>
+                      <div><span className="dim">TP1</span> <span className="mono pos">{fmtP(c.tp1)}</span></div>
+                      <div><span className="dim">TP2</span> <span className="mono pos">{fmtP(c.tp2)}</span></div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="card au3" style={{padding:"22px 24px",marginBottom:14}}>
+        <div className="sh"><div><div style={{display:"flex",alignItems:"center",gap:9}}><span className="sh-t">Open Trades</span><span className="badge b-vi">{active.length} active</span></div><div className="sh-s">{symbol} positions</div></div></div>
+        <div className="dv"/>
+        {active.length===0?<p style={{color:"var(--muted)",fontSize:13,padding:"16px 0",textAlign:"center"}}>No open positions</p>:(
+          <div className="tw"><table className="tbl">
+            <thead><tr><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Status</th></tr></thead>
+            <tbody>{active.map((t,i)=>(
+              <tr key={i} className="rin" style={{animationDelay:`${i*.07}s`}}>
+                <td className="mono dim" style={{fontSize:11}}>{t.timeframe}</td>
+                <td><span className={`badge b-${t.side==="LONG"?"long":"short"}`}>{t.side==="LONG"?"▲":"▼"} {t.side}</span></td>
+                <td className="mono">{fmtP(t.entry)}</td>
+                <td className="mono neg">{fmtP(t.sl)}</td>
+                <td className="mono" style={{color:t.tp1_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp1)}{t.tp1_hit?" ✓":""}</td>
+                <td className="mono" style={{color:t.tp2_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp2)}{t.tp2_hit?" ✓":""}</td>
+                <td className="mono dim">{fmtP(t.tp3)}</td>
+                <td><span className="badge b-st">{t.status}</span></td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 360px",gap:14,marginBottom:14}}>
+        <EquityCurve history={history}/>
+        <PerfBars stats={stats}/>
+      </div>
+
+      <div className="card au4" style={{padding:"22px 24px"}}>
+        <div className="sh"><div><div className="sh-t">Recent Trades</div><div className="sh-s">Last closed · {symbol}</div></div></div>
+        <div className="dv"/>
+        {history.length===0?<p style={{color:"var(--muted)",fontSize:13,padding:"16px 0",textAlign:"center"}}>No closed trades yet</p>:(
+          <div className="tw"><table className="tbl">
+            <thead><tr><th>Date</th><th>TF</th><th>Side</th><th>Result</th><th>RR</th></tr></thead>
+            <tbody>{history.slice(0,20).map((t,i)=>(
+              <tr key={i} className="rin" style={{animationDelay:`${i*.05}s`}}>
+                <td className="mono dim" style={{fontSize:11}}>{t.closed_at}</td>
+                <td className="mono dim" style={{fontSize:11}}>{t.timeframe}</td>
+                <td><span className={`badge b-${t.side==="LONG"?"long":"short"}`}>{t.side==="LONG"?"▲":"▼"} {t.side}</span></td>
+                <td><span className={`badge b-${t.result==="WIN"?"win":"loss"}`}>{REASON[t.close_reason]||t.close_reason}</span></td>
+                <td className={`mono ${t.rr>=0?"pos":"neg"}`} style={{fontWeight:700}}>{t.rr>=0?"+":""}{t.rr}R</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
       </div>
     </div>
   );
@@ -1072,6 +1272,7 @@ function App(){
   const init=getInitPage();
   const[page,setPage]=useState(init.page);
   const[clientToken,setClientToken]=useState(init.token);
+  const[coinSymbol,setCoinSymbol]=useState(init.symbol);
   const[k,setK]=useState(0);
   const[t,setTweak]=useTweaks(TWEAK_DEFAULTS);
 
@@ -1084,15 +1285,17 @@ function App(){
   },[t.accentColor]);
 
   useEffect(()=>{
-    const h=()=>{const i=getInitPage();setPage(i.page);setClientToken(i.token);setK(n=>n+1);};
+    const h=()=>{const i=getInitPage();setPage(i.page);setClientToken(i.token);setCoinSymbol(i.symbol);setK(n=>n+1);};
     window.addEventListener("popstate",h);return()=>window.removeEventListener("popstate",h);
   },[]);
 
   const nav=(p,opts={})=>{
     const tok=opts.token!==undefined?opts.token:clientToken;
+    const sym=opts.symbol!==undefined?opts.symbol:coinSymbol;
     if(opts.token!==undefined)setClientToken(opts.token);
+    if(opts.symbol!==undefined)setCoinSymbol(opts.symbol);
     setPage(p);setK(n=>n+1);
-    const path=p==="dashboard"?"/" : p==="client"?`/u/${tok}` : `/${p}`;
+    const path=p==="dashboard"?"/" : p==="client"?`/u/${tok}` : p==="coin"?`/coin/${sym}` : `/${p}`;
     history.pushState({},"",path);
   };
 
@@ -1100,9 +1303,11 @@ function App(){
   return(
     <div style={{minHeight:"100vh"}}>
       {t.showTicker&&<Ticker/>}
-      {!noNav&&<Topbar page={page} nav={nav}/>}
+      {!noNav&&<Topbar page={page==="coin"?"coins":page} nav={nav}/>}
       <div key={k}>
         {page==="dashboard"&&<DashboardPage/>}
+        {page==="coins"    &&<CoinsPage nav={nav}/>}
+        {page==="coin"     &&<CoinPage symbol={coinSymbol} nav={nav}/>}
         {page==="history"  &&<HistoryPage/>}
         {page==="board"    &&<BoardPage/>}
         {page==="login"    &&<LoginPage nav={nav} onLogin={tok=>nav("client",{token:tok})}/>}
@@ -1127,4 +1332,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>"""
+    ).replace(
+        'const DEFAULT_SYMS=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","DOGEUSDT","XRPUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","NEARUSDT","TRXUSDT","TONUSDT","ARBUSDT","ATOMUSDT"];',
+        f"const DEFAULT_SYMS={json.dumps(get_default_monitor_symbols())};",
     )

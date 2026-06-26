@@ -4,11 +4,13 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 import threading
 import time
 
 from services.terminal_dashboard import build_dashboard_snapshot, render_terminal_dashboard
+from config.markets import get_default_monitor_symbols
 from execution.execution_health import read_execution_health
 from storage.execution_queue_store import ExecutionQueueStore
 from storage.account_store import AccountStore
@@ -114,22 +116,36 @@ def _trade_result(row) -> tuple[str, float]:
     return reason, rr
 
 
-def _build_trade_stats(db_path: str) -> dict:
+def _connect(db: "str | sqlite3.Connection") -> tuple[sqlite3.Connection, bool]:
+    """Open a connection if given a path; reuse it (and skip closing) if already a Connection."""
+    if isinstance(db, sqlite3.Connection):
+        return db, False
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    return conn, True
+
+
+def _build_trade_stats(db: "str | sqlite3.Connection", symbol: str | None = None) -> dict:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
-        cur.execute("""
+        query = """
             SELECT close_reason, side, entry_price, entry_triggered_price, stop_loss,
                    managed_stop_loss, rr_tp1, rr_tp2, rr_tp3,
                    tp1_hit_at, tp2_hit_at, tp3_hit_at
             FROM signals
             WHERE close_reason IN ('TAKE_PROFIT_1','TAKE_PROFIT_2','TAKE_PROFIT_3','STOP_LOSS')
               AND entry_triggered_at IS NOT NULL
-            ORDER BY closed_at ASC
-        """)
+        """
+        params: tuple = ()
+        if symbol:
+            query += " AND symbol = ?"
+            params = (symbol,)
+        query += " ORDER BY closed_at ASC"
+        cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return {"win_rate": 0, "avg_rr": 0, "total": 0, "wins": 0, "losses": 0, "profit_factor": 0, "max_dd": 0}
 
@@ -168,12 +184,11 @@ def _build_trade_stats(db_path: str) -> dict:
     }
 
 
-def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
+def _build_trade_history(db: "str | sqlite3.Connection", limit: int = 200, symbol: str | None = None) -> list[dict]:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
-        cur.execute("""
+        query = """
             SELECT symbol, timeframe, side, entry_price, stop_loss, managed_stop_loss,
                    close_reason, entry_triggered_price,
                    tp1_hit_at, tp2_hit_at, tp3_hit_at,
@@ -183,11 +198,17 @@ def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
             FROM signals
             WHERE close_reason IN ('TAKE_PROFIT_1','TAKE_PROFIT_2','TAKE_PROFIT_3','STOP_LOSS')
               AND entry_triggered_at IS NOT NULL
-            ORDER BY closed_at DESC
-            LIMIT ?
-        """, (limit,))
+        """
+        params: list = []
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        query += " ORDER BY closed_at DESC LIMIT ?"
+        params.append(limit)
+        cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return []
 
@@ -209,21 +230,26 @@ def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
     return result
 
 
-def _build_active_trades(db_path: str) -> list[dict]:
+def _build_active_trades(db: "str | sqlite3.Connection", symbol: str | None = None) -> list[dict]:
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn, should_close = _connect(db)
         cur = conn.cursor()
-        cur.execute("""
+        query = """
             SELECT symbol, timeframe, side, status, entry_price, entry_triggered_price,
                    stop_loss, tp1, tp2, tp3, tp1_hit_at, tp2_hit_at, created_at
             FROM signals
             WHERE status IN ('ACTIVE','PARTIAL_TP1','PARTIAL_TP2')
               AND entry_triggered_at IS NOT NULL
-            ORDER BY created_at DESC
-        """)
+        """
+        params: tuple = ()
+        if symbol:
+            query += " AND symbol = ?"
+            params = (symbol,)
+        query += " ORDER BY created_at DESC"
+        cur.execute(query, params)
         rows = cur.fetchall()
-        conn.close()
+        if should_close:
+            conn.close()
     except Exception:
         return []
 
@@ -243,6 +269,28 @@ def _build_active_trades(db_path: str) -> list[dict]:
             "tp2_hit": bool(row["tp2_hit_at"]),
         })
     return result
+
+
+def _resolve_monitored_symbols(payload: dict | None) -> list[str]:
+    if payload and payload.get("ok"):
+        monitored = (payload.get("snapshot") or {}).get("monitored_symbols")
+        if monitored:
+            return monitored
+    return get_default_monitor_symbols()
+
+
+def _build_coin_detail(db_path: str, symbol: str) -> dict:
+    """Stats + active trades + history for one symbol over a single shared connection."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return {
+            "stats": _build_trade_stats(conn, symbol=symbol),
+            "active_trades": _build_active_trades(conn, symbol=symbol),
+            "history": _build_trade_history(conn, limit=50, symbol=symbol),
+        }
+    finally:
+        conn.close()
 
 
 _SHARED_CSS = """
@@ -1796,7 +1844,7 @@ def run_web_dashboard(
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
-            if path in ("/", "/history", "/login", "/register", "/admin", "/guide", "/board", "/about"):
+            if path in ("/", "/history", "/login", "/register", "/admin", "/guide", "/board", "/about", "/coins") or path.startswith("/coin/"):
                 if path == "/":
                     _visit_counter["count"] = _visit_counter.get("count", 0) + 1
                     ip = self.client_address[0]
@@ -1873,8 +1921,45 @@ def run_web_dashboard(
                 return
             if path == "/api/history":
                 try:
-                    trades = _build_trade_history(db_path)
+                    qs = self.path.split("?", 1)[-1] if "?" in self.path else ""
+                    qs_params = parse_qs(qs)
+                    sym = (qs_params.get("symbol", [""])[0] or "").upper() or None
+                    trades = _build_trade_history(db_path, symbol=sym)
                     self._send_json(200, {"ok": True, "trades": trades})
+                except Exception as exc:
+                    self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            if path == "/api/symbols":
+                with _cache_lock:
+                    payload = _cache["payload"]
+                self._send_json(200, {"ok": True, "symbols": _resolve_monitored_symbols(payload)})
+                return
+            if path.startswith("/api/coin/"):
+                sym = path[len("/api/coin/"):].upper()
+                with _cache_lock:
+                    payload = _cache["payload"]
+                if payload is None:
+                    self._send_json(503, {"ok": False, "error": "snapshot not ready yet, please retry"})
+                    return
+                monitored = _resolve_monitored_symbols(payload)
+                if sym not in monitored:
+                    self._send_json(404, {"ok": False, "error": "unknown symbol"})
+                    return
+                if not payload.get("ok"):
+                    self._send_json(502, {"ok": False, "error": payload.get("error") or "snapshot unavailable"})
+                    return
+                try:
+                    intelligence = [
+                        row for row in (payload["snapshot"].get("intelligence") or [])
+                        if row.get("symbol") == sym
+                    ]
+                    detail = _build_coin_detail(db_path, sym)
+                    self._send_json(200, {
+                        "ok": True,
+                        "symbol": sym,
+                        "intelligence": intelligence,
+                        **detail,
+                    })
                 except Exception as exc:
                     self._send_json(500, {"ok": False, "error": str(exc)})
                 return
@@ -1898,7 +1983,7 @@ def run_web_dashboard(
             if path == "/api/ticker":
                 try:
                     import urllib.request as _ur
-                    syms = '["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT"]'
+                    syms = json.dumps(get_default_monitor_symbols())
                     url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={_ur.quote(syms)}"
                     with _ur.urlopen(url, timeout=5) as _resp:
                         data = _resp.read()
