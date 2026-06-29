@@ -822,14 +822,25 @@ class WaveRepository:
             traceback.print_exc()
             return -1
 
-    def _signal_gate_blocks_new(self, conn: sqlite3.Connection, snapshot: dict) -> bool:
-        """When enabled, block a new signal on the same symbol+timeframe until SL or TP3.
+    # Statuses where the previous plan is still open/in-flight (matches the
+    # lifecycle check used elsewhere, e.g. _maybe_run_exchange_execution's open lookup).
+    _OPEN_SIGNAL_STATUSES = frozenset({"PENDING_ENTRY", "ACTIVE", "PARTIAL_TP1", "PARTIAL_TP2"})
 
-        We look at the latest non-replaced lifecycle row for that symbol+timeframe. A new
-        signal is allowed only after the previous effective plan finished via:
-        - TP3_HIT
-        - STOPPED with STOP_LOSS  (only if new signal has different bias)
-        - INVALIDATED with STOP_LOSS_BEFORE_ENTRY (only if new signal has different bias)
+    def _signal_gate_blocks_new(self, conn: sqlite3.Connection, snapshot: dict) -> bool:
+        """When enabled, block a new signal on the same symbol+timeframe until the
+        previous plan is no longer open.
+
+        We look at the latest non-replaced lifecycle row for that symbol+timeframe.
+        Any row still in an open status (PENDING_ENTRY/ACTIVE/PARTIAL_TP1/PARTIAL_TP2)
+        blocks a new signal. Once the previous plan reaches a terminal status a new
+        signal is allowed — except STOPPED (any close_reason: STOP_LOSS,
+        OPPOSITE_STRUCTURE, VOLATILITY_EXIT, TIME_STOP, ...) and
+        INVALIDATED+STOP_LOSS_BEFORE_ENTRY, which only allow re-entry once bias
+        flips, so we don't immediately re-enter the same thesis that just lost.
+        Without this, any close whose status/close_reason fell outside that
+        narrow pair (e.g. INVALIDATED with OVEREXTENDED_ENTRY, NO_EXCHANGE_POSITION,
+        or no reason at all) used to fall through and block that symbol+timeframe
+        forever, since no later row ever supersedes it.
         """
         if not _signal_gate_terminal_exit_enabled():
             return False
@@ -861,14 +872,15 @@ class WaveRepository:
         prev_bias = str(row["bias"] or "").upper()
         new_bias = str(snapshot.get("bias") or "").upper()
 
-        if status == "TP3_HIT":
-            return False
-        if status == "STOPPED" and close_reason == "STOP_LOSS":
-            # Allow re-entry only if bias flipped (e.g. BEARISH → BULLISH)
+        if status in self._OPEN_SIGNAL_STATUSES:
+            return True
+        if status == "STOPPED":
+            # The plan was live and exited early (SL, opposite structure, volatility,
+            # time stop, ...). Allow re-entry only if bias flipped.
             return prev_bias == new_bias
         if status == "INVALIDATED" and close_reason == "STOP_LOSS_BEFORE_ENTRY":
             return prev_bias == new_bias
-        return True
+        return False
 
     def sync_analysis(self, analysis: dict, current_price: float | None = None) -> int | None:
         self.record_analysis_snapshot(analysis, current_price=current_price)

@@ -326,6 +326,30 @@ def test_signal_gate_blocks_same_timeframe_after_opposite_structure_exit(tmp_pat
     assert second_id is None
 
 
+@pytest.mark.parametrize("close_reason", ["OVEREXTENDED_ENTRY", "NO_EXCHANGE_POSITION", None])
+def test_signal_gate_releases_after_invalidation_with_other_close_reason(tmp_path, monkeypatch, close_reason):
+    """Regression: an INVALIDATED plan with any close_reason other than
+    STOP_LOSS_BEFORE_ENTRY used to fall through to `return True` and block that
+    symbol+timeframe forever, since no later row ever supersedes it."""
+    monkeypatch.setenv("SIGNAL_GATE_TERMINAL_EXIT", "true")
+    monkeypatch.setenv("SIGNALS_ENTRY_ONLY", "false")
+    repo = WaveRepository(db_path=str(tmp_path / "wave.db"))
+    first_id = repo.sync_analysis(_analysis(entry=100.0, stop_loss=95.0), current_price=99.0)
+
+    assert first_id is not None
+    assert repo.close_open_signal(
+        first_id,
+        status="INVALIDATED",
+        close_reason=close_reason,
+        current_price=99.5,
+        event_time="2026-03-17T00:00:00+00:00",
+        event_type="SIGNAL_INVALIDATED",
+    ) is True
+
+    second_id = repo.sync_analysis(_analysis(entry=101.0, stop_loss=96.0), current_price=99.0)
+    assert second_id is not None
+
+
 def test_exchange_managed_signal_entry_stays_pending_until_exchange_fill(tmp_path, monkeypatch):
     monkeypatch.setenv("BINANCE_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("BINANCE_LIVE_ORDER_ENABLED", "true")
