@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/wave-structure-engine
-ExecStart=/root/wave-structure-engine/.venv/bin/python /root/wave-structure-engine/services/edge_agent.py
+ExecStart=/root/wave-structure-engine/.venv/bin/python -m services.edge_agent
 Restart=always
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1
