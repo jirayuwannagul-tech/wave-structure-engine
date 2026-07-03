@@ -17,7 +17,6 @@ DEFAULT_MONITOR_SYMBOLS: tuple[str, ...] = (
     "LTCUSDT",
     "NEARUSDT",
     "TRXUSDT",
-    "TONUSDT",
     "ARBUSDT",
     "ATOMUSDT",
 )
@@ -50,12 +49,6 @@ SYMBOL_RULES: dict[str, dict] = {
         "short_requires_ema200_bearish": True,
         "short_rsi_threshold": 45.0,
         "min_rr": 1.2,
-        "short_4h_min_confirmations": 2,
-    },
-    # TON — ประวัติสั้น (2023), volatile กว่า ต้องการ RR สูง
-    "TONUSDT": {
-        "short_requires_ema200_bearish": True,
-        "min_rr": 1.5,
         "short_4h_min_confirmations": 2,
     },
     # ARB — L2, ประวัติสั้น (2022), ตาม ETH ใกล้ชิด
