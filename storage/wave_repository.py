@@ -17,6 +17,7 @@ from analysis.trade_management import (
 )
 from scenarios.scenario_state_machine import update_scenario_state
 from analysis.risk_reward import calculate_rr_levels
+from analysis.wave_position import describe_current_leg
 
 OPEN_SIGNAL_STATUSES = {
     "PENDING_ENTRY",
@@ -240,6 +241,7 @@ def build_signal_snapshot(analysis: dict, current_price: float | None = None) ->
             "pattern_type": analysis.get("primary_pattern_type"),
             "scenario": _simplify_scenario(scenario),
             "rr_levels": rr_levels,
+            "current_leg": describe_current_leg(position),
         },
     }
     return payload

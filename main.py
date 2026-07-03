@@ -640,6 +640,11 @@ def build_parser() -> argparse.ArgumentParser:
     web_dashboard_parser.add_argument("--port", type=int, default=8080)
     web_dashboard_parser.add_argument("--refresh-seconds", type=float, default=5.0)
 
+    subparsers.add_parser("edge-collect", help="Collect edge stats from DB and run Gemini analysis")
+    subparsers.add_parser("edge-agent", help="Run background edge agent (polls for new closed trades)")
+    edge_query_parser = subparsers.add_parser("edge-query", help="Query edge data with Gemini (or print stats)")
+    edge_query_parser.add_argument("question", nargs="*", help="Question to ask Gemini")
+
     return parser
 
 
@@ -765,6 +770,27 @@ def main() -> None:
             port=args.port,
             refresh_seconds=args.refresh_seconds,
         )
+        return
+
+    if args.command == "edge-collect":
+        from services.edge_collector import collect as _edge_collect
+        from services.gemini_analyst import analyze as _gemini_analyze
+        store = _edge_collect()
+        print(json.dumps(store["stats"]["overall"], indent=2))
+        _gemini_analyze(store)
+        return
+
+    if args.command == "edge-query":
+        import subprocess, sys
+        subprocess.run(
+            [sys.executable, "scripts/query_edge.py"] + (args.question or []),
+            check=False,
+        )
+        return
+
+    if args.command == "edge-agent":
+        from services.edge_agent import run as _run_edge_agent
+        _run_edge_agent()
         return
 
     raise ValueError(f"Unsupported command: {args.command}")
