@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 _INSIGHTS_PATH = Path(__file__).parent.parent / "storage" / "gemini_insights.json"
-_MODEL = "gemini-2.0-flash-lite"
+_MODEL = "gemini-2.0-flash"
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 _SYSTEM_PROMPT = """You are an Elliott Wave trading edge analyst.
