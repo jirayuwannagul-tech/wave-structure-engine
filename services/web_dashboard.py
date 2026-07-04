@@ -209,6 +209,20 @@ def _build_trade_history(db_path: str, limit: int = 200) -> list[dict]:
     return result
 
 
+def _fetch_current_prices(symbols: list[str]) -> dict[str, float]:
+    if not symbols:
+        return {}
+    try:
+        import urllib.request as _ur
+        syms_json = json.dumps(symbols)
+        url = f"https://api.binance.com/api/v3/ticker/price?symbols={_ur.quote(syms_json)}"
+        with _ur.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        return {item["symbol"]: float(item["price"]) for item in data}
+    except Exception:
+        return {}
+
+
 def _build_active_trades(db_path: str) -> list[dict]:
     try:
         conn = sqlite3.connect(db_path)
@@ -227,20 +241,42 @@ def _build_active_trades(db_path: str) -> list[dict]:
     except Exception:
         return []
 
+    symbols = list({row["symbol"] for row in rows})
+    prices = _fetch_current_prices(symbols)
+
     result = []
     for row in rows:
+        entry = float(row["entry_triggered_price"] or row["entry_price"] or 0)
+        sl = float(row["stop_loss"] or 0)
+        symbol = row["symbol"]
+        side = (row["side"] or "").upper()
+        current = prices.get(symbol)
+
+        pnl_pct = None
+        current_r = None
+        if current and entry and sl and entry != sl:
+            if side == "LONG":
+                pnl_pct = (current - entry) / entry * 100
+                current_r = (current - entry) / (entry - sl)
+            else:
+                pnl_pct = (entry - current) / entry * 100
+                current_r = (entry - current) / (sl - entry)
+
         result.append({
-            "symbol": row["symbol"],
+            "symbol": symbol,
             "timeframe": row["timeframe"],
-            "side": (row["side"] or "").upper(),
+            "side": side,
             "status": row["status"],
-            "entry": row["entry_triggered_price"] or row["entry_price"],
-            "sl": row["stop_loss"],
+            "entry": entry,
+            "sl": sl,
             "tp1": row["tp1"],
             "tp2": row["tp2"],
             "tp3": row["tp3"],
             "tp1_hit": bool(row["tp1_hit_at"]),
             "tp2_hit": bool(row["tp2_hit_at"]),
+            "current_price": round(current, 6) if current else None,
+            "pnl_pct": round(pnl_pct, 2) if pnl_pct is not None else None,
+            "current_r": round(current_r, 2) if current_r is not None else None,
         })
     return result
 
@@ -370,11 +406,12 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
   <div class="section">
     <div class="section-head">
       <h2>&#x1F4CC; Open Trades <span id="active-count" style="color:var(--muted);font-weight:400;">(0)</span></h2>
+      <span style="font-size:11px;color:var(--muted);">ราคาอัพเดตอัตโนมัติ</span>
     </div>
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Status</th></tr></thead>
-        <tbody id="active-body"><tr><td colspan="9" class="empty">Loading&hellip;</td></tr></tbody>
+        <thead><tr><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>ราคาตอนนี้</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>P&amp;L %</th><th>R</th><th>Status</th></tr></thead>
+        <tbody id="active-body"><tr><td colspan="12" class="empty">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -437,20 +474,32 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
           const sideBadge = side === "LONG"
             ? "<span class='badge badge-long'>LONG</span>"
             : "<span class='badge badge-short'>SHORT</span>";
-          const status = (t.status||"").replace("_"," ");
+          const status = (t.status||"").replace(/_/g," ");
+          const pnl = t.pnl_pct;
+          const pnlStr = pnl != null
+            ? "<span class='" + (pnl >= 0 ? "pos" : "neg") + "'>" + (pnl >= 0 ? "+" : "") + fmt(pnl,2) + "%</span>"
+            : "<span class='muted'>\u2013</span>";
+          const rr = t.current_r;
+          const rrStr = rr != null
+            ? "<span class='" + (rr >= 0 ? "pos" : "neg") + "'>" + (rr >= 0 ? "+" : "") + fmt(rr,2) + "R</span>"
+            : "<span class='muted'>\u2013</span>";
+          const curPrice = t.current_price != null ? fmt(t.current_price,4) : "<span class='muted'>\u2013</span>";
           return "<tr>"
             + "<td><b>" + (t.symbol||"\u2013") + "</b></td>"
             + "<td>" + (t.timeframe||"\u2013") + "</td>"
             + "<td>" + sideBadge + "</td>"
-            + "<td>" + fmt(t.entry,4) + "</td>"
+            + "<td style='color:var(--muted)'>" + fmt(t.entry,4) + "</td>"
+            + "<td><b>" + curPrice + "</b></td>"
             + "<td class='neg'>" + fmt(t.sl,4) + "</td>"
-            + "<td class='pos'>" + fmt(t.tp1,4) + "</td>"
-            + "<td class='pos'>" + fmt(t.tp2,4) + "</td>"
-            + "<td class='pos'>" + fmt(t.tp3,4) + "</td>"
+            + "<td style='color:var(--success);opacity:" + (t.tp1_hit?"1":"0.5") + "'>" + fmt(t.tp1,4) + (t.tp1_hit?" \u2713":"") + "</td>"
+            + "<td style='color:var(--success);opacity:" + (t.tp2_hit?"1":"0.5") + "'>" + fmt(t.tp2,4) + (t.tp2_hit?" \u2713":"") + "</td>"
+            + "<td style='color:var(--success);opacity:0.5'>" + fmt(t.tp3,4) + "</td>"
+            + "<td>" + pnlStr + "</td>"
+            + "<td>" + rrStr + "</td>"
             + "<td><span class='badge'>" + status + "</span></td>"
             + "</tr>";
         }}).join("")
-      : "<tr><td colspan='9' class='empty'>No open trades</td></tr>";
+      : "<tr><td colspan='12' class='empty'>\u0e44\u0e21\u0e48\u0e21\u0e35 trade \u0e40\u0e1b\u0e34\u0e14\u0e2d\u0e22\u0e39\u0e48</td></tr>";
   }}
 
   tick();

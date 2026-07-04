@@ -41,9 +41,11 @@ def _realized_rr(row: sqlite3.Row, result: str) -> float:
     if result == "TP3_HIT":
         return _TP1_PCT * rr1 + _TP2_PCT * rr2 + _TP3_PCT * rr3
     if result == "TP2_THEN_SL":
-        return _TP1_PCT * rr1 + _TP2_PCT * rr2 - _TP3_PCT
+        # SL moves to TP1 after TP2 hit → remaining 30% exits at TP1 (profit)
+        return _TP1_PCT * rr1 + _TP2_PCT * rr2 + _TP3_PCT * rr1
     if result == "TP1_THEN_SL":
-        return _TP1_PCT * rr1 - (_TP2_PCT + _TP3_PCT)
+        # SL moves to breakeven after TP1 hit → remaining 60% exits at 0
+        return _TP1_PCT * rr1
     return -1.0
 
 
