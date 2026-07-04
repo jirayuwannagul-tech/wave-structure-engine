@@ -1305,7 +1305,7 @@ async function saveApi(id) {{
 
 
 def build_edge_html() -> str:
-    return """<!DOCTYPE html>
+    return r"""<!DOCTYPE html>
 <html lang="th"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1313,88 +1313,195 @@ def build_edge_html() -> str:
 <style>
 :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e8eaf0;--sub:#8b8fa8;--accent:#6c63ff;--green:#4caf89;--red:#e05c5c;--yellow:#f0a500}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;padding:20px}
-h1{font-size:20px;font-weight:700;margin-bottom:4px}
-.sub{color:var(--sub);font-size:12px;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;padding:16px;max-width:1000px;margin:0 auto}
+h1{font-size:20px;font-weight:700;margin-bottom:2px}
+.sub{color:var(--sub);font-size:12px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
-.card .label{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.card .label{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .card .value{font-size:22px;font-weight:700}
 .green{color:var(--green)}.red{color:var(--red)}.yellow{color:var(--yellow)}
-table{width:100%;border-collapse:collapse;margin-bottom:20px}
-th{text-align:left;font-size:11px;color:var(--sub);text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border)}
-td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px}
-tr:last-child td{border-bottom:none}
-.section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;overflow-x:auto}
-.section h2{font-size:13px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
-.bar{height:4px;border-radius:2px;background:var(--border);margin-top:4px}
-.bar-fill{height:100%;border-radius:2px;background:var(--accent)}
-.query-box{display:flex;gap:10px;margin-bottom:16px}
-.query-box input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+.section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.section h2{font-size:12px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:600px){.charts-row{grid-template-columns:1fr}}
+canvas{display:block;width:100%;max-width:100%}
+.query-box{display:flex;gap:10px;margin-bottom:12px}
+.query-box input{flex:1;background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none}
 .query-box input:focus{border-color:var(--accent)}
 .query-box button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;white-space:nowrap}
 .query-box button:disabled{opacity:.5;cursor:default}
-#answer{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;white-space:pre-wrap;line-height:1.6;font-size:13px;min-height:60px;display:none}
-.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
-.badge-g{background:rgba(76,175,137,.15);color:var(--green)}
-.badge-r{background:rgba(224,92,92,.15);color:var(--red)}
-.updated{font-size:11px;color:var(--sub);margin-bottom:16px}
+#answer{background:#0f1117;border:1px solid var(--border);border-radius:8px;padding:14px;white-space:pre-wrap;line-height:1.65;font-size:13px;display:none}
+.updated{font-size:11px;color:var(--sub);margin-bottom:14px}
 </style>
 </head><body>
 <h1>Edge Analytics</h1>
 <div class="sub">Elliott Wave Engine — Live Trade Performance</div>
 <div class="grid" id="overview"></div>
 <div class="updated" id="updated"></div>
-<div class="section"><h2>By Pattern</h2><table id="t-pattern"><thead><tr><th>Pattern</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
-<div class="section"><h2>By Symbol</h2><table id="t-symbol"><thead><tr><th>Symbol</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
-<div class="section"><h2>By Timeframe & Side</h2><table id="t-tf"><thead><tr><th>Group</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
+
+<div class="charts-row">
+  <div class="section"><h2>Equity Curve (cumulative RR)</h2><canvas id="c-equity" height="160"></canvas></div>
+  <div class="section"><h2>Result Breakdown</h2><canvas id="c-donut" height="160"></canvas></div>
+</div>
+<div class="charts-row">
+  <div class="section"><h2>Win Rate by Pattern</h2><canvas id="c-pattern-wr" height="200"></canvas></div>
+  <div class="section"><h2>Avg RR by Pattern</h2><canvas id="c-pattern-rr" height="200"></canvas></div>
+</div>
+<div class="charts-row">
+  <div class="section"><h2>Win Rate by Symbol</h2><canvas id="c-symbol-wr" height="200"></canvas></div>
+  <div class="section"><h2>Avg RR by Symbol</h2><canvas id="c-symbol-rr" height="200"></canvas></div>
+</div>
+
 <div class="section"><h2>Ask Gemini</h2>
-<div class="query-box"><input id="q" type="text" placeholder="ถามอะไรก็ได้ เช่น LONG trades ยังขาดทุนอยู่ไหม?"><button id="btn" onclick="ask()">ถาม</button></div>
+<div class="query-box"><input id="q" type="text" placeholder="ถามอะไรก็ได้ เช่น Pattern ไหนควรหยุดเทรด?"><button id="btn" onclick="ask()">ถาม</button></div>
 <div id="answer"></div>
 </div>
+
 <script>
+var C={bg:'#0f1117',card:'#1a1d27',border:'#2a2d3a',text:'#e8eaf0',sub:'#8b8fa8',
+       accent:'#6c63ff',green:'#4caf89',red:'#e05c5c',yellow:'#f0a500'};
+
+function dpr(canvas){
+  var r=window.devicePixelRatio||1,w=canvas.clientWidth||canvas.parentElement.clientWidth||300;
+  canvas.width=w*r;canvas.height=canvas.height*r;
+  canvas.style.height=(canvas.height/r)+'px';
+  canvas.getContext('2d').scale(r,r);
+  return {ctx:canvas.getContext('2d'),w:w,h:canvas.height/r};
+}
+
+function drawEquity(trades){
+  var el=document.getElementById('c-equity');
+  el.height=160;
+  var _=dpr(el),ctx=_.ctx,W=_.w,H=_.h;
+  if(!trades||!trades.length){ctx.fillStyle=C.sub;ctx.font='12px sans-serif';ctx.fillText('No data',W/2-20,H/2);return;}
+  var cum=0,pts=[0];
+  trades.forEach(function(t){cum+=t.realized_rr;pts.push(cum);});
+  var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts);
+  var pad=30,rng=mx-mn||1;
+  function px(i){return pad+(W-pad*2)*i/(pts.length-1);}
+  function py(v){return H-pad-(H-pad*2)*(v-mn)/rng;}
+  ctx.strokeStyle=C.border;ctx.lineWidth=1;
+  [mn,0,mx].forEach(function(v){
+    var y=py(v);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();
+    ctx.fillStyle=C.sub;ctx.font='10px sans-serif';ctx.fillText(v.toFixed(1)+'R',2,y+4);
+  });
+  ctx.beginPath();ctx.moveTo(px(0),py(0));
+  pts.forEach(function(v,i){ctx.lineTo(px(i),py(v));});
+  ctx.strokeStyle=cum>=0?C.green:C.red;ctx.lineWidth=2;ctx.stroke();
+  var grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,cum>=0?'rgba(76,175,137,.25)':'rgba(224,92,92,.25)');
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.lineTo(px(pts.length-1),H);ctx.lineTo(px(0),H);ctx.closePath();
+  ctx.fillStyle=grad;ctx.fill();
+  ctx.fillStyle=cum>=0?C.green:C.red;ctx.font='bold 11px sans-serif';
+  ctx.fillText((cum>=0?'+':'')+cum.toFixed(2)+'R',W-pad-50,pad-4);
+}
+
+function drawDonut(byResult){
+  var el=document.getElementById('c-donut');
+  el.height=160;
+  var _=dpr(el),ctx=_.ctx,W=_.w,H=_.h;
+  var data=[
+    {k:'TP3_HIT',label:'TP3',color:'#4caf89'},
+    {k:'TP2_THEN_SL',label:'TP2→SL',color:'#82c9a5'},
+    {k:'TP1_THEN_SL',label:'TP1→SL',color:'#f0a500'},
+    {k:'SL_HIT',label:'SL',color:'#e05c5c'},
+  ];
+  var total=0;data.forEach(function(d){d.v=byResult[d.k]||0;total+=d.v;});
+  if(!total)return;
+  var cx=H/2,cy=H/2,r=H/2-12,ir=r*0.58,a=-Math.PI/2;
+  data.forEach(function(d){
+    var sweep=2*Math.PI*d.v/total;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,a+sweep);ctx.closePath();
+    ctx.fillStyle=d.color;ctx.fill();a+=sweep;
+  });
+  ctx.beginPath();ctx.arc(cx,cy,ir,0,2*Math.PI);ctx.fillStyle=C.card;ctx.fill();
+  ctx.fillStyle=C.text;ctx.font='bold 14px sans-serif';ctx.textAlign='center';
+  ctx.fillText(total,cx,cy+5);
+  ctx.font='10px sans-serif';ctx.fillStyle=C.sub;ctx.fillText('trades',cx,cy+18);
+  ctx.textAlign='left';
+  var lx=H+10,ly=20;
+  data.forEach(function(d){
+    ctx.fillStyle=d.color;ctx.fillRect(lx,ly-9,10,10);
+    ctx.fillStyle=C.text;ctx.font='11px sans-serif';
+    ctx.fillText(d.label+' '+d.v,lx+14,ly);
+    ly+=18;
+  });
+}
+
+function drawHBar(canvasId,items,valueKey,isRR){
+  var el=document.getElementById(canvasId);
+  el.height=Math.max(items.length*28+24,80);
+  var _=dpr(el),ctx=_.ctx,W=_.w,H=_.h;
+  var pad={l:150,r:60,t:10,b:10};
+  var bw=W-pad.l-pad.r;
+  var vals=items.map(function(d){return d[1][valueKey];});
+  var mx=Math.max.apply(null,vals.map(Math.abs))||1;
+  items.forEach(function(item,i){
+    var name=item[0],v=item[1][valueKey],n=item[1].n;
+    var y=pad.t+i*28;
+    ctx.fillStyle=C.sub;ctx.font='11px sans-serif';ctx.textAlign='right';
+    ctx.fillText(name.replace('USDT',''),pad.l-6,y+16);
+    var bar_w=Math.abs(v)/mx*bw*(isRR?0.85:1);
+    var bx=isRR?(v>=0?W/2:W/2-bar_w):pad.l;
+    if(!isRR)bx=pad.l;
+    ctx.fillStyle=isRR?(v>=0?C.green:C.red):(v>=0.55?C.green:v>=0.45?C.yellow:C.red);
+    ctx.beginPath();ctx.roundRect(bx,y+4,bar_w,18,3);ctx.fill();
+    ctx.fillStyle=C.text;ctx.font='bold 11px sans-serif';ctx.textAlign='left';
+    var label=isRR?((v>=0?'+':'')+v.toFixed(3)+'R'):((v*100).toFixed(1)+'% (n='+n+')');
+    ctx.fillText(label,bx+bar_w+4,y+16);
+  });
+  if(isRR){
+    var mid=W/2;
+    ctx.strokeStyle=C.border;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(mid,0);ctx.lineTo(mid,H);ctx.stroke();
+    ctx.fillStyle=C.sub;ctx.font='10px sans-serif';ctx.textAlign='center';
+    ctx.fillText('0',mid,H-2);
+  }
+  ctx.textAlign='left';
+}
+
 function wr_class(wr){return wr>=0.55?'green':wr>=0.45?'yellow':'red'}
 function rr_class(rr){return rr>0?'green':rr>-0.1?'yellow':'red'}
 function fmt_wr(wr){return (wr*100).toFixed(1)+'%'}
 function fmt_rr(rr){return (rr>=0?'+':'')+rr.toFixed(3)+'R'}
-function row(name,v){
-  var wr=v.wr,rr=v.avg_rr,n=v.n;
-  return '<tr><td>'+name+'</td><td>'+n+'</td>'
-    +'<td><span class="badge '+(wr>=0.5?'badge-g':'badge-r')+'">'+fmt_wr(wr)+'</span></td>'
-    +'<td class="'+rr_class(rr)+'">'+fmt_rr(rr)+'</td></tr>';
-}
+
 function load(){
-  fetch('/api/edge/stats').then(r=>r.json()).then(d=>{
+  fetch('/api/edge/stats').then(r=>r.json()).then(function(d){
     if(!d.ok)return;
     var s=d.stats,o=s.overall;
-    document.getElementById('updated').textContent='อัปเดต: '+d.last_updated.slice(0,16).replace('T',' ')+' UTC  |  '+d.total+' trades';
+    document.getElementById('updated').textContent=
+      'อัปเดต: '+d.last_updated.slice(0,16).replace('T',' ')+' UTC  |  '+d.total+' trades';
     document.getElementById('overview').innerHTML=
       '<div class="card"><div class="label">Win Rate</div><div class="value '+wr_class(o.wr)+'">'+fmt_wr(o.wr)+'</div></div>'
       +'<div class="card"><div class="label">Avg RR</div><div class="value '+rr_class(o.avg_rr)+'">'+fmt_rr(o.avg_rr)+'</div></div>'
       +'<div class="card"><div class="label">Wins</div><div class="value green">'+o.wins+'</div></div>'
       +'<div class="card"><div class="label">Losses</div><div class="value red">'+o.losses+'</div></div>'
-      +'<div class="card"><div class="label">Current Streak</div><div class="value '+(d.streak_type==='W'?'green':'red')+'">'+d.streak_type+'×'+d.streak_count+'</div></div>';
-    var pt=document.querySelector('#t-pattern tbody');
-    pt.innerHTML=Object.entries(s.by_pattern_type).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>row(k,v)).join('');
-    var st=document.querySelector('#t-symbol tbody');
-    st.innerHTML=Object.entries(s.by_symbol).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>row(k,v)).join('');
-    var tf=document.querySelector('#t-tf tbody');
-    var tfrows=Object.entries(s.by_timeframe).map(([k,v])=>row('TF: '+k,v));
-    tfrows=tfrows.concat(Object.entries(s.by_side).map(([k,v])=>row('Side: '+k,v)));
-    tf.innerHTML=tfrows.join('');
-  }).catch(()=>{});
+      +'<div class="card"><div class="label">Streak</div><div class="value '+(d.streak_type==='W'?'green':'red')+'">'+d.streak_type+'x'+d.streak_count+'</div></div>';
+
+    drawEquity(d.trades||[]);
+    drawDonut(s.by_result||{});
+
+    var pat=Object.entries(s.by_pattern_type||{}).sort(function(a,b){return b[1].n-a[1].n;});
+    drawHBar('c-pattern-wr',pat,'wr',false);
+    drawHBar('c-pattern-rr',pat,'avg_rr',true);
+
+    var sym=Object.entries(s.by_symbol||{}).sort(function(a,b){return b[1].n-a[1].n;});
+    drawHBar('c-symbol-wr',sym,'wr',false);
+    drawHBar('c-symbol-rr',sym,'avg_rr',true);
+  }).catch(function(){});
 }
+
 function ask(){
-  var q=document.getElementById('q').value.trim();
-  if(!q)return;
+  var q=document.getElementById('q').value.trim();if(!q)return;
   var btn=document.getElementById('btn'),ans=document.getElementById('answer');
   btn.disabled=true;btn.textContent='กำลังถาม...';
-  ans.style.display='block';ans.textContent='⏳ รอ Gemini...';
+  ans.style.display='block';ans.textContent='รอ Gemini...';
   fetch('/api/edge/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})})
-    .then(r=>r.json()).then(d=>{
-      ans.textContent=d.answer||d.error||'ไม่มีคำตอบ';
-    }).catch(e=>{ans.textContent='Error: '+e;})
-    .finally(()=>{btn.disabled=false;btn.textContent='ถาม';});
+    .then(r=>r.json()).then(function(d){ans.textContent=d.answer||d.error||'ไม่มีคำตอบ';})
+    .catch(function(e){ans.textContent='Error: '+e;})
+    .finally(function(){btn.disabled=false;btn.textContent='ถาม';});
 }
 document.getElementById('q').addEventListener('keydown',function(e){if(e.key==='Enter')ask();});
 load();setInterval(load,30000);
@@ -2025,6 +2132,7 @@ def run_web_dashboard(
                         "streak_type": streaks.get("current_type", ""),
                         "streak_count": streaks.get("current_count", 0),
                         "stats": store.get("stats", {}),
+                        "trades": store.get("trades", []),
                     })
                 except Exception as e:
                     self._send_json(500, {"ok": False, "error": str(e)})
