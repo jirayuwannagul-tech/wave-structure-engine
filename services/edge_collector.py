@@ -12,9 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_TP1_PCT = 0.40
+_TP1_PCT = 0.50
 _TP2_PCT = 0.30
-_TP3_PCT = 0.30
+_TP3_PCT = 0.20
 
 _DB_PATH = Path(__file__).parent.parent / "storage" / "wave_engine.db"
 _STORE_PATH = Path(__file__).parent.parent / "storage" / "edge_store.json"
@@ -34,7 +34,7 @@ def _classify_result(row: sqlite3.Row) -> str:
 
 
 def _realized_rr(row: sqlite3.Row, result: str) -> float:
-    """Realized R-multiple using 40/30/30 TP sizing."""
+    """Realized R-multiple using 50/30/20 TP sizing."""
     rr1 = float(row["rr_tp1"] or 0)
     rr2 = float(row["rr_tp2"] or 0)
     rr3 = float(row["rr_tp3"] or 0)

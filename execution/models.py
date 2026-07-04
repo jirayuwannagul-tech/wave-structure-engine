@@ -18,9 +18,9 @@ class ExecutionConfig:
     margin_type: str = "ISOLATED"
     allow_long: bool = True
     allow_short: bool = True
-    tp1_size_pct: float = 0.40
+    tp1_size_pct: float = 0.50
     tp2_size_pct: float = 0.30
-    tp3_size_pct: float = 0.30
+    tp3_size_pct: float = 0.20
     # Portfolio execution (caps only; no strategy filters)
     portfolio_max_open_positions: int = 100
     portfolio_max_risk_fraction: float = 1.0

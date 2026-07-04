@@ -72,9 +72,9 @@ def _env_entry_style() -> str:
 
 def load_execution_config() -> ExecutionConfig:
     entry_style = _env_entry_style()
-    tp1 = _env_float("BINANCE_TP1_SIZE_PCT", 0.40)
+    tp1 = _env_float("BINANCE_TP1_SIZE_PCT", 0.50)
     tp2 = _env_float("BINANCE_TP2_SIZE_PCT", 0.30)
-    tp3 = _env_float("BINANCE_TP3_SIZE_PCT", 0.30)
+    tp3 = _env_float("BINANCE_TP3_SIZE_PCT", 0.20)
     raw_sum = float(tp1) + float(tp2) + float(tp3)
     if raw_sum <= 0:
         raise ValueError(
