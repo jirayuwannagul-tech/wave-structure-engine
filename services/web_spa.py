@@ -303,6 +303,7 @@ const {useState,useEffect,useRef,useCallback}=React;
 
 const fmt=(n,d=2)=>n==null||isNaN(+n)?"–":Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtP=n=>{if(n==null||isNaN(+n))return"–";const v=Math.abs(+n);const d=v>=1000?0:v>=100?1:v>=10?2:v>=1?3:v>=0.1?4:5;return Number(n).toFixed(d);};
+const pctFrom=(price,entry)=>{if(!price||!entry||isNaN(+price)||isNaN(+entry))return null;return((Math.abs(+price-+entry)/+entry)*100).toFixed(2);};
 const REASON={TP3_HIT:"TP3 HIT",TP2_THEN_SL:"TP2 → SL",TP1_THEN_SL:"TP1 → SL",SL_HIT:"SL HIT"};
 
 function Spin(){return<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{animation:"spin 1s linear infinite",flexShrink:0}}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/></svg>;}
@@ -510,20 +511,30 @@ function DashboardPage(){
         {loading?<p style={{color:"var(--muted)",fontSize:13,padding:"20px 0",textAlign:"center"}}>Loading…</p>:
          active.length===0?<p style={{color:"var(--muted)",fontSize:13,padding:"20px 0",textAlign:"center"}}>No open positions</p>:(
           <div className="tw"><table className="tbl">
-            <thead><tr><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Status</th></tr></thead>
-            <tbody>{active.map((t,i)=>(
+            <thead><tr><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>ราคาตอนนี้</th><th>P&L</th><th>Status</th></tr></thead>
+            <tbody>{active.map((t,i)=>{
+              const e=+t.entry;
+              const slPct=pctFrom(t.sl,e);
+              const tp1Pct=pctFrom(t.tp1,e);
+              const tp2Pct=pctFrom(t.tp2,e);
+              const tp3Pct=pctFrom(t.tp3,e);
+              const pnl=t.pnl_pct;
+              const rr=t.current_r;
+              return(
               <tr key={i} className="rin" style={{animationDelay:`${i*.07}s`}}>
                 <td><span style={{fontWeight:700}}>{t.symbol.replace("USDT","")}</span><span className="dim">/USDT</span></td>
                 <td className="mono dim" style={{fontSize:11}}>{t.timeframe}</td>
                 <td><span className={`badge b-${t.side==="LONG"?"long":"short"}`}>{t.side==="LONG"?"▲":"▼"} {t.side}</span></td>
                 <td className="mono">{fmtP(t.entry)}</td>
-                <td className="mono neg">{fmtP(t.sl)}</td>
-                <td className="mono" style={{color:t.tp1_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp1)}{t.tp1_hit?" ✓":""}</td>
-                <td className="mono" style={{color:t.tp2_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp2)}{t.tp2_hit?" ✓":""}</td>
-                <td className="mono dim">{fmtP(t.tp3)}</td>
+                <td><div className="mono neg">{fmtP(t.sl)}</div>{slPct&&<div style={{fontSize:10,color:"var(--red)",opacity:.75}}>-{slPct}%</div>}</td>
+                <td><div className="mono" style={{color:t.tp1_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp1)}{t.tp1_hit?" ✓":""}</div>{tp1Pct&&<div style={{fontSize:10,color:"var(--green)",opacity:.75}}>+{tp1Pct}%</div>}</td>
+                <td><div className="mono" style={{color:t.tp2_hit?"var(--green)":"var(--muted)"}}>{fmtP(t.tp2)}{t.tp2_hit?" ✓":""}</div>{tp2Pct&&<div style={{fontSize:10,color:"var(--green)",opacity:.75}}>+{tp2Pct}%</div>}</td>
+                <td><div className="mono dim">{fmtP(t.tp3)}</div>{tp3Pct&&<div style={{fontSize:10,color:"var(--green)",opacity:.5}}>+{tp3Pct}%</div>}</td>
+                <td className="mono">{t.current_price!=null?fmtP(t.current_price):<span className="dim">–</span>}</td>
+                <td>{pnl!=null?<span style={{fontWeight:700,color:pnl>=0?"var(--green)":"var(--red)"}}>{pnl>=0?"+":""}{pnl.toFixed(2)}%{rr!=null?<span style={{fontSize:10,fontWeight:400,display:"block",opacity:.8}}>{rr>=0?"+":""}{rr.toFixed(2)}R</span>:null}</span>:<span className="dim">–</span>}</td>
                 <td><span className="badge b-st">{t.status}</span></td>
               </tr>
-            ))}</tbody>
+            );})}</tbody>
           </table></div>
         )}
       </div>
