@@ -2164,6 +2164,33 @@ def run_web_dashboard(
             if path == "/edge":
                 self._send_html(edge_html)
                 return
+            if path == "/api/symbol-memory":
+                from services.symbol_analyst import load_all_memories
+                memories = load_all_memories()
+                summary = {}
+                for sym, mem in memories.items():
+                    ai = mem.get("ai_memory", {})
+                    summary[sym] = {
+                        "total_trades": mem.get("total_trades", 0),
+                        "last_analyzed": ai.get("last_analyzed", "")[:10],
+                        "stats": mem.get("stats", {}),
+                        "insights": ai.get("cumulative_insights", ""),
+                        "change_log": ai.get("change_log", [])[-3:],
+                    }
+                self._send_json(200, {"ok": True, "symbols": summary})
+                return
+            if path.startswith("/api/symbol-memory/"):
+                sym = path[len("/api/symbol-memory/"):]
+                from pathlib import Path as _P
+                mem_path = _P("storage/symbol_memory") / f"{sym}.json"
+                if not mem_path.exists():
+                    self._send_json(404, {"ok": False, "error": f"{sym} not found"})
+                    return
+                try:
+                    self._send_json(200, {"ok": True, **json.loads(mem_path.read_text())})
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
             if path == "/api/edge/stats":
                 import json as _json
                 from pathlib import Path as _Path

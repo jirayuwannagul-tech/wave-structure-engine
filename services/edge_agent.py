@@ -18,6 +18,7 @@ from pathlib import Path
 
 from services.edge_collector import collect
 from services.gemini_analyst import analyze
+from services.symbol_analyst import analyze_all_symbols
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [edge-agent] %(message)s")
 log = logging.getLogger(__name__)
@@ -88,6 +89,15 @@ def _run_once(state: dict) -> dict:
             log.debug("Gemini skipped (no API key)")
     except Exception as e:
         log.error("gemini_analyst failed: %s", e)
+
+    try:
+        updated = analyze_all_symbols()
+        if updated:
+            log.info("Symbol memory updated: %s", ", ".join(updated.keys()))
+        else:
+            log.debug("Symbol memory: no updates (no API key or no new data)")
+    except Exception as e:
+        log.error("symbol_analyst failed: %s", e)
 
     from datetime import UTC, datetime
     state["last_run"] = datetime.now(UTC).isoformat()
