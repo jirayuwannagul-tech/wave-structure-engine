@@ -1304,6 +1304,104 @@ async function saveApi(id) {{
 """
 
 
+def build_edge_html() -> str:
+    return """<!DOCTYPE html>
+<html lang="th"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Edge Analytics</title>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e8eaf0;--sub:#8b8fa8;--accent:#6c63ff;--green:#4caf89;--red:#e05c5c;--yellow:#f0a500}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;padding:20px}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:var(--sub);font-size:12px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.card .label{font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.card .value{font-size:22px;font-weight:700}
+.green{color:var(--green)}.red{color:var(--red)}.yellow{color:var(--yellow)}
+table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th{text-align:left;font-size:11px;color:var(--sub);text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border)}
+td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px}
+tr:last-child td{border-bottom:none}
+.section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;overflow-x:auto}
+.section h2{font-size:13px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.bar{height:4px;border-radius:2px;background:var(--border);margin-top:4px}
+.bar-fill{height:100%;border-radius:2px;background:var(--accent)}
+.query-box{display:flex;gap:10px;margin-bottom:16px}
+.query-box input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+.query-box input:focus{border-color:var(--accent)}
+.query-box button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;white-space:nowrap}
+.query-box button:disabled{opacity:.5;cursor:default}
+#answer{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;white-space:pre-wrap;line-height:1.6;font-size:13px;min-height:60px;display:none}
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-g{background:rgba(76,175,137,.15);color:var(--green)}
+.badge-r{background:rgba(224,92,92,.15);color:var(--red)}
+.updated{font-size:11px;color:var(--sub);margin-bottom:16px}
+</style>
+</head><body>
+<h1>Edge Analytics</h1>
+<div class="sub">Elliott Wave Engine — Live Trade Performance</div>
+<div class="grid" id="overview"></div>
+<div class="updated" id="updated"></div>
+<div class="section"><h2>By Pattern</h2><table id="t-pattern"><thead><tr><th>Pattern</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
+<div class="section"><h2>By Symbol</h2><table id="t-symbol"><thead><tr><th>Symbol</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
+<div class="section"><h2>By Timeframe & Side</h2><table id="t-tf"><thead><tr><th>Group</th><th>N</th><th>WR</th><th>Avg RR</th></tr></thead><tbody></tbody></table></div>
+<div class="section"><h2>Ask Gemini</h2>
+<div class="query-box"><input id="q" type="text" placeholder="ถามอะไรก็ได้ เช่น LONG trades ยังขาดทุนอยู่ไหม?"><button id="btn" onclick="ask()">ถาม</button></div>
+<div id="answer"></div>
+</div>
+<script>
+function wr_class(wr){return wr>=0.55?'green':wr>=0.45?'yellow':'red'}
+function rr_class(rr){return rr>0?'green':rr>-0.1?'yellow':'red'}
+function fmt_wr(wr){return (wr*100).toFixed(1)+'%'}
+function fmt_rr(rr){return (rr>=0?'+':'')+rr.toFixed(3)+'R'}
+function row(name,v){
+  var wr=v.wr,rr=v.avg_rr,n=v.n;
+  return '<tr><td>'+name+'</td><td>'+n+'</td>'
+    +'<td><span class="badge '+(wr>=0.5?'badge-g':'badge-r')+'">'+fmt_wr(wr)+'</span></td>'
+    +'<td class="'+rr_class(rr)+'">'+fmt_rr(rr)+'</td></tr>';
+}
+function load(){
+  fetch('/api/edge/stats').then(r=>r.json()).then(d=>{
+    if(!d.ok)return;
+    var s=d.stats,o=s.overall;
+    document.getElementById('updated').textContent='อัปเดต: '+d.last_updated.slice(0,16).replace('T',' ')+' UTC  |  '+d.total+' trades';
+    document.getElementById('overview').innerHTML=
+      '<div class="card"><div class="label">Win Rate</div><div class="value '+wr_class(o.wr)+'">'+fmt_wr(o.wr)+'</div></div>'
+      +'<div class="card"><div class="label">Avg RR</div><div class="value '+rr_class(o.avg_rr)+'">'+fmt_rr(o.avg_rr)+'</div></div>'
+      +'<div class="card"><div class="label">Wins</div><div class="value green">'+o.wins+'</div></div>'
+      +'<div class="card"><div class="label">Losses</div><div class="value red">'+o.losses+'</div></div>'
+      +'<div class="card"><div class="label">Current Streak</div><div class="value '+(d.streak_type==='W'?'green':'red')+'">'+d.streak_type+'×'+d.streak_count+'</div></div>';
+    var pt=document.querySelector('#t-pattern tbody');
+    pt.innerHTML=Object.entries(s.by_pattern_type).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>row(k,v)).join('');
+    var st=document.querySelector('#t-symbol tbody');
+    st.innerHTML=Object.entries(s.by_symbol).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>row(k,v)).join('');
+    var tf=document.querySelector('#t-tf tbody');
+    var tfrows=Object.entries(s.by_timeframe).map(([k,v])=>row('TF: '+k,v));
+    tfrows=tfrows.concat(Object.entries(s.by_side).map(([k,v])=>row('Side: '+k,v)));
+    tf.innerHTML=tfrows.join('');
+  }).catch(()=>{});
+}
+function ask(){
+  var q=document.getElementById('q').value.trim();
+  if(!q)return;
+  var btn=document.getElementById('btn'),ans=document.getElementById('answer');
+  btn.disabled=true;btn.textContent='กำลังถาม...';
+  ans.style.display='block';ans.textContent='⏳ รอ Gemini...';
+  fetch('/api/edge/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})})
+    .then(r=>r.json()).then(d=>{
+      ans.textContent=d.answer||d.error||'ไม่มีคำตอบ';
+    }).catch(e=>{ans.textContent='Error: '+e;})
+    .finally(()=>{btn.disabled=false;btn.textContent='ถาม';});
+}
+document.getElementById('q').addEventListener('keydown',function(e){if(e.key==='Enter')ask();});
+load();setInterval(load,30000);
+</script>
+</body></html>"""
+
+
 def build_fund_html() -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -1740,6 +1838,7 @@ def run_web_dashboard(
 
     spa_html = build_spa_html()
     fund_html = build_fund_html()
+    edge_html = build_edge_html()
     db_path = os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
     account_store = AccountStore(db_path=db_path)
     account_store.seed_admin("jirayuwammagul@gmail.com")
@@ -1906,6 +2005,30 @@ def run_web_dashboard(
                 except Exception as e:
                     self._send_json(200, {"ok": False, "error": str(e)})
                 return
+            if path == "/edge":
+                self._send_html(edge_html)
+                return
+            if path == "/api/edge/stats":
+                import json as _json
+                from pathlib import Path as _Path
+                store_path = _Path("storage/edge_store.json")
+                if not store_path.exists():
+                    self._send_json(503, {"ok": False, "error": "edge_store.json not found"})
+                    return
+                try:
+                    store = _json.loads(store_path.read_text())
+                    streaks = store.get("stats", {}).get("streaks", {})
+                    self._send_json(200, {
+                        "ok": True,
+                        "last_updated": store.get("last_updated", ""),
+                        "total": store.get("total_closed", 0),
+                        "streak_type": streaks.get("current_type", ""),
+                        "streak_count": streaks.get("current_count", 0),
+                        "stats": store.get("stats", {}),
+                    })
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
             if path == "/healthz":
                 self._send_json(200, {"ok": True})
                 return
@@ -1919,6 +2042,38 @@ def run_web_dashboard(
 
         def do_POST(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path == "/api/edge/query":
+                body = self._read_json()
+                if body is None:
+                    return
+                question = (body.get("question") or "").strip()
+                if not question:
+                    self._send_json(400, {"ok": False, "error": "question is required"})
+                    return
+                import json as _json
+                from pathlib import Path as _Path
+                from services.gemini_analyst import _call_gemini, _SYSTEM_PROMPT
+                api_key = os.getenv("GEMINI_API_KEY", "").strip()
+                if not api_key:
+                    self._send_json(200, {"ok": True, "answer": "[GEMINI_API_KEY not set]"})
+                    return
+                try:
+                    store_path = _Path("storage/edge_store.json")
+                    insights_path = _Path("storage/gemini_insights.json")
+                    store = _json.loads(store_path.read_text()) if store_path.exists() else {}
+                    insights = _json.loads(insights_path.read_text()) if insights_path.exists() else {}
+                    stats = store.get("stats", {})
+                    compact = {k: v for k, v in stats.items() if k != "by_hour_utc"}
+                    ctx = (_SYSTEM_PROMPT + "\n\nTotal trades: " + str(store.get("total_closed", 0))
+                           + "\n\nStatistics:\n" + _json.dumps(compact, indent=2))
+                    if insights.get("analysis"):
+                        ctx += "\n\nPrevious analysis:\n" + insights["analysis"]
+                    ctx += "\n\nQuestion: " + question
+                    answer = _call_gemini(api_key, ctx)
+                    self._send_json(200, {"ok": True, "answer": answer})
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
             if path == "/webhook/line":
                 self._handle_line_webhook()
                 return
