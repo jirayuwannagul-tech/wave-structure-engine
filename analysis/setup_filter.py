@@ -429,11 +429,18 @@ def _passes_quality_gate(
     scenario_sl = getattr(scenario, "stop_loss", None)
     scenario_confirm = getattr(scenario, "confirmation", None)
     if scenario_targets and scenario_sl is not None and scenario_confirm is not None:
+        entry = float(scenario_confirm)
+        risk = abs(entry - float(scenario_sl))
         tp1 = float(scenario_targets[0])
-        reward = abs(float(scenario_confirm) - tp1)
-        risk = abs(float(scenario_confirm) - float(scenario_sl))
-        if risk > 0 and reward / risk < min_rr:
-            return False, f"RR too low: {reward/risk:.2f} (need >= {min_rr})"
+        reward_tp1 = abs(entry - tp1)
+        if risk > 0 and reward_tp1 / risk < min_rr:
+            return False, f"RR too low: {reward_tp1/risk:.2f} (need >= {min_rr})"
+        if len(scenario_targets) >= 3 and risk > 0:
+            tp3 = float(scenario_targets[-1])
+            rr_tp3 = abs(entry - tp3) / risk
+            min_rr_tp3 = sym_rules.get("min_rr_tp3", 1.5)
+            if rr_tp3 < min_rr_tp3:
+                return False, f"TP3 RR too low: {rr_tp3:.2f} (need >= {min_rr_tp3})"
 
     if htf_wave_number:
         if htf_wave_number in ("3",):
