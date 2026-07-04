@@ -35,7 +35,11 @@ def _call_gemini(api_key: str, prompt: str) -> str:
     url = f"{_API_BASE}/{_MODEL}:generateContent?key={api_key}"
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 8192,
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     try:
@@ -57,11 +61,13 @@ def analyze(edge_store: dict, insights_path: Path | None = None) -> dict | None:
     out = insights_path or _INSIGHTS_PATH
 
     stats = edge_store.get("stats", {})
+    # Exclude by_hour_utc (verbose, 24 entries) to save tokens
+    compact_stats = {k: v for k, v in stats.items() if k != "by_hour_utc"}
     prompt = (
         f"{_SYSTEM_PROMPT}\n\n"
         f"Total closed trades: {edge_store.get('total_closed', 0)}\n"
         f"Last updated: {edge_store.get('last_updated', '')}\n\n"
-        f"Statistics:\n{json.dumps(stats, indent=2, ensure_ascii=False)}"
+        f"Statistics:\n{json.dumps(compact_stats, indent=2, ensure_ascii=False)}"
     )
 
     text = _call_gemini(api_key, prompt)
