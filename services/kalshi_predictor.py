@@ -1,19 +1,22 @@
-"""Kalshi 15m BTC paper trading engine using 15m technical bias + 4H EW context."""
+"""Kalshi 15m BTC paper trading engine using Elliott Wave analysis on 15m data."""
 from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pandas as pd
-
 _DB_PATH = Path(__file__).parent.parent / "storage" / "wave_engine.db"
 _KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
-_BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 _BINANCE_PRICE = "https://api.binance.com/api/v3/ticker/price"
+
+# Make sure project root is on sys.path so core/ is importable
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 
 # ── Kalshi helpers ──────────────────────────────────────────────────────────
@@ -30,75 +33,43 @@ def _btc_price() -> float:
         return float(json.loads(r.read())["price"])
 
 
-# ── 15m technical bias ──────────────────────────────────────────────────────
+# ── 15m Elliott Wave analysis ───────────────────────────────────────────────
 
-def _fetch_15m_candles(limit: int = 100) -> pd.DataFrame:
-    url = f"{_BINANCE_KLINES}?symbol=BTCUSDT&interval=15m&limit={limit}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as r:
-        raw = json.loads(r.read())
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_vol", "trades", "tb_base", "tb_quote", "ignore",
-    ])
-    for col in ("open", "high", "low", "close", "volume"):
-        df[col] = df[col].astype(float)
-    return df.iloc[:-1].reset_index(drop=True)  # drop unclosed candle
-
-
-def compute_15m_bias(df: pd.DataFrame) -> tuple[str, dict]:
-    """Return (bias, signals) from EMA/RSI/MACD on 15m data.
+def run_ew_15m_analysis() -> tuple[str, dict]:
+    """Run full EW analysis on 15m BTC data. Return (bias, signals).
 
     bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+    signals = dict with EW details for logging
     """
-    close = df["close"]
+    from core.engine import build_timeframe_analysis
 
-    # EMA 9 / 21
-    ema9 = close.ewm(span=9, adjust=False).mean()
-    ema21 = close.ewm(span=21, adjust=False).mean()
+    analysis = build_timeframe_analysis("BTCUSDT", "15m", limit=200)
 
-    # RSI 14
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_g = gain.ewm(span=14, adjust=False).mean()
-    avg_l = loss.ewm(span=14, adjust=False).mean()
-    rsi = 100 - 100 / (1 + avg_g / avg_l.replace(0, 1e-10))
+    bias_raw = (analysis.get("bias") or "").upper()
+    side = (analysis.get("side") or "").upper()
+    pattern = analysis.get("pattern_type") or "unknown"
+    has_pattern = analysis.get("has_pattern", False)
 
-    # MACD histogram (12/26/9)
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    hist = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+    # Extract wave position details if available
+    scenario = analysis.get("scenario") or {}
+    summary = (scenario.get("analysis_summary") or {})
+    wave_pos = summary.get("current_leg") or analysis.get("wave_position") or "?"
 
-    ema_bull = float(ema9.iloc[-1]) > float(ema21.iloc[-1])
-    rsi_val = float(rsi.iloc[-1])
-    rsi_bull = rsi_val > 50
-    macd_rising = float(hist.iloc[-1]) > float(hist.iloc[-2]) if len(hist) >= 2 else None
-    # Price momentum: last 4 candles vs 4 candles before that
-    mom_up = float(close.iloc[-1]) > float(close.iloc[-4]) if len(close) >= 4 else None
-
-    # Each indicator casts a vote: +1 bullish / -1 bearish
-    score = (1 if ema_bull else -1) + (1 if rsi_bull else -1)
-    if macd_rising is not None:
-        score += 1 if macd_rising else -1
-    if mom_up is not None:
-        score += 1 if mom_up else -1
-
-    if score >= 2:
+    # Determine bias
+    if "BULL" in bias_raw or side == "LONG":
         bias = "BULLISH"
-    elif score <= -2:
+    elif "BEAR" in bias_raw or side == "SHORT":
         bias = "BEARISH"
     else:
         bias = "NEUTRAL"
 
     signals = {
-        "ema9": round(float(ema9.iloc[-1]), 2),
-        "ema21": round(float(ema21.iloc[-1]), 2),
-        "ema_bull": ema_bull,
-        "rsi": round(rsi_val, 1),
-        "macd_rising": macd_rising,
-        "mom_up": mom_up,
-        "score": score,
+        "bias_raw": bias_raw,
+        "side": side,
+        "pattern": pattern,
+        "has_pattern": has_pattern,
+        "wave_position": wave_pos,
+        "source": "EW-15m",
     }
     return bias, signals
 
@@ -213,12 +184,11 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
     if target is None:
         target = round(btc, 2)
 
-    # 15m technical bias
+    # 15m Elliott Wave analysis
     try:
-        df = _fetch_15m_candles(limit=100)
-        bias_15m, signals = compute_15m_bias(df)
+        bias_15m, signals = run_ew_15m_analysis()
     except Exception as e:
-        print(f"[kalshi] 15m analysis failed: {e}")
+        print(f"[kalshi] 15m EW analysis failed: {e}")
         return None
 
     # 4H EW bias for reference
