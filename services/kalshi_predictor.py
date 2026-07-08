@@ -205,27 +205,58 @@ def _get_market_target(event_ticker: str) -> float | None:
 
 # ── Public: make / resolve / get ────────────────────────────────────────────
 
+def _slot_ticker(now: datetime) -> tuple[str, datetime]:
+    """Generate a synthetic ticker + expiry for the current 15-min slot.
+
+    Slots: :00-:14, :15-:29, :30-:44, :45-:59 UTC.
+    Predict at :01/:16/:31/:46 → expires at :15/:30/:45/:00 next hour.
+    """
+    m = now.minute
+    slot_start = (m // 15) * 15          # 0, 15, 30, 45
+    slot_end = slot_start + 15            # 15, 30, 45, 60
+    if slot_end >= 60:
+        exp = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    else:
+        exp = now.replace(minute=slot_end, second=0, microsecond=0)
+    tag = now.strftime(f"%y%b%d{slot_start:02d}%M").upper()[:12]
+    ticker = f"BTCPRED-{tag}"
+    return ticker, exp
+
+
 def make_prediction(db_path: Path | None = None) -> dict | None:
-    """Analyse 15m bias and record a prediction for the current Kalshi event."""
+    """Analyse 15m EW bias and record a prediction. Works without Kalshi."""
     db = db_path or _DB_PATH
     _ensure_table(db)
 
+    now = datetime.now(UTC)
+
+    # Try to get a live Kalshi event for the official target price
     ev = _fetch_active_event()
-    if not ev:
-        return None
+    if ev:
+        ticker = ev["event_ticker"]
+        exp_str = ev.get("expiration_time") or ev.get("close_time") or ""
+        exp = None
+        if exp_str:
+            try:
+                exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if exp is None:
+            exp = _parse_ticker_expiry(ticker)
+        target = _get_market_target(ticker)
+    else:
+        # No Kalshi event — use synthetic slot ticker
+        ticker, exp = _slot_ticker(now)
+        exp_str = exp.isoformat()
+        target = None
 
-    ticker = ev["event_ticker"]
-    exp_str = ev.get("expiration_time") or ev.get("close_time") or ""
-
-    # Already recorded for this event?
+    # Already recorded this slot?
     conn = sqlite3.connect(str(db))
     exists = conn.execute("SELECT id FROM kalshi_predictions WHERE event_ticker=?", (ticker,)).fetchone()
     conn.close()
     if exists:
         return None
 
-    # Target price
-    target = _get_market_target(ticker)
     btc = _btc_price()
     if target is None:
         target = round(btc, 2)
@@ -237,15 +268,15 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
         print(f"[kalshi] 15m EW analysis failed: {e}")
         return None
 
-    # 4H EW bias for reference
     bias_4h = _get_4h_bias(db)
 
     if bias_15m == "NEUTRAL":
-        print(f"[kalshi] NEUTRAL 15m bias — skip {ticker}")
+        print(f"[kalshi] NEUTRAL — skip {ticker}")
         return None
 
     prediction = "UP" if bias_15m == "BULLISH" else "DOWN"
-    now_str = datetime.now(UTC).isoformat()
+    now_str = now.isoformat()
+    exp_str_save = exp.isoformat() if exp else exp_str
 
     conn = sqlite3.connect(str(db))
     conn.execute("""
@@ -253,11 +284,13 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
             (event_ticker, target_price, ew_bias_15m, ew_bias_4h, signals_json,
              prediction, start_price, created_at, expires_at)
         VALUES (?,?,?,?,?,?,?,?,?)
-    """, (ticker, target, bias_15m, bias_4h, json.dumps(signals), prediction, btc, now_str, exp_str))
+    """, (ticker, target, bias_15m, bias_4h, json.dumps(signals),
+          prediction, btc, now_str, exp_str_save))
     conn.commit()
     conn.close()
 
-    print(f"[kalshi] Predicted {prediction} | {ticker} | 15m={bias_15m} 4H={bias_4h} | target=${target:,.0f}")
+    src = "Kalshi" if ev else "synthetic"
+    print(f"[kalshi] Predicted {prediction} | {ticker} [{src}] | 15m={bias_15m} 4H={bias_4h} | target=${target:,.0f}")
     return {"ticker": ticker, "prediction": prediction, "bias_15m": bias_15m, "bias_4h": bias_4h, "target": target}
 
 
