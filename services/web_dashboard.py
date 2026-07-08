@@ -841,11 +841,17 @@ function renderSidebarReport(preds, stats) {{
 // ── Timezone: all display in Los Angeles (America/Los_Angeles) ──
 const _TZ = 'America/Los_Angeles';
 
+function _parseUTC(s) {{
+  // Force UTC parsing — append Z if no timezone info present
+  let t = (s||'').replace(' ','T');
+  if (!/[Z+]/.test(t.slice(-6))) t += 'Z';
+  return new Date(t);
+}}
+
 function toLA(utcStr) {{
   if (!utcStr) return '—';
   try {{
-    const d = new Date(utcStr.includes('T') ? utcStr : utcStr.replace(' ','T') + 'Z');
-    return d.toLocaleString('en-US', {{
+    return _parseUTC(utcStr).toLocaleString('en-US', {{
       timeZone: _TZ,
       month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit',
@@ -857,8 +863,8 @@ function toLA(utcStr) {{
 function toLA_time(utcStr) {{
   if (!utcStr) return '—';
   try {{
-    const d = new Date(utcStr.includes('T') ? utcStr : utcStr.replace(' ','T') + 'Z');
-    return d.toLocaleTimeString('en-US', {{timeZone: _TZ, hour:'2-digit', minute:'2-digit', hour12:false}});
+    return _parseUTC(utcStr).toLocaleTimeString('en-US',
+      {{timeZone: _TZ, hour:'2-digit', minute:'2-digit', hour12:false}});
   }} catch(e) {{ return utcStr.substring(11,16); }}
 }}
 
