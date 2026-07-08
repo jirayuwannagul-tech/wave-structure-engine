@@ -821,7 +821,7 @@ function renderSidebarReport(preds, stats) {{
     const dirTxt = isUp ? '↑ UP' : '↓ DOWN';
     const bias = p.ew_bias_15m || '—';
     // Time: show HH:MM only
-    const timeStr = (p.created_at||'').substring(11,16) || '—';
+    const timeStr = toLA_time(p.created_at);
     let resCls, resTxt;
     if (p.win === 1)      {{ resCls='win';  resTxt='✓'; }}
     else if (p.win === 0) {{ resCls='loss'; resTxt='✗'; }}
@@ -836,6 +836,34 @@ function renderSidebarReport(preds, stats) {{
       <div class="sb-pred-result ${{resCls}}">${{resTxt}}</div>
     </div>`;
   }}).join('');
+}}
+
+// ── Timezone: all display in Los Angeles (America/Los_Angeles) ──
+const _TZ = 'America/Los_Angeles';
+
+function toLA(utcStr) {{
+  if (!utcStr) return '—';
+  try {{
+    const d = new Date(utcStr.includes('T') ? utcStr : utcStr.replace(' ','T') + 'Z');
+    return d.toLocaleString('en-US', {{
+      timeZone: _TZ,
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+      hour12: false,
+    }}).replace(',','');
+  }} catch(e) {{ return utcStr.substring(0,16); }}
+}}
+
+function toLA_time(utcStr) {{
+  if (!utcStr) return '—';
+  try {{
+    const d = new Date(utcStr.includes('T') ? utcStr : utcStr.replace(' ','T') + 'Z');
+    return d.toLocaleTimeString('en-US', {{timeZone: _TZ, hour:'2-digit', minute:'2-digit', hour12:false}});
+  }} catch(e) {{ return utcStr.substring(11,16); }}
+}}
+
+function nowLA() {{
+  return new Date().toLocaleTimeString('en-US', {{timeZone: _TZ, hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}});
 }}
 
 // ── Current window countdown (client-side, no API needed) ──
@@ -932,7 +960,7 @@ async function fetchPredictions() {{
       if (p.win === 1)      {{ result = '✓ ถูก'; resCls = 'ph-win'; }}
       else if (p.win === 0) {{ result = '✗ ผิด'; resCls = 'ph-loss'; }}
       else                  {{ result = '⋯ รอ';  resCls = 'ph-pend'; }}
-      const timeStr = (p.created_at||'').replace('T',' ').substring(0,16);
+      const timeStr = toLA(p.created_at);
       const bias4h = (_cwPred => (_cwPred||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,8))(p.ew_bias_4h);
       return `<tr>
         <td style="color:#9ca3af;white-space:nowrap">${{timeStr}}</td>
@@ -953,7 +981,7 @@ async function refresh() {{
   await fetchPrices();
   await Promise.all([fetchWave(), fetchKalshi15m()]);
   renderVerdict();
-  document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + new Date().toLocaleTimeString('th-TH');
+  document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + nowLA() + ' (LA)';
 }}
 
 fetchChart('15m');   // also starts WebSocket
