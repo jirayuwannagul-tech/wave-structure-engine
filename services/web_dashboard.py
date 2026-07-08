@@ -2672,7 +2672,7 @@ def run_web_dashboard(
         from services.kalshi_predictor import run_loop as _kp_run_loop
         from pathlib import Path as _KPath
         _kp_db = _KPath("storage/wave_engine.db")
-        _kp_thread = threading.Thread(target=_kp_run_loop, args=(_kp_db, 300), daemon=True)
+        _kp_thread = threading.Thread(target=_kp_run_loop, args=(_kp_db,), daemon=True)
         _kp_thread.start()
     except Exception as _kp_err:
         print(f"[web] kalshi predictor thread failed to start: {_kp_err}")

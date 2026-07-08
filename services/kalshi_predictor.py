@@ -339,14 +339,39 @@ def get_predictions(db_path: Path | None = None, limit: int = 50) -> dict:
 
 # ── Loop ────────────────────────────────────────────────────────────────────
 
-def run_loop(db_path: Path | None = None, interval: int = 300) -> None:
-    """Blocking prediction loop. Call from a daemon thread."""
+_PRED_MINUTES = (1, 16, 31, 46)  # UTC minutes to predict each hour
+
+
+def _secs_to_next_slot() -> int:
+    """Seconds until the next :01/:16/:31/:46 UTC mark."""
+    now = datetime.now(UTC)
+    m, s = now.minute, now.second
+    for target in _PRED_MINUTES:
+        if m < target or (m == target and s < 10):
+            return max((target - m) * 60 - s, 1)
+    # wrap to next hour
+    return max((60 - m + _PRED_MINUTES[0]) * 60 - s, 1)
+
+
+def run_loop(db_path: Path | None = None) -> None:
+    """Blocking prediction loop aligned to :01/:16/:31/:46 UTC."""
     db = db_path or _DB_PATH
-    print(f"[kalshi] Predictor started (interval={interval}s)")
+    slots = "/".join(f":{m:02d}" for m in _PRED_MINUTES)
+    print(f"[kalshi] Predictor started — slots at {slots} UTC")
+
+    # Kick off immediately on startup (resolve any stale + predict if possible)
+    try:
+        resolve_predictions(db)
+        make_prediction(db)
+    except Exception as e:
+        print(f"[kalshi] startup error: {e}")
+
     while True:
+        wait = _secs_to_next_slot()
+        print(f"[kalshi] next slot in {wait}s ({wait//60}m{wait%60:02d}s)")
+        time.sleep(wait)
         try:
             resolve_predictions(db)
             make_prediction(db)
         except Exception as e:
             print(f"[kalshi] loop error: {e}")
-        time.sleep(interval)
