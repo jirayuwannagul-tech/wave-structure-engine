@@ -271,9 +271,25 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
 
     bias_4h = _get_4h_bias(db)
 
+    # Always predict — resolve NEUTRAL via EW cascade
     if bias_15m == "NEUTRAL":
-        print(f"[kalshi] NEUTRAL — skip {ticker}")
-        return None
+        if bias_4h in ("BULLISH", "BEARISH"):
+            # Use higher-timeframe EW structure
+            bias_15m = bias_4h
+            signals["neutral_resolved_by"] = "4H_ew_bias"
+        else:
+            # Use price vs EW pivot range midpoint
+            last_h = signals.get("last_high")
+            last_l = signals.get("last_low")
+            if last_h and last_l:
+                mid = (last_h + last_l) / 2
+                bias_15m = "BULLISH" if btc > mid else "BEARISH"
+                signals["neutral_resolved_by"] = f"price_vs_pivot_mid({mid:,.0f})"
+            else:
+                # Fallback: use last swing state direction
+                swing = signals.get("swing_structure", "")
+                bias_15m = "BULLISH" if "HH" in str(swing) or "HL" in str(swing) else "BEARISH"
+                signals["neutral_resolved_by"] = f"swing_structure({swing})"
 
     prediction = "UP" if bias_15m == "BULLISH" else "DOWN"
     now_str = now.isoformat()
