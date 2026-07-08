@@ -132,8 +132,27 @@ def _ensure_table(db_path: Path) -> None:
 
 # ── Kalshi event lookup ─────────────────────────────────────────────────────
 
+_MONTH_MAP = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+              "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
+
+
+def _parse_ticker_expiry(ticker: str) -> datetime | None:
+    """Parse expiry from ticker like KXBTC15M-26JUL080700 → 2026-07-08 07:00 UTC."""
+    try:
+        # suffix after last '-'
+        suffix = ticker.rsplit("-", 1)[-1]   # e.g. 26JUL080700
+        year = 2000 + int(suffix[:2])
+        month = _MONTH_MAP[suffix[2:5].upper()]
+        day = int(suffix[5:7])
+        hour = int(suffix[7:9])
+        minute = int(suffix[9:11])
+        return datetime(year, month, day, hour, minute, tzinfo=UTC)
+    except Exception:
+        return None
+
+
 def _fetch_active_event() -> dict | None:
-    """Return the KXBTC15M event that is currently open (soonest expiry)."""
+    """Return the soonest open KXBTC15M event (handles None expiration_time)."""
     try:
         data = _kalshi_fetch(f"{_KALSHI_BASE}/events?series_ticker=KXBTC15M&limit=20&status=open")
     except Exception as e:
@@ -143,13 +162,24 @@ def _fetch_active_event() -> dict | None:
     now = datetime.now(UTC)
     future = []
     for e in data.get("events", []):
+        # Try API expiration_time first, then parse from ticker
         exp_str = e.get("expiration_time") or e.get("close_time") or ""
-        if not exp_str:
+        if exp_str:
+            try:
+                exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            except ValueError:
+                exp = None
+        else:
+            exp = None
+
+        if exp is None:
+            exp = _parse_ticker_expiry(e.get("event_ticker", ""))
+
+        if exp is None:
+            # Can't determine expiry — include it if status=open
+            future.append((now + timedelta(minutes=15), e))
             continue
-        try:
-            exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
-        except ValueError:
-            continue
+
         if exp > now:
             future.append((exp, e))
 
@@ -249,8 +279,12 @@ def resolve_predictions(db_path: Path | None = None) -> int:
 
     for id_, ticker, target, pred, exp_str in pending:
         try:
-            exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00")) if exp_str else None
         except ValueError:
+            exp = None
+        if exp is None:
+            exp = _parse_ticker_expiry(ticker)
+        if exp is None:
             continue
 
         # Wait 30 s after expiry so the price is settled
