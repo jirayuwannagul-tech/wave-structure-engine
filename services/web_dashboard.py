@@ -457,7 +457,6 @@ canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f29
   <div class="ph-box">
     <div class="ph-title">
       🎯 Paper Trading · ผลการทาย Kalshi 15m
-      <span id="ph-loading" style="font-size:11px;color:#6b7280;font-weight:400"></span>
     </div>
     <div class="ph-stats" id="ph-stats">
       <div class="ph-stat"><div class="ph-stat-val" style="color:#f3f4f6" id="ph-total">—</div><div class="ph-stat-lbl">ทั้งหมด</div></div>
@@ -466,6 +465,16 @@ canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f29
       <div class="ph-stat"><div class="ph-stat-val" style="color:#60a5fa" id="ph-wr">—</div><div class="ph-stat-lbl">Win Rate</div></div>
       <div class="ph-stat"><div class="ph-stat-val ph-pend" id="ph-pend">—</div><div class="ph-stat-lbl">รอผล</div></div>
     </div>
+
+    <!-- Prediction history chart -->
+    <canvas id="pred-chart" height="80" style="width:100%;border-radius:8px;margin:12px 0 4px;display:block"></canvas>
+    <div style="font-size:10px;color:#4b5563;display:flex;gap:12px;margin-bottom:12px">
+      <span><span style="color:#10b981">■</span> ถูก (WIN)</span>
+      <span><span style="color:#ef4444">■</span> ผิด (LOSS)</span>
+      <span><span style="color:#f59e0b">■</span> รอผล</span>
+      <span style="margin-left:auto;color:#6b7280" id="pred-chart-note"></span>
+    </div>
+
     <div style="overflow-x:auto">
       <table class="ph-table">
         <thead><tr>
@@ -656,6 +665,74 @@ function drawChart() {{
   ctx.fillStyle='#10b981'; ctx.fill();
 }}
 
+function drawPredChart(preds) {{
+  const canvas = document.getElementById('pred-chart');
+  if (!canvas) return;
+  const W = canvas.offsetWidth || 600;
+  const H = 80;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // Show last 40 predictions, oldest left → newest right
+  const items = [...preds].reverse().slice(-40);
+  if (!items.length) return;
+
+  const n = items.length;
+  const barW = Math.max(Math.floor((W - 8) / n) - 2, 4);
+  const gap = Math.floor((W - 8) / n);
+  const midY = H / 2;
+
+  items.forEach((p, i) => {{
+    const x = 4 + i * gap;
+    const isUp = p.prediction === 'UP';
+
+    // Color by result
+    let color;
+    if (p.win === 1)      color = '#10b981'; // WIN green
+    else if (p.win === 0) color = '#ef4444'; // LOSS red
+    else                  color = '#f59e0b'; // PENDING yellow
+
+    // Draw bar: UP = above midline, DOWN = below
+    const barH = Math.max(barW * 0.8, 6);
+    if (isUp) {{
+      ctx.fillStyle = color;
+      ctx.fillRect(x, midY - barH - 2, barW, barH);
+    }} else {{
+      ctx.fillStyle = color;
+      ctx.fillRect(x, midY + 2, barW, barH);
+    }}
+  }});
+
+  // Midline
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, midY); ctx.lineTo(W, midY);
+  ctx.stroke();
+
+  // Running win-rate line (settled only)
+  const settled = items.filter(p => p.win !== null);
+  if (settled.length >= 2) {{
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(96,165,250,0.7)';
+    ctx.lineWidth = 1.5;
+    let drawn = false, runWins = 0, runTotal = 0;
+    items.forEach((p, i) => {{
+      if (p.win === null) return;
+      runWins += p.win; runTotal++;
+      const wr = runWins / runTotal;
+      const x = 4 + i * gap + barW / 2;
+      const y = H - 4 - wr * (H - 8);
+      drawn ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), drawn = true);
+    }});
+    ctx.stroke();
+  }}
+
+  document.getElementById('pred-chart-note').textContent =
+    `แสดง ${{n}} รอบล่าสุด  ↑ UP · ↓ DOWN  — เส้นน้ำเงิน = win rate`;
+}}
+
 function renderSidebarReport(preds, stats) {{
   // Win rate box
   const wr = stats.win_rate != null ? (stats.win_rate*100).toFixed(1)+'%' : '—';
@@ -769,8 +846,9 @@ async function fetchPredictions() {{
     _cwPred = pending.length ? pending[0] : null;
     updateCwBox();
 
-    // Render sidebar report
+    // Render sidebar report + chart
     renderSidebarReport(preds, s);
+    drawPredChart(preds);
 
     // Render history table
     if (!preds.length) {{
