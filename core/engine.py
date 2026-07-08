@@ -98,8 +98,8 @@ def build_dataframe_analysis(
         df["atr"] = calculate_atr(df, period=14)
 
     # Timeframe-aware pivot detection: faster confirmation for shorter timeframes
-    _PIVOT_RIGHT = {"1W": 2, "1D": 1, "4H": 1, "1H": 1}
-    _PIVOT_ATR_MULT = {"1W": 1.0, "1D": 0.5, "4H": 0.3, "1H": 0.2}
+    _PIVOT_RIGHT = {"1W": 2, "1D": 1, "4H": 1, "1H": 1, "15M": 1}
+    _PIVOT_ATR_MULT = {"1W": 1.0, "1D": 0.5, "4H": 0.3, "1H": 0.2, "15M": 0.1}
     tf_upper = timeframe.upper()
     right_bars = _PIVOT_RIGHT.get(tf_upper, 3)
     atr_mult = _PIVOT_ATR_MULT.get(tf_upper, 0.0)
@@ -376,7 +376,7 @@ def build_dataframe_analysis(
     return analysis
 
 
-_CANDLE_LIMITS: dict[str, int] = {"1W": 500, "1D": 300, "4H": 200, "1H": 200}
+_CANDLE_LIMITS: dict[str, int] = {"1W": 500, "1D": 300, "4H": 200, "1H": 200, "15M": 200}
 
 
 def build_timeframe_analysis(

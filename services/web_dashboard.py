@@ -214,13 +214,585 @@ def _fetch_current_prices(symbols: list[str]) -> dict[str, float]:
         return {}
     try:
         import urllib.request as _ur
-        syms_json = json.dumps(symbols)
+        syms_json = json.dumps(symbols, separators=(",", ":"))
         url = f"https://api.binance.com/api/v3/ticker/price?symbols={_ur.quote(syms_json)}"
         with _ur.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
         return {item["symbol"]: float(item["price"]) for item in data}
     except Exception:
         return {}
+
+
+def _build_ai_rules_html(memory_dir) -> str:
+    from pathlib import Path as _Path
+    mem_dir = _Path(memory_dir)
+    memories = {}
+    if mem_dir.exists():
+        for f in sorted(mem_dir.glob("*.json")):
+            try:
+                memories[f.stem] = json.loads(f.read_text())
+            except Exception:
+                pass
+
+    rows = ""
+    for sym, mem in sorted(memories.items()):
+        history = mem.get("suggestion_history", [])
+        latest = history[-1] if history else {}
+        stats = mem.get("stats", {})
+        n = stats.get("n", 0)
+        wr = int(stats.get("wr", 0) * 100)
+
+        verdict = latest.get("verdict", "—")
+        verdict_color = {"promising": "#00e676", "marginal": "#ffd740", "not working yet": "#ff5252"}.get(verdict, "#aaa")
+
+        def badge(val, default):
+            if val is None or val == default:
+                return f'<span style="color:#555">default</span>'
+            return f'<span style="color:#ffd740;font-weight:700">{val}</span>'
+
+        disable_long = latest.get("disable_long")
+        disable_short = latest.get("disable_short")
+        min_rr = latest.get("min_rr_tp3")
+        pref_tf = latest.get("preferred_timeframe")
+        reasoning = latest.get("reasoning", "—")
+        suggested_at = latest.get("suggested_at", "—")
+        n_at = latest.get("n_trades", "—")
+
+        dl = '<span style="color:#ff5252;font-weight:700">DISABLE</span>' if disable_long else '<span style="color:#555">ok</span>'
+        ds = '<span style="color:#ff5252;font-weight:700">DISABLE</span>' if disable_short else '<span style="color:#555">ok</span>'
+        rr_str = badge(min_rr, None)
+        tf_str = badge(pref_tf, None)
+
+        rows += f"""
+        <tr>
+          <td style="font-weight:700;color:#e0e0e0">{sym}</td>
+          <td>{n} trades / {wr}% WR</td>
+          <td style="color:{verdict_color};font-weight:700">{verdict}</td>
+          <td>LONG: {dl} &nbsp; SHORT: {ds}</td>
+          <td>{rr_str}</td>
+          <td>{tf_str}</td>
+          <td style="color:#aaa;font-size:12px">{reasoning}</td>
+          <td style="color:#666;font-size:11px">{suggested_at}<br>({n_at} trades)</td>
+        </tr>"""
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>AI Rule Suggestions</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #0d0d0d; color: #e0e0e0; font-family: 'Inter', sans-serif; padding: 24px; }}
+h1 {{ color: #fff; font-size: 22px; margin-bottom: 6px; }}
+p.sub {{ color: #666; font-size: 13px; margin-bottom: 24px; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+th {{ text-align: left; color: #555; font-weight: 600; padding: 8px 12px; border-bottom: 1px solid #1e1e1e; }}
+td {{ padding: 10px 12px; border-bottom: 1px solid #1a1a1a; vertical-align: top; }}
+tr:hover td {{ background: #141414; }}
+.note {{ color: #555; font-size: 12px; margin-top: 24px; }}
+</style></head><body>
+<nav style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="/" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Dashboard</a>
+  <a href="/history" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">History</a>
+  <a href="/board" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Board</a>
+  <a href="/edge" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Edge</a>
+  <a href="/ai-rules" style="padding:6px 14px;border-radius:8px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:#6c63ff">AI Rules</a>
+  <a href="/kalshi" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Kalshi</a>
+</nav>
+<h1>🤖 AI Rule Suggestions</h1>
+<p class="sub">AI วิเคราะห์ประวัติ trade + wave state ต่อเหรียญ แล้วแนะนำว่าควรแก้ parameter ยังไง — ยังไม่ได้ apply จริง</p>
+<table>
+<thead><tr>
+  <th>Symbol</th><th>Stats</th><th>Verdict</th><th>Direction</th><th>Min RR TP3</th><th>Preferred TF</th><th>Reasoning</th><th>Suggested at</th>
+</tr></thead>
+<tbody>{rows if rows else '<tr><td colspan="8" style="color:#555;padding:24px">ยังไม่มีข้อมูล — รอ Gemini quota รีเซ็ต (พรุ่งนี้) แล้ว AI จะ analyze ให้อัตโนมัติ</td></tr>'}</tbody>
+</table>
+<p class="note">อัพเดทอัตโนมัติทุกครั้งที่มี trade ปิด · ข้อมูลเก็บที่ storage/symbol_memory/</p>
+</body></html>"""
+
+
+def _build_kalshi_html() -> str:
+    _NAV = """<nav style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="/" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Dashboard</a>
+  <a href="/history" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">History</a>
+  <a href="/board" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Board</a>
+  <a href="/edge" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Edge</a>
+  <a href="/ai-rules" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">AI Rules</a>
+  <a href="/kalshi" style="padding:6px 14px;border-radius:8px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:#00b894">Prediction</a>
+</nav>"""
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>BTC Up or Down · Prediction</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#111827;color:#f3f4f6;font-family:'Inter',-apple-system,sans-serif;min-height:100vh}}
+.page{{display:flex;gap:0;min-height:100vh}}
+.main{{flex:1;padding:24px 20px;max-width:780px}}
+.sidebar{{width:280px;background:#1f2937;border-left:1px solid #374151;padding:20px 16px;flex-shrink:0}}
+.coin-header{{display:flex;align-items:center;gap:12px;margin-bottom:4px}}
+.btc-icon{{width:40px;height:40px;background:#f7931a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#fff;flex-shrink:0}}
+.coin-title{{font-size:20px;font-weight:700}}
+.coin-sub{{font-size:12px;color:#9ca3af;margin-top:2px}}
+.target-label{{font-size:12px;color:#9ca3af;margin:20px 0 4px;text-transform:uppercase;letter-spacing:.5px}}
+.target-price{{font-size:36px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-1px}}
+.price-chg{{font-size:13px;margin-top:4px}}
+.up{{color:#10b981}}.dn{{color:#ef4444}}
+canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f2937;margin:16px 0}}
+.tf-tabs{{display:flex;gap:8px;margin:20px 0 24px}}
+.tf-tab{{padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #374151;color:#9ca3af;background:transparent;transition:.15s}}
+.tf-tab.active{{background:#374151;color:#fff;border-color:#374151}}
+.verdict-row{{display:flex;gap:12px;margin-bottom:20px}}
+.verdict-card{{flex:1;border-radius:12px;padding:18px 16px;text-align:center;cursor:default}}
+.vc-up{{background:#064e3b;border:2px solid #10b981}}
+.vc-dn{{background:#7f1d1d;border:2px solid #ef4444}}
+.vc-pct{{font-size:32px;font-weight:800;font-variant-numeric:tabular-nums}}
+.vc-up .vc-pct{{color:#10b981}}
+.vc-dn .vc-pct{{color:#ef4444}}
+.vc-label{{font-size:13px;font-weight:700;margin-top:4px;color:#d1d5db}}
+.vc-arrow{{font-size:22px;margin-bottom:4px}}
+.bias-box{{background:#1f2937;border:1px solid #374151;border-radius:10px;padding:14px 16px;margin-top:16px}}
+.bias-title{{font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}}
+.bias-chips{{display:flex;gap:8px;flex-wrap:wrap}}
+.chip{{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}}
+.chip-bull{{background:#064e3b;color:#10b981;border:1px solid #10b981}}
+.chip-bear{{background:#7f1d1d;color:#ef4444;border:1px solid #ef4444}}
+.chip-neu{{background:#1c1917;color:#f59e0b;border:1px solid #f59e0b}}
+.basis-note{{font-size:11px;color:#6b7280;margin-top:10px}}
+.refresh-note{{font-size:11px;color:#4b5563;margin-top:20px}}
+/* current-window box */
+.cw-box{{border-radius:12px;padding:16px 18px;margin-top:16px;border:2px solid #374151;background:#1f2937;transition:border-color .3s}}
+.cw-box.is-up{{border-color:#10b981;background:#062019}}
+.cw-box.is-dn{{border-color:#ef4444;background:#1f0a0a}}
+.cw-box.is-wait{{border-color:#374151;background:#1f2937}}
+.cw-header{{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}}
+.cw-pred-row{{display:flex;align-items:center;gap:14px;margin-bottom:12px}}
+.cw-pred-badge{{font-size:26px;font-weight:900;line-height:1}}
+.cw-pred-badge.up{{color:#10b981}}.cw-pred-badge.dn{{color:#ef4444}}.cw-pred-badge.wait{{color:#6b7280}}
+.cw-pred-detail{{font-size:12px;color:#9ca3af;line-height:1.6}}
+.cw-timer-row{{display:flex;align-items:center;gap:12px}}
+.cw-timer{{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;font-family:monospace;min-width:70px}}
+.cw-timer.urgent{{color:#ef4444}}
+.cw-bar-wrap{{flex:1;height:6px;background:#374151;border-radius:3px;overflow:hidden}}
+.cw-bar-fill{{height:100%;border-radius:3px;transition:width .9s linear}}
+.cw-bar-fill.up{{background:#10b981}}.cw-bar-fill.dn{{background:#ef4444}}.cw-bar-fill.wait{{background:#6b7280}}
+.ph-box{{background:#1f2937;border:1px solid #374151;border-radius:12px;padding:18px 16px;margin-top:20px}}
+.ph-title{{font-size:13px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:8px}}
+.ph-stats{{display:flex;gap:16px;margin:12px 0;flex-wrap:wrap}}
+.ph-stat{{text-align:center}}
+.ph-stat-val{{font-size:22px;font-weight:800}}
+.ph-stat-lbl{{font-size:11px;color:#6b7280;margin-top:2px}}
+.ph-table{{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}}
+.ph-table th{{color:#6b7280;font-weight:600;padding:4px 6px;border-bottom:1px solid #374151;text-align:left}}
+.ph-table td{{padding:6px 6px;border-bottom:1px solid #1f2937;vertical-align:middle}}
+.ph-table tr:last-child td{{border-bottom:none}}
+.ph-win{{color:#10b981;font-weight:700}}.ph-loss{{color:#ef4444;font-weight:700}}
+.ph-up{{color:#10b981}}.ph-dn{{color:#ef4444}}.ph-pend{{color:#f59e0b}}
+.sb-title{{font-size:13px;font-weight:700;color:#9ca3af;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px}}
+.sb-row{{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #374151}}
+.sb-row:last-child{{border-bottom:none}}
+.sb-icon{{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff;flex-shrink:0}}
+.sb-name{{flex:1;font-size:13px;font-weight:600}}
+.sb-tf{{font-size:11px;color:#6b7280;margin-top:1px}}
+.sb-pct{{font-size:15px;font-weight:800;text-align:right}}
+.sb-dir{{font-size:10px;font-weight:600;text-align:right;margin-top:1px}}
+.spinner{{display:inline-block;width:12px;height:12px;border:2px solid #374151;border-top-color:#10b981;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+@media(max-width:700px){{.sidebar{{display:none}}.main{{max-width:100%}}}}
+</style></head>
+<body>
+<div style="padding:12px 16px 0">
+{_NAV}
+</div>
+<div class="page">
+<div class="main">
+  <div class="coin-header">
+    <div class="btc-icon">₿</div>
+    <div><div class="coin-title">Bitcoin Up or Down</div><div class="coin-sub" id="tf-label">15 นาที · อัพเดทอัตโนมัติ</div></div>
+  </div>
+  <div class="target-label">ราคาที่ต้องชนะ</div>
+  <div class="target-price" id="target-price"><span class="spinner"></span></div>
+  <div class="price-chg" id="price-chg">&nbsp;</div>
+  <canvas id="chart" height="120"></canvas>
+  <div class="tf-tabs">
+    <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
+    <div class="tf-tab" onclick="setTF('1h')">1 ชั่วโมง</div>
+    <div class="tf-tab" onclick="setTF('1d')">1 วัน</div>
+  </div>
+  <div class="verdict-row">
+    <div class="verdict-card vc-up">
+      <div class="vc-arrow">↑</div>
+      <div class="vc-pct" id="up-pct">—</div>
+      <div class="vc-label">UP</div>
+    </div>
+    <div class="verdict-card vc-dn">
+      <div class="vc-arrow">↓</div>
+      <div class="vc-pct" id="dn-pct">—</div>
+      <div class="vc-label">DOWN</div>
+    </div>
+  </div>
+  <!-- Current Window Prediction -->
+  <div class="cw-box is-wait" id="cw-box">
+    <div class="cw-header">⏱ ช่วง 15 นาทีนี้ · ระบบเลือก</div>
+    <div class="cw-pred-row">
+      <div class="cw-pred-badge wait" id="cw-badge">—</div>
+      <div class="cw-pred-detail" id="cw-detail">กำลังดึงข้อมูล...</div>
+    </div>
+    <div class="cw-timer-row">
+      <div class="cw-timer" id="cw-timer">—:——</div>
+      <div class="cw-bar-wrap"><div class="cw-bar-fill wait" id="cw-bar"></div></div>
+      <div style="font-size:11px;color:#6b7280;white-space:nowrap">เหลือเวลา</div>
+    </div>
+  </div>
+
+  <div class="bias-box">
+    <div class="bias-title">⚡ Elliott Wave Bias (ระบบเรา)</div>
+    <div class="bias-chips" id="bias-chips"><span class="spinner"></span></div>
+    <div class="basis-note" id="basis-note"></div>
+  </div>
+  <div class="refresh-note" id="refresh-note">อัพเดทล่าสุด: —</div>
+
+  <div class="ph-box">
+    <div class="ph-title">
+      🎯 Paper Trading · ผลการทาย Kalshi 15m
+      <span id="ph-loading" style="font-size:11px;color:#6b7280;font-weight:400"></span>
+    </div>
+    <div class="ph-stats" id="ph-stats">
+      <div class="ph-stat"><div class="ph-stat-val" style="color:#f3f4f6" id="ph-total">—</div><div class="ph-stat-lbl">ทั้งหมด</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-win" id="ph-wins">—</div><div class="ph-stat-lbl">ถูก</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-loss" id="ph-losses">—</div><div class="ph-stat-lbl">ผิด</div></div>
+      <div class="ph-stat"><div class="ph-stat-val" style="color:#60a5fa" id="ph-wr">—</div><div class="ph-stat-lbl">Win Rate</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-pend" id="ph-pend">—</div><div class="ph-stat-lbl">รอผล</div></div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="ph-table">
+        <thead><tr>
+          <th>เวลา</th><th>ทาย</th><th>15m Bias</th><th>4H EW</th>
+          <th>Target $</th><th>จบที่ $</th><th>ผล</th>
+        </tr></thead>
+        <tbody id="ph-rows"><tr><td colspan="7" style="color:#6b7280;text-align:center;padding:20px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="sidebar">
+  <div class="sb-title">Crypto Up or Down · 15m</div>
+  <div id="sidebar-coins"></div>
+</div>
+</div>
+
+<script>
+const COINS = [
+  {{sym:"BTCUSDT", label:"Bitcoin", short:"BTC", color:"#f7931a"}},
+  {{sym:"ETHUSDT", label:"Ethereum", short:"ETH", color:"#627eea"}},
+  {{sym:"SOLUSDT", label:"Solana", short:"SOL", color:"#9945ff"}},
+  {{sym:"XRPUSDT", label:"XRP", short:"XRP", color:"#00aae4"}},
+];
+let currentTF = "15m";
+let waveStates = {{}};
+let prices = {{}};
+let klines = [];
+
+function biasToProb(tf) {{
+  if (tf === "15m" && kalshi15mOdds) return kalshi15mOdds;
+  const wsTF = tf === "1d" ? "1D" : "4H";
+  const ws = waveStates[wsTF] || {{}};
+  const bias = (ws.bias || "").toUpperCase();
+  const side = (ws.side || "").toUpperCase();
+  if (bias.includes("BULL") || side === "LONG") return {{up: 65, dn: 35, source: "Elliott Wave · 4H bias"}};
+  if (bias.includes("BEAR") || side === "SHORT") return {{up: 35, dn: 65, source: "Elliott Wave · 4H bias"}};
+  return {{up: 50, dn: 50, source: "Elliott Wave · Neutral"}};
+}}
+
+function setTF(tf) {{
+  currentTF = tf;
+  document.querySelectorAll('.tf-tab').forEach((t,i) => {{
+    t.classList.toggle('active', (tf==='15m'&&i===0)||(tf==='1h'&&i===1)||(tf==='1d'&&i===2));
+  }});
+  const labels = {{'15m':'15 นาที','1h':'1 ชั่วโมง','1d':'1 วัน'}};
+  document.getElementById('tf-label').textContent = labels[tf] + ' · อัพเดทอัตโนมัติ';
+  renderVerdict();
+  fetchChart(tf);
+}}
+
+function renderVerdict() {{
+  const p = biasToProb(currentTF);
+  document.getElementById('up-pct').textContent = p.up + '%';
+  document.getElementById('dn-pct').textContent = p.dn + '%';
+  const src = p.source || "Elliott Wave";
+  let note = `แหล่งข้อมูล: ${{src}}`;
+  if (p.expires) {{
+    const diff = new Date(p.expires) - Date.now();
+    const m = Math.floor(diff/60000), s = Math.floor((diff%60000)/1000);
+    note += ` · หมดอายุใน ${{m}}m ${{s}}s`;
+  }}
+  if (p.lastPrice > 0) note += ` · last ${{Math.round(p.lastPrice*100)}}¢`;
+  document.getElementById('basis-note').textContent = note;
+}}
+
+let kalshi15mOdds = null; // {{up, dn, source, target, expires}}
+
+async function fetchKalshi15m() {{
+  try {{
+    // Get upcoming KXBTC15M events
+    const evR = await fetch('/api/kalshi/events?series_ticker=KXBTC15M&limit=10&status=open');
+    const evD = await evR.json();
+    const now = Date.now();
+    const events = (evD.events||[])
+      .filter(e => new Date(e.expiration_time||e.close_time) > now)
+      .sort((a,b) => new Date(a.expiration_time||a.close_time) - new Date(b.expiration_time||b.close_time));
+    if (!events.length) {{ kalshi15mOdds = null; return; }}
+    // Fetch market for next event
+    const ev = events[0];
+    const mR = await fetch(`/api/kalshi/markets?event_ticker=${{ev.event_ticker}}&limit=5`);
+    const mD = await mR.json();
+    const m = (mD.markets||[])[0];
+    if (!m) {{ kalshi15mOdds = null; return; }}
+    const yesBid = parseFloat(m.yes_bid_dollars||0);
+    const yesAsk = parseFloat(m.yes_ask_dollars||0);
+    const noBid = parseFloat(m.no_bid_dollars||0);
+    const noAsk = parseFloat(m.no_ask_dollars||0);
+    const yesMid = (yesBid+yesAsk)/2 || yesAsk || yesBid;
+    const noMid = (noBid+noAsk)/2 || noAsk || noBid;
+    if (yesMid > 0 || noMid > 0) {{
+      const total = yesMid + noMid || 1;
+      kalshi15mOdds = {{
+        up: Math.round((yesMid/total)*100),
+        dn: Math.round((noMid/total)*100),
+        source: 'Kalshi · Live odds',
+        expires: ev.expiration_time||ev.close_time,
+        lastPrice: parseFloat(m.last_price_dollars||0),
+      }};
+    }} else {{
+      kalshi15mOdds = null;
+    }}
+  }} catch(e) {{ kalshi15mOdds = null; }}
+}}
+
+async function fetchWave() {{
+  try {{
+    const r = await fetch('/api/symbol-memory/BTCUSDT');
+    const d = await r.json();
+    waveStates = d.wave_states || {{}};
+    const chips = document.getElementById('bias-chips');
+    chips.innerHTML = '';
+    for (const [tf, ws] of Object.entries(waveStates)) {{
+      const bias = (ws.bias||'').toUpperCase();
+      const cls = bias.includes('BULL') ? 'chip-bull' : bias.includes('BEAR') ? 'chip-bear' : 'chip-neu';
+      chips.innerHTML += `<span class="chip ${{cls}}">${{tf}}: ${{bias||'NEUTRAL'}}</span>`;
+    }}
+    renderVerdict();
+  }} catch(e) {{}}
+}}
+
+async function fetchPrices() {{
+  try {{
+    const r = await fetch('/api/ticker');
+    const d = await r.json();
+    for (const t of (d.data||[])) prices[t.symbol] = t;
+    const btc = prices['BTCUSDT'];
+    if (!btc) return;
+    const p = parseFloat(btc.lastPrice);
+    const chg = parseFloat(btc.priceChangePercent);
+    document.getElementById('target-price').textContent = '$' + p.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+    const el = document.getElementById('price-chg');
+    el.textContent = (chg>=0?'+':'') + chg.toFixed(2) + '% (24h)';
+    el.className = 'price-chg ' + (chg>=0?'up':'dn');
+    renderSidebar();
+  }} catch(e) {{}}
+}}
+
+async function fetchChart(tf) {{
+  const intervalMap = {{'15m':'15m','1h':'1h','1d':'1d'}};
+  const interval = intervalMap[tf] || '15m';
+  try {{
+    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${{interval}}&limit=40`);
+    klines = await r.json();
+    drawChart();
+  }} catch(e) {{}}
+}}
+
+function drawChart() {{
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = 120;
+  canvas.width = W; canvas.height = H;
+  if (!klines.length) return;
+  const closes = klines.map(k => parseFloat(k[4]));
+  const mn = Math.min(...closes), mx = Math.max(...closes);
+  const range = mx - mn || 1;
+  const pad = 12;
+  ctx.clearRect(0,0,W,H);
+  // gradient fill
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'rgba(16,185,129,0.3)');
+  grad.addColorStop(1,'rgba(16,185,129,0)');
+  ctx.beginPath();
+  closes.forEach((c,i) => {{
+    const x = pad + (i/(closes.length-1))*(W-pad*2);
+    const y = H - pad - ((c-mn)/range)*(H-pad*2);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }});
+  ctx.lineTo(W-pad,H); ctx.lineTo(pad,H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  // line
+  ctx.beginPath();
+  closes.forEach((c,i) => {{
+    const x = pad + (i/(closes.length-1))*(W-pad*2);
+    const y = H - pad - ((c-mn)/range)*(H-pad*2);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }});
+  ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2; ctx.stroke();
+  // current price dot
+  const last = closes[closes.length-1];
+  const lx = W-pad, ly = H-pad-((last-mn)/range)*(H-pad*2);
+  ctx.beginPath(); ctx.arc(lx,ly,4,0,Math.PI*2);
+  ctx.fillStyle='#10b981'; ctx.fill();
+}}
+
+function renderSidebar() {{
+  let html = '';
+  for (const c of COINS) {{
+    const t = prices[c.sym];
+    const chg = t ? parseFloat(t.priceChangePercent) : 0;
+    // Simple momentum: chg > 0 → UP leaning
+    const upPct = chg > 1 ? 65 : chg < -1 ? 35 : 50;
+    const isUp = upPct >= 50;
+    html += `<div class="sb-row">
+      <div class="sb-icon" style="background:${{c.color}}">${{c.short[0]}}</div>
+      <div><div class="sb-name">${{c.label}}</div><div class="sb-tf">Up or Down · 15m</div></div>
+      <div>
+        <div class="sb-pct" style="color:${{isUp?'#10b981':'#ef4444'}}">${{upPct}}%</div>
+        <div class="sb-dir" style="color:${{isUp?'#10b981':'#ef4444'}}">${{isUp?'Up':'Down'}}</div>
+      </div>
+    </div>`;
+  }}
+  document.getElementById('sidebar-coins').innerHTML = html;
+}}
+
+// ── Current window countdown (client-side, no API needed) ──
+function getWindowSecs() {{
+  const now = new Date();
+  // Use UTC minutes so it aligns with Kalshi's :00/:15/:30/:45 UTC schedule
+  const utcMin = now.getUTCMinutes();
+  const utcSec = now.getUTCSeconds();
+  const elapsedSecs = (utcMin % 15) * 60 + utcSec;
+  const totalSecs = 900; // 15 min
+  return {{ elapsed: elapsedSecs, remaining: totalSecs - elapsedSecs, total: totalSecs }};
+}}
+
+let _cwPred = null; // {{ prediction, bias_15m, bias_4h, target_price, start_price }}
+
+function updateCountdown() {{
+  const {{ elapsed, remaining, total }} = getWindowSecs();
+  const m = Math.floor(remaining / 60);
+  const s = remaining % 60;
+  const timerEl = document.getElementById('cw-timer');
+  timerEl.textContent = m + ':' + String(s).padStart(2,'0');
+  timerEl.className = 'cw-timer' + (remaining < 120 ? ' urgent' : '');
+  const pct = (elapsed / total * 100).toFixed(1);
+  document.getElementById('cw-bar').style.width = pct + '%';
+}}
+
+function updateCwBox() {{
+  const box = document.getElementById('cw-box');
+  const badge = document.getElementById('cw-badge');
+  const detail = document.getElementById('cw-detail');
+  const bar = document.getElementById('cw-bar');
+
+  if (!_cwPred) {{
+    box.className = 'cw-box is-wait';
+    badge.className = 'cw-pred-badge wait';
+    badge.textContent = '—';
+    detail.textContent = 'ยังไม่มีการทาย — รอช่วงถัดไป';
+    bar.className = 'cw-bar-fill wait';
+    return;
+  }}
+
+  const isUp = _cwPred.prediction === 'UP';
+  box.className = 'cw-box ' + (isUp ? 'is-up' : 'is-dn');
+  badge.className = 'cw-pred-badge ' + (isUp ? 'up' : 'dn');
+  badge.textContent = isUp ? '↑ UP' : '↓ DOWN';
+  bar.className = 'cw-bar-fill ' + (isUp ? 'up' : 'dn');
+
+  const b15 = _cwPred.ew_bias_15m || '—';
+  const b4h = (_cwPred.ew_bias_4h||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,10);
+  const tgt = _cwPred.target_price
+    ? '$'+Number(_cwPred.target_price).toLocaleString('en-US',{{minimumFractionDigits:0,maximumFractionDigits:0}})
+    : '—';
+  detail.innerHTML = `15m bias: <strong>${{b15}}</strong> &nbsp;·&nbsp; 4H EW: <strong>${{b4h||'—'}}</strong><br>Target: <strong>${{tgt}}</strong>`;
+}}
+
+// ── Prediction history + current window data ──
+async function fetchPredictions() {{
+  try {{
+    const r = await fetch('/api/kalshi-predictions');
+    const d = await r.json();
+    if (!d.ok) return;
+
+    // Update stats
+    const s = d.stats || {{}};
+    document.getElementById('ph-total').textContent = s.total ?? '—';
+    document.getElementById('ph-wins').textContent = s.wins ?? '—';
+    document.getElementById('ph-losses').textContent = s.losses ?? '—';
+    document.getElementById('ph-pend').textContent = s.pending ?? '—';
+    document.getElementById('ph-wr').textContent = s.win_rate != null ? (s.win_rate*100).toFixed(1)+'%' : '—';
+
+    // Pick current prediction (most recent pending within current 15-min window)
+    const preds = d.predictions || [];
+    const pending = preds.filter(p => p.win === null);
+    _cwPred = pending.length ? pending[0] : null;
+    updateCwBox();
+
+    // Render history table
+    if (!preds.length) {{
+      document.getElementById('ph-rows').innerHTML =
+        '<tr><td colspan="7" style="color:#6b7280;text-align:center;padding:20px">ยังไม่มีการทาย</td></tr>';
+      return;
+    }}
+    document.getElementById('ph-rows').innerHTML = preds.slice(0,20).map(p => {{
+      const predCls = p.prediction === 'UP' ? 'ph-up' : 'ph-dn';
+      const predArrow = p.prediction === 'UP' ? '↑ UP' : '↓ DOWN';
+      const biasCls = p.ew_bias_15m === 'BULLISH' ? 'ph-up' : p.ew_bias_15m === 'BEARISH' ? 'ph-dn' : 'ph-pend';
+      const tgt = p.target_price ? '$'+Number(p.target_price).toLocaleString('en-US',{{minimumFractionDigits:0}}) : '—';
+      const end = p.end_price  ? '$'+Number(p.end_price).toLocaleString('en-US',{{minimumFractionDigits:0}}) : '—';
+      let result, resCls;
+      if (p.win === 1)      {{ result = '✓ ถูก'; resCls = 'ph-win'; }}
+      else if (p.win === 0) {{ result = '✗ ผิด'; resCls = 'ph-loss'; }}
+      else                  {{ result = '⋯ รอ';  resCls = 'ph-pend'; }}
+      const timeStr = (p.created_at||'').replace('T',' ').substring(0,16);
+      const bias4h = (_cwPred => (_cwPred||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,8))(p.ew_bias_4h);
+      return `<tr>
+        <td style="color:#9ca3af;white-space:nowrap">${{timeStr}}</td>
+        <td class="${{predCls}}" style="font-weight:700">${{predArrow}}</td>
+        <td class="${{biasCls}}">${{p.ew_bias_15m||'—'}}</td>
+        <td style="color:#9ca3af;font-size:11px">${{bias4h||'—'}}</td>
+        <td>${{tgt}}</td><td>${{end}}</td>
+        <td class="${{resCls}}" style="font-weight:700">${{result}}</td>
+      </tr>`;
+    }}).join('');
+  }} catch(e) {{
+    document.getElementById('ph-rows').innerHTML =
+      '<tr><td colspan="7" style="color:#6b7280;text-align:center">โหลดไม่ได้</td></tr>';
+  }}
+}}
+
+async function refresh() {{
+  await fetchPrices();
+  await Promise.all([fetchWave(), fetchKalshi15m()]);
+  renderVerdict();
+  document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + new Date().toLocaleTimeString('th-TH');
+}}
+
+fetchChart('15m');
+refresh();
+fetchPredictions();
+updateCountdown();
+setInterval(updateCountdown, 1000);   // realtime every second
+setInterval(fetchPrices, 10000);
+setInterval(fetchKalshi15m, 30000);
+setInterval(fetchPredictions, 60000);
+setInterval(() => {{ renderVerdict(); }}, 10000);
+setInterval(refresh, 60000);
+setInterval(drawChart, 15000);
+</script>
+</body></html>"""
 
 
 def _build_active_trades(db_path: str) -> list[dict]:
@@ -387,10 +959,12 @@ def build_web_dashboard_html(symbol: str, refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/" class="active">Dashboard</a>
       <a href="/history">History</a>
-      <a href="/board">&#x1F4CB; Board</a>
+      <a href="/board">Board</a>
+      <a href="/edge">Edge</a>
+      <a href="/ai-rules">AI Rules</a>
+      <a href="/kalshi">Kalshi</a>
       <a href="/register" style="padding:8px 14px;border-radius:8px;background:rgba(16,185,129,.15);color:var(--success);font-size:13px;font-weight:600;text-decoration:none;border:1px solid rgba(16,185,129,.3);white-space:nowrap;">&#x270F; Join</a>
       <a href="/login" style="padding:8px 14px;border-radius:8px;background:rgba(59,130,246,.15);color:var(--primary);font-size:13px;font-weight:600;text-decoration:none;border:1px solid rgba(59,130,246,.3);white-space:nowrap;">&#x1F511; Login</a>
-      <a href="/guide" class="nav-guide">&#x1F4D6; API Guide</a>
       <button onclick="toggleTheme()" id="theme-btn" class="nav-theme">&#x263D; Dark</button>
     </nav>
   </div>
@@ -529,6 +1103,10 @@ def build_history_html(refresh_seconds: float) -> str:
     <nav class="nav">
       <a href="/">Dashboard</a>
       <a href="/history" class="active">History</a>
+      <a href="/board">Board</a>
+      <a href="/edge">Edge</a>
+      <a href="/ai-rules">AI Rules</a>
+      <a href="/kalshi">Kalshi</a>
       <button onclick="toggleTheme()" id="theme-btn" class="nav-theme">&#x263D; Dark</button>
     </nav>
   </div>
@@ -1384,6 +1962,14 @@ canvas{display:block;width:100%;max-width:100%}
 .updated{font-size:11px;color:var(--sub);margin-bottom:14px}
 </style>
 </head><body>
+<nav style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="/" style="padding:6px 14px;border-radius:8px;color:#8b8fa8;text-decoration:none;font-size:13px;font-weight:500;background:#1a1d27">Dashboard</a>
+  <a href="/history" style="padding:6px 14px;border-radius:8px;color:#8b8fa8;text-decoration:none;font-size:13px;font-weight:500;background:#1a1d27">History</a>
+  <a href="/board" style="padding:6px 14px;border-radius:8px;color:#8b8fa8;text-decoration:none;font-size:13px;font-weight:500;background:#1a1d27">Board</a>
+  <a href="/edge" style="padding:6px 14px;border-radius:8px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:#6c63ff">Edge</a>
+  <a href="/ai-rules" style="padding:6px 14px;border-radius:8px;color:#8b8fa8;text-decoration:none;font-size:13px;font-weight:500;background:#1a1d27">AI Rules</a>
+  <a href="/kalshi" style="padding:6px 14px;border-radius:8px;color:#8b8fa8;text-decoration:none;font-size:13px;font-weight:500;background:#1a1d27">Kalshi</a>
+</nav>
 <h1>Edge Analytics</h1>
 <div class="sub">Elliott Wave Engine — Live Trade Performance</div>
 <div class="grid" id="overview"></div>
@@ -1996,6 +2582,7 @@ def run_web_dashboard(
     fund_html = build_fund_html()
     edge_html = build_edge_html()
     db_path = os.getenv("WAVE_DB_PATH", "storage/wave_engine.db")
+    memory_dir = os.path.join(os.path.dirname(db_path), "symbol_memory")
     account_store = AccountStore(db_path=db_path)
     account_store.seed_admin("jirayuwammagul@gmail.com")
     fund_store = FundStore(db_path=db_path)
@@ -2048,6 +2635,16 @@ def run_web_dashboard(
     t = threading.Thread(target=_refresh_cache, daemon=True)
     t.start()
 
+    # Kalshi 15m paper-trading predictor loop
+    try:
+        from services.kalshi_predictor import run_loop as _kp_run_loop
+        from pathlib import Path as _KPath
+        _kp_db = _KPath("storage/wave_engine.db")
+        _kp_thread = threading.Thread(target=_kp_run_loop, args=(_kp_db, 300), daemon=True)
+        _kp_thread.start()
+    except Exception as _kp_err:
+        print(f"[web] kalshi predictor thread failed to start: {_kp_err}")
+
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
@@ -2059,6 +2656,12 @@ def run_web_dashboard(
                         _visit_counter["unique_ips"].append(ip)
                     _save_visits()
                 self._send_html(spa_html)
+                return
+            if path == "/ai-rules":
+                self._send_html(_build_ai_rules_html(memory_dir))
+                return
+            if path == "/kalshi":
+                self._send_html(_build_kalshi_html())
                 return
             if path == "/fund":
                 self._send_html(fund_html)
@@ -2178,6 +2781,36 @@ def run_web_dashboard(
                         "change_log": ai.get("change_log", [])[-3:],
                     }
                 self._send_json(200, {"ok": True, "symbols": summary})
+                return
+            if path == "/api/kalshi-predictions":
+                try:
+                    from services.kalshi_predictor import get_predictions as _kp_get
+                    from pathlib import Path as _KP
+                    data = _kp_get(_KP("storage/wave_engine.db"), limit=50)
+                    self._send_json(200, {"ok": True, **data})
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
+            if path.startswith("/api/kalshi"):
+                import urllib.request as _ur
+                import urllib.parse as _up
+                qs = self.path.split("?", 1)[-1] if "?" in self.path else ""
+                sub = path[len("/api/kalshi"):]  # e.g. /events or /markets
+                kalshi_url = f"https://api.elections.kalshi.com/trade-api/v2{sub}"
+                if qs:
+                    kalshi_url += "?" + qs
+                try:
+                    req = _ur.Request(kalshi_url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
+                    with _ur.urlopen(req, timeout=10) as resp:
+                        raw = resp.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(raw)
+                except Exception as e:
+                    self._send_json(502, {"ok": False, "error": str(e)})
                 return
             if path.startswith("/api/symbol-memory/"):
                 sym = path[len("/api/symbol-memory/"):]
