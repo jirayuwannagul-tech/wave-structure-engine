@@ -614,6 +614,7 @@ async function fetchPrices() {{
     const el = document.getElementById('price-chg');
     el.textContent = (chg>=0?'+':'') + chg.toFixed(2) + '% (24h)';
     el.className = 'price-chg ' + (chg>=0?'up':'dn');
+    drawChart(); // redraw with latest price vs target
   }} catch(e) {{}}
 }}
 
@@ -634,35 +635,67 @@ function drawChart() {{
   canvas.width = W; canvas.height = H;
   if (!klines.length) return;
   const closes = klines.map(k => parseFloat(k[4]));
-  const mn = Math.min(...closes), mx = Math.max(...closes);
+  const last = closes[closes.length-1];
+
+  // Include target price in scale so it's always visible
+  const target = _cwPred ? _cwPred.target_price : null;
+  const allVals = target ? [...closes, target] : closes;
+  const mn = Math.min(...allVals), mx = Math.max(...allVals);
   const range = mx - mn || 1;
   const pad = 12;
+  const toY = v => H - pad - ((v-mn)/range)*(H-pad*2);
+  const toX = i => pad + (i/(closes.length-1))*(W-pad*2);
+
   ctx.clearRect(0,0,W,H);
-  // gradient fill
+
+  // Gradient fill (colour by whether current price beats target)
+  const winning = target ? (
+    (_cwPred.prediction==='UP' && last>target) ||
+    (_cwPred.prediction==='DOWN' && last<target)
+  ) : true;
+  const lineColor = winning ? '#10b981' : '#ef4444';
   const grad = ctx.createLinearGradient(0,0,0,H);
-  grad.addColorStop(0,'rgba(16,185,129,0.3)');
-  grad.addColorStop(1,'rgba(16,185,129,0)');
+  grad.addColorStop(0, winning ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.beginPath();
-  closes.forEach((c,i) => {{
-    const x = pad + (i/(closes.length-1))*(W-pad*2);
-    const y = H - pad - ((c-mn)/range)*(H-pad*2);
-    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-  }});
-  ctx.lineTo(W-pad,H); ctx.lineTo(pad,H); ctx.closePath();
-  ctx.fillStyle = grad; ctx.fill();
-  // line
+  closes.forEach((c,i) => {{ i===0 ? ctx.moveTo(toX(i),toY(c)) : ctx.lineTo(toX(i),toY(c)); }});
+  ctx.lineTo(toX(closes.length-1),H); ctx.lineTo(pad,H); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+
+  // Price line
   ctx.beginPath();
-  closes.forEach((c,i) => {{
-    const x = pad + (i/(closes.length-1))*(W-pad*2);
-    const y = H - pad - ((c-mn)/range)*(H-pad*2);
-    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-  }});
-  ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2; ctx.stroke();
-  // current price dot
-  const last = closes[closes.length-1];
-  const lx = W-pad, ly = H-pad-((last-mn)/range)*(H-pad*2);
+  closes.forEach((c,i) => {{ i===0 ? ctx.moveTo(toX(i),toY(c)) : ctx.lineTo(toX(i),toY(c)); }});
+  ctx.strokeStyle=lineColor; ctx.lineWidth=2; ctx.stroke();
+
+  // Target price line
+  if (target) {{
+    const ty = toY(target);
+    ctx.setLineDash([5,4]);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad,ty); ctx.lineTo(W-pad,ty); ctx.stroke();
+    ctx.setLineDash([]);
+    // Label
+    ctx.fillStyle='#f59e0b'; ctx.font='10px Inter,sans-serif';
+    ctx.fillText('Target $'+Math.round(target).toLocaleString('en-US'), pad+2, ty-3);
+  }}
+
+  // Current price dot
+  const lx = toX(closes.length-1), ly = toY(last);
   ctx.beginPath(); ctx.arc(lx,ly,4,0,Math.PI*2);
-  ctx.fillStyle='#10b981'; ctx.fill();
+  ctx.fillStyle=lineColor; ctx.fill();
+
+  // Live P&L label top-right
+  if (target) {{
+    const diff = last - target;
+    const pct = ((diff/target)*100).toFixed(2);
+    const label = (diff>=0?'+':'')+pct+'%  '+(winning?'✓ กำลังชนะ':'✗ กำลังแพ้');
+    ctx.fillStyle = winning?'#10b981':'#ef4444';
+    ctx.font = 'bold 11px Inter,sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(label, W-pad, pad+2);
+    ctx.textAlign = 'left';
+  }}
 }}
 
 function drawPredChart(preds) {{
