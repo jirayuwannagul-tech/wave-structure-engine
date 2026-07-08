@@ -726,23 +726,42 @@ function drawTickChart(ctx, W, H) {{
     : last >= prices[0];
   const lineColor = winning ? '#10b981' : '#ef4444';
 
+  // Downsample to max 400 pts for smooth rendering
+  const maxPts = 400;
+  let pts = _ticks;
+  if (pts.length > maxPts) {{
+    const step = pts.length / maxPts;
+    pts = Array.from({{length: maxPts}}, (_, i) => pts[Math.floor(i * step)]);
+    pts.push(_ticks[_ticks.length - 1]);
+  }}
+  const xs = pts.map(t => toX(t.t));
+  const ys = pts.map(t => toY(t.p));
+
+  // Smooth line via quadratic bezier through midpoints
+  function _smoothPath(ctx) {{
+    ctx.moveTo(xs[0], ys[0]);
+    for (let i = 1; i < xs.length - 1; i++) {{
+      const mx = (xs[i] + xs[i+1]) / 2;
+      const my = (ys[i] + ys[i+1]) / 2;
+      ctx.quadraticCurveTo(xs[i], ys[i], mx, my);
+    }}
+    ctx.lineTo(xs[xs.length-1], ys[ys.length-1]);
+  }}
+
+  const lx = xs[xs.length - 1];
+
   // Gradient fill under line
   const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
   grad.addColorStop(0, winning ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.beginPath();
-  _ticks.forEach(({{ t, p }}, i) => {{
-    i === 0 ? ctx.moveTo(toX(t), toY(p)) : ctx.lineTo(toX(t), toY(p));
-  }});
-  const lx = toX(_ticks[_ticks.length - 1].t);
+  _smoothPath(ctx);
   ctx.lineTo(lx, padTop + chartH); ctx.lineTo(padX, padTop + chartH); ctx.closePath();
   ctx.fillStyle = grad; ctx.fill();
 
   // Price line
   ctx.beginPath();
-  _ticks.forEach(({{ t, p }}, i) => {{
-    i === 0 ? ctx.moveTo(toX(t), toY(p)) : ctx.lineTo(toX(t), toY(p));
-  }});
+  _smoothPath(ctx);
   ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
   // Glow dot + live dot
@@ -1059,14 +1078,15 @@ async function refresh() {{
   document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + nowLA() + ' (LA)';
 }}
 
-// Seed chart from VPS-cached price, then poll every second
-seedTicksFromKlines().then(() => {{ _pollPrice(); drawChart(); }});
+// Seed chart from VPS-cached price, then poll every 250ms
+seedTicksFromKlines().then(() => {{ _pollPrice(); }});
 refresh();
 fetchPredictions();
 updateCountdown();
 setInterval(updateCountdown, 1000);
-setInterval(_pollPrice, 1000);         // price update every second (via VPS proxy)
-setInterval(drawChart, 1000);          // redraw chart every second
+setInterval(_pollPrice, 250);          // price update 4x/sec (via VPS proxy)
+// Smooth 60fps chart animation
+(function _raf() {{ drawChart(); requestAnimationFrame(_raf); }})();
 setInterval(fetchPrices, 30000);
 setInterval(fetchKalshi15m, 30000);
 setInterval(fetchPredictions, 60000);
