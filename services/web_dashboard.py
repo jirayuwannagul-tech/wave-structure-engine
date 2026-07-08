@@ -338,15 +338,6 @@ canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d11
 .tf-tabs{{display:flex;gap:8px;margin:20px 0 24px}}
 .tf-tab{{padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #374151;color:#9ca3af;background:transparent;transition:.15s}}
 .tf-tab.active{{background:#374151;color:#fff;border-color:#374151}}
-.verdict-row{{display:flex;gap:12px;margin-bottom:20px}}
-.verdict-card{{flex:1;border-radius:12px;padding:18px 16px;text-align:center;cursor:default}}
-.vc-up{{background:#064e3b;border:2px solid #10b981}}
-.vc-dn{{background:#7f1d1d;border:2px solid #ef4444}}
-.vc-pct{{font-size:32px;font-weight:800;font-variant-numeric:tabular-nums}}
-.vc-up .vc-pct{{color:#10b981}}
-.vc-dn .vc-pct{{color:#ef4444}}
-.vc-label{{font-size:13px;font-weight:700;margin-top:4px;color:#d1d5db}}
-.vc-arrow{{font-size:22px;margin-bottom:4px}}
 .bias-box{{background:#1f2937;border:1px solid #374151;border-radius:10px;padding:14px 16px;margin-top:16px}}
 .bias-title{{font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}}
 .bias-chips{{display:flex;gap:8px;flex-wrap:wrap}}
@@ -420,18 +411,6 @@ canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d11
     <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
     <div class="tf-tab" onclick="setTF('1h')">1 ชั่วโมง</div>
     <div class="tf-tab" onclick="setTF('1d')">1 วัน</div>
-  </div>
-  <div class="verdict-row">
-    <div class="verdict-card vc-up">
-      <div class="vc-arrow">↑</div>
-      <div class="vc-pct" id="up-pct">—</div>
-      <div class="vc-label">UP</div>
-    </div>
-    <div class="verdict-card vc-dn">
-      <div class="vc-arrow">↓</div>
-      <div class="vc-pct" id="dn-pct">—</div>
-      <div class="vc-label">DOWN</div>
-    </div>
   </div>
   <!-- Current Window Prediction -->
   <div class="cw-box is-wait" id="cw-box">
