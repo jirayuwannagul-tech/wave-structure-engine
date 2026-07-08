@@ -385,13 +385,19 @@ canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f29
 .ph-win{{color:#10b981;font-weight:700}}.ph-loss{{color:#ef4444;font-weight:700}}
 .ph-up{{color:#10b981}}.ph-dn{{color:#ef4444}}.ph-pend{{color:#f59e0b}}
 .sb-title{{font-size:13px;font-weight:700;color:#9ca3af;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px}}
-.sb-row{{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #374151}}
-.sb-row:last-child{{border-bottom:none}}
-.sb-icon{{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff;flex-shrink:0}}
-.sb-name{{flex:1;font-size:13px;font-weight:600}}
-.sb-tf{{font-size:11px;color:#6b7280;margin-top:1px}}
-.sb-pct{{font-size:15px;font-weight:800;text-align:right}}
-.sb-dir{{font-size:10px;font-weight:600;text-align:right;margin-top:1px}}
+.sb-wr-box{{text-align:center;padding:14px 0 16px;border-bottom:1px solid #374151;margin-bottom:14px}}
+.sb-wr-val{{font-size:42px;font-weight:900;color:#60a5fa;font-variant-numeric:tabular-nums;line-height:1}}
+.sb-wr-lbl{{font-size:11px;color:#6b7280;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
+.sb-wr-detail{{font-size:12px;color:#9ca3af;margin-top:8px;line-height:1.6}}
+.sb-pred-row{{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1f2937}}
+.sb-pred-row:last-child{{border-bottom:none}}
+.sb-pred-dir{{font-size:15px;font-weight:900;width:52px;flex-shrink:0}}
+.sb-pred-dir.up{{color:#10b981}}.sb-pred-dir.dn{{color:#ef4444}}
+.sb-pred-meta{{flex:1;min-width:0}}
+.sb-pred-time{{font-size:11px;color:#6b7280;white-space:nowrap}}
+.sb-pred-bias{{font-size:11px;color:#9ca3af;margin-top:1px}}
+.sb-pred-result{{font-size:13px;font-weight:700;flex-shrink:0}}
+.sb-pred-result.win{{color:#10b981}}.sb-pred-result.loss{{color:#ef4444}}.sb-pred-result.pend{{color:#f59e0b}}
 .spinner{{display:inline-block;width:12px;height:12px;border:2px solid #374151;border-top-color:#10b981;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}}
 @keyframes spin{{to{{transform:rotate(360deg)}}}}
 @media(max-width:700px){{.sidebar{{display:none}}.main{{max-width:100%}}}}
@@ -472,8 +478,13 @@ canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f29
   </div>
 </div>
 <div class="sidebar">
-  <div class="sb-title">Crypto Up or Down · 15m</div>
-  <div id="sidebar-coins"></div>
+  <div class="sb-title">📋 รายงานการทาย</div>
+  <div class="sb-wr-box" id="sb-wr-box">
+    <div class="sb-wr-val" id="sb-wr-val">—</div>
+    <div class="sb-wr-lbl">Win Rate</div>
+    <div class="sb-wr-detail" id="sb-wr-detail"></div>
+  </div>
+  <div id="sb-pred-list"></div>
 </div>
 </div>
 
@@ -594,7 +605,6 @@ async function fetchPrices() {{
     const el = document.getElementById('price-chg');
     el.textContent = (chg>=0?'+':'') + chg.toFixed(2) + '% (24h)';
     el.className = 'price-chg ' + (chg>=0?'up':'dn');
-    renderSidebar();
   }} catch(e) {{}}
 }}
 
@@ -646,24 +656,43 @@ function drawChart() {{
   ctx.fillStyle='#10b981'; ctx.fill();
 }}
 
-function renderSidebar() {{
-  let html = '';
-  for (const c of COINS) {{
-    const t = prices[c.sym];
-    const chg = t ? parseFloat(t.priceChangePercent) : 0;
-    // Simple momentum: chg > 0 → UP leaning
-    const upPct = chg > 1 ? 65 : chg < -1 ? 35 : 50;
-    const isUp = upPct >= 50;
-    html += `<div class="sb-row">
-      <div class="sb-icon" style="background:${{c.color}}">${{c.short[0]}}</div>
-      <div><div class="sb-name">${{c.label}}</div><div class="sb-tf">Up or Down · 15m</div></div>
-      <div>
-        <div class="sb-pct" style="color:${{isUp?'#10b981':'#ef4444'}}">${{upPct}}%</div>
-        <div class="sb-dir" style="color:${{isUp?'#10b981':'#ef4444'}}">${{isUp?'Up':'Down'}}</div>
-      </div>
-    </div>`;
+function renderSidebarReport(preds, stats) {{
+  // Win rate box
+  const wr = stats.win_rate != null ? (stats.win_rate*100).toFixed(1)+'%' : '—';
+  const wrColor = stats.win_rate == null ? '#60a5fa' : stats.win_rate >= 0.6 ? '#10b981' : stats.win_rate >= 0.5 ? '#60a5fa' : '#ef4444';
+  document.getElementById('sb-wr-val').textContent = wr;
+  document.getElementById('sb-wr-val').style.color = wrColor;
+  document.getElementById('sb-wr-detail').innerHTML =
+    `✓ ${{stats.wins||0}} ถูก &nbsp;✗ ${{stats.losses||0}} ผิด` +
+    (stats.pending ? `&nbsp;&nbsp;⋯ ${{stats.pending}} รอ` : '');
+
+  // Prediction list (most recent first, up to 15)
+  if (!preds.length) {{
+    document.getElementById('sb-pred-list').innerHTML =
+      '<div style="color:#6b7280;font-size:12px;text-align:center;padding:20px 0">ยังไม่มีการทาย</div>';
+    return;
   }}
-  document.getElementById('sidebar-coins').innerHTML = html;
+  document.getElementById('sb-pred-list').innerHTML = preds.slice(0,15).map(p => {{
+    const isUp = p.prediction === 'UP';
+    const dirCls = isUp ? 'up' : 'dn';
+    const dirTxt = isUp ? '↑ UP' : '↓ DOWN';
+    const bias = p.ew_bias_15m || '—';
+    // Time: show HH:MM only
+    const timeStr = (p.created_at||'').substring(11,16) || '—';
+    let resCls, resTxt;
+    if (p.win === 1)      {{ resCls='win';  resTxt='✓'; }}
+    else if (p.win === 0) {{ resCls='loss'; resTxt='✗'; }}
+    else                  {{ resCls='pend'; resTxt='⋯'; }}
+    const tgt = p.target_price ? '$'+Math.round(p.target_price).toLocaleString('en-US') : '';
+    return `<div class="sb-pred-row">
+      <div class="sb-pred-dir ${{dirCls}}">${{dirTxt}}</div>
+      <div class="sb-pred-meta">
+        <div class="sb-pred-time">${{timeStr}} · ${{tgt}}</div>
+        <div class="sb-pred-bias">${{bias}}</div>
+      </div>
+      <div class="sb-pred-result ${{resCls}}">${{resTxt}}</div>
+    </div>`;
+  }}).join('');
 }}
 
 // ── Current window countdown (client-side, no API needed) ──
@@ -739,6 +768,9 @@ async function fetchPredictions() {{
     const pending = preds.filter(p => p.win === null);
     _cwPred = pending.length ? pending[0] : null;
     updateCwBox();
+
+    // Render sidebar report
+    renderSidebarReport(preds, s);
 
     // Render history table
     if (!preds.length) {{
