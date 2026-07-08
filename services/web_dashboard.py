@@ -580,8 +580,7 @@ async function fetchWave() {{
   }} catch(e) {{}}
 }}
 
-// ── Binance WebSocket realtime price (aggTrade = every trade tick) ──────────
-let _ws = null;
+// ── Realtime price via VPS proxy (polls /api/btc-price every 1s) ────────────
 let _livePrice = null;
 let _currentInterval = '15m';
 let _ticks = [];        // {{t: epoch_ms, p: price}} for current 15m window
@@ -599,27 +598,18 @@ function _updatePriceDisplay(price) {{
     '$' + price.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
 }}
 
-function connectWS() {{
-  if (_ws) {{ try {{ _ws.close(); }} catch(e) {{}} _ws = null; }}
-  _ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@aggTrade');
-  _ws.onmessage = (e) => {{
-    try {{
-      const d = JSON.parse(e.data);
-      const price = parseFloat(d.p);
-      const t = d.T;
-      _livePrice = price;
-      const slot = _utcSlotStart(t);
-      if (_wsSlotStart !== slot) {{
-        _wsSlotStart = slot;
-        _ticks = [];
-      }}
-      _ticks.push({{t, p: price}});
-      if (_ticks.length > 3000) _ticks = _ticks.slice(-3000);
-      _updatePriceDisplay(price);
-    }} catch(_) {{}}
-  }};
-  _ws.onclose = () => {{ setTimeout(connectWS, 3000); }};
-  _ws.onerror = () => {{ try {{ _ws.close(); }} catch(e) {{}} }};
+async function _pollPrice() {{
+  try {{
+    const d = await fetch('/api/btc-price').then(r => r.json());
+    if (!d.price) return;
+    const price = d.price, t = d.t || Date.now();
+    _livePrice = price;
+    const slot = _utcSlotStart(t);
+    if (_wsSlotStart !== slot) {{ _wsSlotStart = slot; _ticks = []; }}
+    _ticks.push({{t, p: price}});
+    if (_ticks.length > 1800) _ticks = _ticks.slice(-1800);
+    _updatePriceDisplay(price);
+  }} catch(_) {{}}
 }}
 
 async function fetchPrices() {{
@@ -1069,12 +1059,13 @@ async function refresh() {{
   document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + nowLA() + ' (LA)';
 }}
 
-// Seed chart from 1m klines, then start aggTrade WebSocket
-seedTicksFromKlines().then(() => {{ connectWS(); drawChart(); }});
+// Seed chart from VPS-cached price, then poll every second
+seedTicksFromKlines().then(() => {{ _pollPrice(); drawChart(); }});
 refresh();
 fetchPredictions();
 updateCountdown();
 setInterval(updateCountdown, 1000);
+setInterval(_pollPrice, 1000);         // price update every second (via VPS proxy)
 setInterval(drawChart, 1000);          // redraw chart every second
 setInterval(fetchPrices, 30000);
 setInterval(fetchKalshi15m, 30000);
@@ -2936,6 +2927,28 @@ def run_web_dashboard(
     except Exception as _kp_err:
         print(f"[web] kalshi predictor thread failed to start: {_kp_err}")
 
+    # BTC price cache — updated every 2s so browser can poll without hitting Binance directly
+    _btc_cache: dict = {"price": None, "t": 0}
+
+    def _btc_price_updater():
+        import urllib.request as _ur2
+        import json as _json2
+        import time as _time2
+        while True:
+            try:
+                req = _ur2.Request(
+                    "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+                    headers={"Accept": "application/json"},
+                )
+                with _ur2.urlopen(req, timeout=5) as _r:
+                    _btc_cache["price"] = float(_json2.loads(_r.read())["price"])
+                    _btc_cache["t"] = int(datetime.now(UTC).timestamp() * 1000)
+            except Exception:
+                pass
+            _time2.sleep(2)
+
+    threading.Thread(target=_btc_price_updater, daemon=True).start()
+
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             path = self.path.split("?", 1)[0]
@@ -3072,6 +3085,12 @@ def run_web_dashboard(
                         "change_log": ai.get("change_log", [])[-3:],
                     }
                 self._send_json(200, {"ok": True, "symbols": summary})
+                return
+            if path == "/api/btc-price":
+                if _btc_cache["price"]:
+                    self._send_json(200, {"price": _btc_cache["price"], "t": _btc_cache["t"]})
+                else:
+                    self._send_json(503, {"error": "price not ready"})
                 return
             if path == "/api/kalshi-predictions":
                 try:
