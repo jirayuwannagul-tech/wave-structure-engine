@@ -601,6 +601,37 @@ async function fetchWave() {{
   }} catch(e) {{}}
 }}
 
+// ── Binance WebSocket realtime price ───────────────────────────────────────
+let _ws = null;
+let _livePrice = null;
+let _currentInterval = '15m';
+
+function _updatePriceDisplay(price) {{
+  document.getElementById('target-price').textContent =
+    '$' + price.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+}}
+
+function connectWS(interval) {{
+  if (_ws) {{ try {{ _ws.close(); }} catch(e) {{}} _ws = null; }}
+  _currentInterval = interval || _currentInterval;
+  const stream = `btcusdt@kline_${{_currentInterval}}`;
+  _ws = new WebSocket(`wss://stream.binance.com:9443/ws/${{stream}}`);
+
+  _ws.onmessage = (e) => {{
+    try {{
+      const d = JSON.parse(e.data);
+      const k = d.k;
+      _livePrice = parseFloat(k.c);
+      // Push live close into last kline so chart flows
+      if (klines.length > 0) klines[klines.length-1][4] = k.c;
+      _updatePriceDisplay(_livePrice);
+    }} catch(_) {{}}
+  }};
+
+  _ws.onclose = () => {{ setTimeout(() => connectWS(), 3000); }};
+  _ws.onerror = () => {{ try {{ _ws.close(); }} catch(e) {{}} }};
+}}
+
 async function fetchPrices() {{
   try {{
     const r = await fetch('/api/ticker');
@@ -610,20 +641,22 @@ async function fetchPrices() {{
     if (!btc) return;
     const p = parseFloat(btc.lastPrice);
     const chg = parseFloat(btc.priceChangePercent);
-    document.getElementById('target-price').textContent = '$' + p.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+    if (!_livePrice) _updatePriceDisplay(p); // WS not ready yet
     const el = document.getElementById('price-chg');
     el.textContent = (chg>=0?'+':'') + chg.toFixed(2) + '% (24h)';
     el.className = 'price-chg ' + (chg>=0?'up':'dn');
-    drawChart(); // redraw with latest price vs target
   }} catch(e) {{}}
 }}
 
 async function fetchChart(tf) {{
   const intervalMap = {{'15m':'15m','1h':'1h','1d':'1d'}};
   const interval = intervalMap[tf] || '15m';
+  _currentInterval = interval;
   try {{
-    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${{interval}}&limit=40`);
+    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${{interval}}&limit=60`);
     klines = await r.json();
+    // Reconnect WS for new interval
+    connectWS(interval);
     drawChart();
   }} catch(e) {{}}
 }}
@@ -923,17 +956,18 @@ async function refresh() {{
   document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + new Date().toLocaleTimeString('th-TH');
 }}
 
-fetchChart('15m');
+fetchChart('15m');   // also starts WebSocket
 refresh();
 fetchPredictions();
 updateCountdown();
-setInterval(updateCountdown, 1000);   // realtime every second
-setInterval(fetchPrices, 10000);
+setInterval(updateCountdown, 1000);    // countdown every second
+setInterval(drawChart, 1000);          // chart redraws every second
+setInterval(fetchPrices, 30000);       // 24h % change (less critical)
 setInterval(fetchKalshi15m, 30000);
 setInterval(fetchPredictions, 60000);
-setInterval(() => {{ renderVerdict(); }}, 10000);
+setInterval(() => {{ renderVerdict(); }}, 15000);
 setInterval(refresh, 60000);
-setInterval(drawChart, 15000);
+setInterval(() => {{ fetchChart(_currentInterval); }}, 60000); // refresh klines every 1min
 </script>
 </body></html>"""
 
