@@ -334,7 +334,7 @@ body{{background:#111827;color:#f3f4f6;font-family:'Inter',-apple-system,sans-se
 .target-price{{font-size:36px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-1px}}
 .price-chg{{font-size:13px;margin-top:4px}}
 .up{{color:#10b981}}.dn{{color:#ef4444}}
-canvas{{display:block;width:100%;height:120px;border-radius:8px;background:#1f2937;margin:16px 0}}
+canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d1117;margin:16px 0}}
 .tf-tabs{{display:flex;gap:8px;margin:20px 0 24px}}
 .tf-tab{{padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #374151;color:#9ca3af;background:transparent;transition:.15s}}
 .tf-tab.active{{background:#374151;color:#fff;border-color:#374151}}
@@ -601,34 +601,45 @@ async function fetchWave() {{
   }} catch(e) {{}}
 }}
 
-// ── Binance WebSocket realtime price ───────────────────────────────────────
+// ── Binance WebSocket realtime price (aggTrade = every trade tick) ──────────
 let _ws = null;
 let _livePrice = null;
 let _currentInterval = '15m';
+let _ticks = [];        // {{t: epoch_ms, p: price}} for current 15m window
+let _wsSlotStart = null;
+
+function _utcSlotStart(ms) {{
+  const d = new Date(ms);
+  const slotMin = Math.floor(d.getUTCMinutes() / 15) * 15;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(),
+                  d.getUTCHours(), slotMin, 0, 0);
+}}
 
 function _updatePriceDisplay(price) {{
   document.getElementById('target-price').textContent =
     '$' + price.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
 }}
 
-function connectWS(interval) {{
+function connectWS() {{
   if (_ws) {{ try {{ _ws.close(); }} catch(e) {{}} _ws = null; }}
-  _currentInterval = interval || _currentInterval;
-  const stream = `btcusdt@kline_${{_currentInterval}}`;
-  _ws = new WebSocket(`wss://stream.binance.com:9443/ws/${{stream}}`);
-
+  _ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@aggTrade');
   _ws.onmessage = (e) => {{
     try {{
       const d = JSON.parse(e.data);
-      const k = d.k;
-      _livePrice = parseFloat(k.c);
-      // Push live close into last kline so chart flows
-      if (klines.length > 0) klines[klines.length-1][4] = k.c;
-      _updatePriceDisplay(_livePrice);
+      const price = parseFloat(d.p);
+      const t = d.T;
+      _livePrice = price;
+      const slot = _utcSlotStart(t);
+      if (_wsSlotStart !== slot) {{
+        _wsSlotStart = slot;
+        _ticks = [];
+      }}
+      _ticks.push({{t, p: price}});
+      if (_ticks.length > 3000) _ticks = _ticks.slice(-3000);
+      _updatePriceDisplay(price);
     }} catch(_) {{}}
   }};
-
-  _ws.onclose = () => {{ setTimeout(() => connectWS(), 3000); }};
+  _ws.onclose = () => {{ setTimeout(connectWS, 3000); }};
   _ws.onerror = () => {{ try {{ _ws.close(); }} catch(e) {{}} }};
 }}
 
@@ -648,87 +659,176 @@ async function fetchPrices() {{
   }} catch(e) {{}}
 }}
 
-async function fetchChart(tf) {{
-  const intervalMap = {{'15m':'15m','1h':'1h','1d':'1d'}};
-  const interval = intervalMap[tf] || '15m';
-  _currentInterval = interval;
+async function seedTicksFromKlines() {{
+  // Pre-populate tick array from 1m klines for current 15m slot (so chart isn't empty on load)
   try {{
-    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${{interval}}&limit=60`);
-    klines = await r.json();
-    // Reconnect WS for new interval
-    connectWS(interval);
-    drawChart();
+    const slotStart = _utcSlotStart(Date.now());
+    const r = await fetch(
+      `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&startTime=${{slotStart}}&limit=20`
+    );
+    const data = await r.json();
+    if (!data.length) return;
+    _wsSlotStart = slotStart;
+    _ticks = [];
+    for (const k of data) {{
+      _ticks.push({{t: k[0], p: parseFloat(k[1])}});  // open
+      _ticks.push({{t: k[6], p: parseFloat(k[4])}});  // close
+    }}
   }} catch(e) {{}}
+}}
+
+async function fetchChart(tf) {{
+  _currentInterval = tf || '15m';
+  if (_currentInterval !== '15m') {{
+    try {{
+      const r = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${{_currentInterval}}&limit=60`
+      );
+      klines = await r.json();
+    }} catch(e) {{}}
+  }}
+  drawChart();
 }}
 
 function drawChart() {{
   const canvas = document.getElementById('chart');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth, H = 120;
+  const W = canvas.offsetWidth, H = 180;
   canvas.width = W; canvas.height = H;
-  if (!klines.length) return;
-  const closes = klines.map(k => parseFloat(k[4]));
-  const last = closes[closes.length-1];
+  ctx.clearRect(0, 0, W, H);
+  if (_currentInterval === '15m') drawTickChart(ctx, W, H);
+  else drawKlineChart(ctx, W, H);
+}}
 
-  // Include target price in scale so it's always visible
+function drawTickChart(ctx, W, H) {{
+  const now = Date.now();
+  const slotStart = _wsSlotStart || _utcSlotStart(now);
+  const slotEnd = slotStart + 15 * 60 * 1000;
+
+  if (!_ticks.length) {{
+    ctx.fillStyle = '#374151'; ctx.font = '13px Inter,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('กำลังโหลดราคา...', W / 2, H / 2);
+    return;
+  }}
+
+  const prices = _ticks.map(t => t.p);
+  const last = prices[prices.length - 1];
   const target = _cwPred ? _cwPred.target_price : null;
-  const allVals = target ? [...closes, target] : closes;
-  const mn = Math.min(...allVals), mx = Math.max(...allVals);
-  const range = mx - mn || 1;
-  const pad = 12;
-  const toY = v => H - pad - ((v-mn)/range)*(H-pad*2);
-  const toX = i => pad + (i/(closes.length-1))*(W-pad*2);
 
-  ctx.clearRect(0,0,W,H);
+  const allVals = target ? [...prices, target] : prices;
+  let mn = Math.min(...allVals), mx = Math.max(...allVals);
+  const rng0 = mx - mn || 100;
+  mn -= rng0 * 0.15; mx += rng0 * 0.15;
+  const rng = mx - mn;
 
-  // Gradient fill (colour by whether current price beats target)
-  const winning = target ? (
-    (_cwPred.prediction==='UP' && last>target) ||
-    (_cwPred.prediction==='DOWN' && last<target)
-  ) : true;
+  const padX = 8, padTop = 26, padBot = 18;
+  const chartH = H - padTop - padBot;
+  const toY = v => padTop + (1 - (v - mn) / rng) * chartH;
+  const toX = t => padX + Math.min(Math.max((t - slotStart) / (slotEnd - slotStart), 0), 1) * (W - padX * 2);
+
+  // Background vertical grid (every 5 min)
+  ctx.strokeStyle = '#1a2232'; ctx.lineWidth = 1;
+  for (let m = 0; m <= 15; m += 5) {{
+    const x = toX(slotStart + m * 60000);
+    ctx.beginPath(); ctx.moveTo(x, padTop); ctx.lineTo(x, padTop + chartH); ctx.stroke();
+  }}
+  // Horizontal grid
+  ctx.strokeStyle = '#1a2232';
+  for (let i = 1; i < 4; i++) {{
+    const y = padTop + chartH * i / 4;
+    ctx.beginPath(); ctx.moveTo(padX, y); ctx.lineTo(W - padX, y); ctx.stroke();
+  }}
+
+  // Target dashed line
+  if (target) {{
+    const ty = toY(target);
+    ctx.setLineDash([6, 4]); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(padX, ty); ctx.lineTo(W - padX, ty); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f59e0b'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('Target $' + Math.round(target).toLocaleString('en-US'), padX + 4, ty - 4);
+  }}
+
+  // Win/lose color
+  const winning = target
+    ? ((_cwPred.prediction==='UP' && last>target) || (_cwPred.prediction==='DOWN' && last<target))
+    : last >= prices[0];
   const lineColor = winning ? '#10b981' : '#ef4444';
-  const grad = ctx.createLinearGradient(0,0,0,H);
-  grad.addColorStop(0, winning ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)');
+
+  // Gradient fill under line
+  const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
+  grad.addColorStop(0, winning ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.beginPath();
-  closes.forEach((c,i) => {{ i===0 ? ctx.moveTo(toX(i),toY(c)) : ctx.lineTo(toX(i),toY(c)); }});
-  ctx.lineTo(toX(closes.length-1),H); ctx.lineTo(pad,H); ctx.closePath();
-  ctx.fillStyle=grad; ctx.fill();
+  _ticks.forEach(({{ t, p }}, i) => {{
+    i === 0 ? ctx.moveTo(toX(t), toY(p)) : ctx.lineTo(toX(t), toY(p));
+  }});
+  const lx = toX(_ticks[_ticks.length - 1].t);
+  ctx.lineTo(lx, padTop + chartH); ctx.lineTo(padX, padTop + chartH); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
 
   // Price line
   ctx.beginPath();
-  closes.forEach((c,i) => {{ i===0 ? ctx.moveTo(toX(i),toY(c)) : ctx.lineTo(toX(i),toY(c)); }});
-  ctx.strokeStyle=lineColor; ctx.lineWidth=2; ctx.stroke();
+  _ticks.forEach(({{ t, p }}, i) => {{
+    i === 0 ? ctx.moveTo(toX(t), toY(p)) : ctx.lineTo(toX(t), toY(p));
+  }});
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
-  // Target price line
-  if (target) {{
-    const ty = toY(target);
-    ctx.setLineDash([5,4]);
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(pad,ty); ctx.lineTo(W-pad,ty); ctx.stroke();
-    ctx.setLineDash([]);
-    // Label
-    ctx.fillStyle='#f59e0b'; ctx.font='10px Inter,sans-serif';
-    ctx.fillText('Target $'+Math.round(target).toLocaleString('en-US'), pad+2, ty-3);
+  // Glow dot + live dot
+  const ly = toY(last);
+  ctx.beginPath(); ctx.arc(lx, ly, 9, 0, Math.PI * 2);
+  ctx.fillStyle = winning ? 'rgba(16,185,129,0.28)' : 'rgba(239,68,68,0.28)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor; ctx.fill();
+
+  // X-axis time labels
+  ctx.fillStyle = '#6b7280'; ctx.font = '9px Inter,sans-serif';
+  for (let m = 0; m <= 15; m += 5) {{
+    const x = toX(slotStart + m * 60000);
+    const label = new Date(slotStart + m * 60000).toLocaleTimeString('en-US',
+      {{timeZone: _TZ, hour: '2-digit', minute: '2-digit', hour12: false}});
+    ctx.textAlign = m === 0 ? 'left' : m === 15 ? 'right' : 'center';
+    ctx.fillText(label, x, H - 4);
   }}
 
-  // Current price dot
-  const lx = toX(closes.length-1), ly = toY(last);
-  ctx.beginPath(); ctx.arc(lx,ly,4,0,Math.PI*2);
-  ctx.fillStyle=lineColor; ctx.fill();
-
-  // Live P&L label top-right
+  // P&L label top-right
   if (target) {{
     const diff = last - target;
-    const pct = ((diff/target)*100).toFixed(2);
-    const label = (diff>=0?'+':'')+pct+'%  '+(winning?'✓ กำลังชนะ':'✗ กำลังแพ้');
-    ctx.fillStyle = winning?'#10b981':'#ef4444';
-    ctx.font = 'bold 11px Inter,sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(label, W-pad, pad+2);
-    ctx.textAlign = 'left';
+    const pct = ((diff / target) * 100).toFixed(3);
+    const label = (diff >= 0 ? '+' : '') + pct + '%  ' + (winning ? '✓ ชนะ' : '✗ แพ้');
+    ctx.fillStyle = lineColor; ctx.font = 'bold 11px Inter,sans-serif';
+    ctx.textAlign = 'right'; ctx.fillText(label, W - padX, padTop - 8); ctx.textAlign = 'left';
   }}
+
+  // Live price label near dot
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText('$' + last.toLocaleString('en-US', {{minimumFractionDigits:2, maximumFractionDigits:2}}),
+    W - padX, Math.max(ly - 7, padTop + 12));
+  ctx.textAlign = 'left';
+}}
+
+function drawKlineChart(ctx, W, H) {{
+  if (!klines.length) return;
+  const closes = klines.map(k => parseFloat(k[4]));
+  const last = closes[closes.length - 1];
+  const mn = Math.min(...closes), mx = Math.max(...closes);
+  const range = mx - mn || 1;
+  const pad = 12;
+  const toY = v => H - pad - ((v - mn) / range) * (H - pad * 2);
+  const toX = i => pad + (i / (closes.length - 1)) * (W - pad * 2);
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(99,102,241,0.2)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.beginPath();
+  closes.forEach((c, i) => {{ i === 0 ? ctx.moveTo(toX(i), toY(c)) : ctx.lineTo(toX(i), toY(c)); }});
+  ctx.lineTo(toX(closes.length - 1), H); ctx.lineTo(pad, H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  closes.forEach((c, i) => {{ i === 0 ? ctx.moveTo(toX(i), toY(c)) : ctx.lineTo(toX(i), toY(c)); }});
+  ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 2; ctx.stroke();
+  const lx = toX(closes.length - 1), ly = toY(last);
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fillStyle = '#6366f1'; ctx.fill();
 }}
 
 function drawPredChart(preds) {{
@@ -990,18 +1090,19 @@ async function refresh() {{
   document.getElementById('refresh-note').textContent = 'อัพเดทล่าสุด: ' + nowLA() + ' (LA)';
 }}
 
-fetchChart('15m');   // also starts WebSocket
+// Seed chart from 1m klines, then start aggTrade WebSocket
+seedTicksFromKlines().then(() => {{ connectWS(); drawChart(); }});
 refresh();
 fetchPredictions();
 updateCountdown();
-setInterval(updateCountdown, 1000);    // countdown every second
-setInterval(drawChart, 1000);          // chart redraws every second
-setInterval(fetchPrices, 30000);       // 24h % change (less critical)
+setInterval(updateCountdown, 1000);
+setInterval(drawChart, 1000);          // redraw chart every second
+setInterval(fetchPrices, 30000);
 setInterval(fetchKalshi15m, 30000);
 setInterval(fetchPredictions, 60000);
 setInterval(() => {{ renderVerdict(); }}, 15000);
 setInterval(refresh, 60000);
-setInterval(() => {{ fetchChart(_currentInterval); }}, 60000); // refresh klines every 1min
+setInterval(() => {{ if (_currentInterval !== '15m') fetchChart(_currentInterval); }}, 60000);
 </script>
 </body></html>"""
 
