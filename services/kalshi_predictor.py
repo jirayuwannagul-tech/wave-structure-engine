@@ -33,43 +33,59 @@ def _btc_price() -> float:
         return float(json.loads(r.read())["price"])
 
 
-# ── 15m Elliott Wave analysis ───────────────────────────────────────────────
+# ── 15m Elliott Wave analysis (pure code, no AI) ───────────────────────────
 
 def run_ew_15m_analysis() -> tuple[str, dict]:
-    """Run full EW analysis on 15m BTC data. Return (bias, signals).
+    """Detect EW structure on 15m BTC data using pivot + Dow Theory. No AI.
 
     bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
-    signals = dict with EW details for logging
     """
-    from core.engine import build_timeframe_analysis
+    from analysis.indicator_engine import calculate_atr
+    from analysis.pivot_detector import detect_pivots
+    from analysis.trend_classifier import classify_market_trend
+    from analysis.inprogress_detector import detect_inprogress_wave
+    from data.candle_utils import drop_unclosed_candle
+    from data.market_data_fetcher import MarketDataFetcher
 
-    analysis = build_timeframe_analysis("BTCUSDT", "15m", limit=200)
+    fetcher = MarketDataFetcher(symbol="BTCUSDT", interval="15m", limit=200)
+    df = drop_unclosed_candle(fetcher.fetch_ohlcv())
 
-    bias_raw = (analysis.get("bias") or "").upper()
-    side = (analysis.get("side") or "").upper()
-    pattern = analysis.get("pattern_type") or "unknown"
-    has_pattern = analysis.get("has_pattern", False)
+    # ATR for pivot sensitivity
+    df = df.copy()
+    df["atr"] = calculate_atr(df, period=14)
 
-    # Extract wave position details if available
-    scenario = analysis.get("scenario") or {}
-    summary = (scenario.get("analysis_summary") or {})
-    wave_pos = summary.get("current_leg") or analysis.get("wave_position") or "?"
+    pivots = detect_pivots(df, right=1, min_swing_atr_mult=0.1)
+    trend = classify_market_trend(pivots, df=df)
 
-    # Determine bias
-    if "BULL" in bias_raw or side == "LONG":
+    # Check in-progress wave direction for extra signal
+    inprogress = detect_inprogress_wave(pivots)
+    wave_dir = None
+    if inprogress:
+        wave_dir = getattr(inprogress, "direction", None)
+
+    state = trend.state  # UPTREND | DOWNTREND | SIDEWAY | BROKEN_UP | BROKEN_DOWN
+
+    if state in ("UPTREND", "BROKEN_UP"):
         bias = "BULLISH"
-    elif "BEAR" in bias_raw or side == "SHORT":
+    elif state in ("DOWNTREND", "BROKEN_DOWN"):
         bias = "BEARISH"
     else:
-        bias = "NEUTRAL"
+        # Sideway — use in-progress wave direction as tiebreaker
+        if wave_dir == "bullish":
+            bias = "BULLISH"
+        elif wave_dir == "bearish":
+            bias = "BEARISH"
+        else:
+            bias = "NEUTRAL"
 
     signals = {
-        "bias_raw": bias_raw,
-        "side": side,
-        "pattern": pattern,
-        "has_pattern": has_pattern,
-        "wave_position": wave_pos,
-        "source": "EW-15m",
+        "trend_state": state,
+        "swing_structure": trend.swing_structure,
+        "confidence": trend.confidence,
+        "wave_dir": wave_dir,
+        "last_high": trend.last_high,
+        "last_low": trend.last_low,
+        "source": "EW-15m-code",
     }
     return bias, signals
 
