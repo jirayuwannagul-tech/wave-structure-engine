@@ -208,17 +208,18 @@ def _get_market_target(event_ticker: str) -> float | None:
 def _slot_ticker(now: datetime) -> tuple[str, datetime]:
     """Generate a synthetic ticker + expiry for the current 15-min slot.
 
-    Slots: :00-:14, :15-:29, :30-:44, :45-:59 UTC.
-    Predict at :01/:16/:31/:46 → expires at :15/:30/:45/:00 next hour.
+    Ticker includes date + hour + slot_start so each 15-min window is unique.
+    e.g. BTCPRED-26JUL081145 = 2026-07-08 slot starting at 11:45 UTC
     """
     m = now.minute
     slot_start = (m // 15) * 15          # 0, 15, 30, 45
-    slot_end = slot_start + 15            # 15, 30, 45, 60
+    slot_end = slot_start + 15
     if slot_end >= 60:
         exp = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     else:
         exp = now.replace(minute=slot_end, second=0, microsecond=0)
-    tag = now.strftime(f"%y%b%d{slot_start:02d}%M").upper()[:12]
+    # Include hour so 11:01 and 12:01 get different tickers
+    tag = now.strftime(f"%y%b%d%H{slot_start:02d}").upper()
     ticker = f"BTCPRED-{tag}"
     return ticker, exp
 
