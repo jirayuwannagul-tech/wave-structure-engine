@@ -151,8 +151,32 @@ def _parse_ticker_expiry(ticker: str) -> datetime | None:
         return None
 
 
+def _parse_event_expiry(ev: dict) -> datetime | None:
+    """Parse expiry from event dict — prefers strike_date (UTC) over ticker parsing."""
+    for field in ("strike_date", "expiration_time", "close_time"):
+        val = ev.get(field, "")
+        if val:
+            try:
+                return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+    return None
+
+
+def _parse_title_price(title: str) -> float | None:
+    """Extract price from Kalshi event title e.g. 'BTC 15 min · $62,479.80 target'."""
+    import re
+    m = re.search(r"\$([0-9,]+(?:\.[0-9]+)?)", title or "")
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
 def _fetch_active_event() -> dict | None:
-    """Return the soonest open KXBTC15M event (handles None expiration_time)."""
+    """Return the soonest open KXBTC15M event using strike_date (UTC) for expiry."""
     try:
         data = _kalshi_fetch(f"{_KALSHI_BASE}/events?series_ticker=KXBTC15M&limit=20&status=open")
     except Exception as e:
@@ -162,24 +186,10 @@ def _fetch_active_event() -> dict | None:
     now = datetime.now(UTC)
     future = []
     for e in data.get("events", []):
-        # Try API expiration_time first, then parse from ticker
-        exp_str = e.get("expiration_time") or e.get("close_time") or ""
-        if exp_str:
-            try:
-                exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
-            except ValueError:
-                exp = None
-        else:
-            exp = None
-
+        exp = _parse_event_expiry(e)
         if exp is None:
-            exp = _parse_ticker_expiry(e.get("event_ticker", ""))
-
-        if exp is None:
-            # Can't determine expiry — include it if status=open
             future.append((now + timedelta(minutes=15), e))
             continue
-
         if exp > now:
             future.append((exp, e))
 
@@ -189,8 +199,8 @@ def _fetch_active_event() -> dict | None:
     return future[0][1]
 
 
-def _get_market_target(event_ticker: str) -> float | None:
-    """Return floor_strike from the Kalshi market (the BTC price-to-beat)."""
+def _get_market_target(event_ticker: str, title: str = "") -> float | None:
+    """Return Kalshi floor_strike, falling back to price parsed from event title."""
     try:
         data = _kalshi_fetch(f"{_KALSHI_BASE}/markets?event_ticker={event_ticker}&limit=5")
         markets = data.get("markets", [])
@@ -200,7 +210,8 @@ def _get_market_target(event_ticker: str) -> float | None:
                 return float(strike)
     except Exception:
         pass
-    return None
+    # Fallback: parse from event title e.g. "BTC 15 min · $62,479.80 target"
+    return _parse_title_price(title)
 
 
 # ── Public: make / resolve / get ────────────────────────────────────────────
@@ -231,25 +242,21 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
 
     now = datetime.now(UTC)
 
-    # Try to get a live Kalshi event for the official target price
+    # Try to get a live Kalshi event for the official CF Benchmarks target price
     ev = _fetch_active_event()
     if ev:
         ticker = ev["event_ticker"]
-        exp_str = ev.get("expiration_time") or ev.get("close_time") or ""
-        exp = None
-        if exp_str:
-            try:
-                exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
-            except ValueError:
-                pass
+        title = ev.get("title", "")
+        exp = _parse_event_expiry(ev)
         if exp is None:
             exp = _parse_ticker_expiry(ticker)
-        target = _get_market_target(ticker)
+        target = _get_market_target(ticker, title)
+        print(f"[kalshi] Kalshi event found: {ticker} | target=${target} | exp={exp}")
     else:
         # No Kalshi event — use synthetic slot ticker
         ticker, exp = _slot_ticker(now)
-        exp_str = exp.isoformat()
         target = None
+        print(f"[kalshi] No Kalshi event — using synthetic {ticker}")
 
     # Already recorded this slot?
     conn = sqlite3.connect(str(db))
