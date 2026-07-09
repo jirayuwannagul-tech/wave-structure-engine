@@ -403,9 +403,12 @@ canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d11
     <div class="btc-icon">₿</div>
     <div><div class="coin-title">Bitcoin Up or Down</div><div class="coin-sub" id="tf-label">15 นาที · อัพเดทอัตโนมัติ</div></div>
   </div>
-  <div class="target-label">ราคาที่ต้องชนะ</div>
+  <div class="target-label">ราคา BTC ตอนนี้</div>
   <div class="target-price" id="target-price"><span class="spinner"></span></div>
   <div class="price-chg" id="price-chg">&nbsp;</div>
+  <div style="display:flex;gap:20px;margin:4px 0 0;font-size:12px;color:#9ca3af">
+    <span>เส้นประ = <strong id="target-val" style="color:#f59e0b">—</strong> (ราคาที่ใช้ตัดสิน UP/DOWN)</span>
+  </div>
   <canvas id="chart" height="120"></canvas>
   <div class="tf-tabs">
     <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
@@ -1007,10 +1010,15 @@ function updateCwBox() {{
 
   const b15 = _cwPred.ew_bias_15m || '—';
   const b4h = (_cwPred.ew_bias_4h||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,10);
-  const tgt = _cwPred.target_price
-    ? '$'+Number(_cwPred.target_price).toLocaleString('en-US',{{minimumFractionDigits:0,maximumFractionDigits:0}})
+  const tgtNum = _cwPred.target_price;
+  const tgt = tgtNum
+    ? '$'+Number(tgtNum).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}})
     : '—';
-  detail.innerHTML = `15m bias: <strong>${{b15}}</strong> &nbsp;·&nbsp; 4H EW: <strong>${{b4h||'—'}}</strong><br>Target: <strong>${{tgt}}</strong>`;
+  detail.innerHTML = `15m EW: <strong>${{b15}}</strong> &nbsp;·&nbsp; 4H EW: <strong>${{b4h||'—'}}</strong>`;
+
+  // Update target price hint below live price
+  const tv = document.getElementById('target-val');
+  if (tv) tv.textContent = tgt;
 }}
 
 // ── Prediction history + current window data ──
