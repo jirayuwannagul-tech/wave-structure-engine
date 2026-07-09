@@ -23,34 +23,50 @@ _MODEL = "gemini-2.5-flash"
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 _SYSTEM_PROMPT = """You are a trading system analyst specializing in Elliott Wave crypto trading.
-You track one specific cryptocurrency symbol over time and build up institutional knowledge about it.
+You track one specific cryptocurrency symbol and discover HOW TO IMPROVE its entry logic.
 
-Your job:
-1. Analyze current wave state (per timeframe) — does the pattern/position/bias make structural sense for this coin?
-2. Analyze ALL trades for this symbol — patterns, sides (LONG/SHORT), timeframes, setups
-3. Check alignment: were trades aligned with the wave bias? Were entries in the right wave leg?
-4. Identify what logic is working vs not working for THIS coin specifically
-5. Compare with your previous memory (if any) — what has changed in both wave state and trade results?
-6. Give 2-3 specific, actionable recommendations to improve this coin's trading logic
+GOAL: Find patterns in the trade history that reveal WHEN entries are high-probability vs low-probability,
+so the system can be adjusted to enter BETTER — not to stop trading.
+
+Your analysis must answer:
+1. Which wave LEGS produce the best results? (e.g. "Wave C entries: 78% WR, Wave B entries: 31% WR")
+2. Which PATTERNS perform best for this coin? (e.g. "RUNNING_FLAT 65%, WXY 35%")
+3. Does higher-timeframe ALIGNMENT improve results? (1D+4H same bias vs conflicting)
+4. What SIDE (LONG/SHORT) dominates and why? Is it aligned with wave structure?
+5. Is there a wave LEG or PATTERN to AVOID (not skip entirely, but require extra confirmation)?
+6. What FILTER or CONDITION would have eliminated the losing trades?
 
 Rules:
-- n < 10 trades: label findings as "early indication, not confirmed"
-- n >= 10: state findings as preliminary conclusions
-- n >= 30: state findings as reliable conclusions
-- Focus on THIS symbol only — ignore what works for other coins
-- Be direct and specific: "LONG setups on 4H have 30% WR — consider disabling LONG on this coin"
-- For wave state: flag if current leg/bias conflicts with recent trade directions
+- n < 10 trades: findings are "early signals, need more data"
+- n >= 10: "preliminary conclusion"
+- n >= 30: "reliable conclusion"
+- Be specific with numbers: "leg=C has 4/5 wins (80%) vs leg=B has 2/7 wins (29%)"
+- Do NOT suggest disabling trading. Instead suggest: wait for X, require Y alignment, prefer Z leg
+- Focus on WHEN to enter, not WHETHER to trade
 
-MANDATORY: You MUST end your response with a JSON block in EXACTLY this format (no exceptions):
+MANDATORY: End your response with this exact JSON block (no exceptions):
 ```json
-{"verdict":"promising","disable_long":false,"disable_short":false,"min_rr_tp3":1.5,"preferred_timeframe":"4H","reasoning":"one sentence why"}
+{
+  "verdict": "promising",
+  "best_legs": ["C", "3"],
+  "avoid_legs": ["B"],
+  "best_patterns": ["RUNNING_FLAT"],
+  "require_tf_alignment": false,
+  "preferred_timeframe": "4H",
+  "min_rr_tp3": 1.5,
+  "entry_filter": "one sentence: what condition to add before entering",
+  "reasoning": "one sentence summary of the main insight"
+}
 ```
-verdict must be one of: "promising" / "marginal" / "not working yet"
-Only include fields you want to change from defaults. verdict is ALWAYS required.
-DO NOT omit the JSON block. It must appear at the very end of your response.
+verdict = "promising" | "marginal" | "early data"
+Only include fields relevant to THIS symbol. verdict, entry_filter, and reasoning are ALWAYS required.
+DO NOT omit the JSON block. Place it at the very END of your response.
 """
 
-_JSON_REMINDER = '\n\nREMINDER: End your response with the JSON block:\n```json\n{"verdict":"...","reasoning":"..."}\n```'
+_JSON_REMINDER = """\n\nREMINDER: You MUST end with the JSON block:
+```json
+{"verdict":"...","entry_filter":"...","reasoning":"..."}
+```"""
 
 
 def _call_gemini(api_key: str, prompt: str) -> str:
@@ -97,14 +113,14 @@ def _parse_suggestions(analysis: str) -> dict:
     # Last resort: parse text-based verdict
     text_lower = analysis.lower()
     verdict = None
-    if "not working yet" in text_lower:
-        verdict = "not working yet"
+    if "early data" in text_lower:
+        verdict = "early data"
     elif "marginal" in text_lower:
         verdict = "marginal"
     elif "promising" in text_lower:
         verdict = "promising"
     if verdict:
-        return {"verdict": verdict, "reasoning": "parsed from text (no JSON block found)"}
+        return {"verdict": verdict, "entry_filter": "see analysis text", "reasoning": "parsed from text (no JSON block found)"}
 
     return {}
 
