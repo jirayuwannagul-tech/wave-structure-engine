@@ -309,172 +309,187 @@ tr:hover td {{ background: #141414; }}
 
 
 def _build_kalshi_html() -> str:
-    _NAV = """<nav style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-  <a href="/" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Dashboard</a>
-  <a href="/history" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">History</a>
-  <a href="/board" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Board</a>
-  <a href="/edge" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">Edge</a>
-  <a href="/ai-rules" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1e1e2e">AI Rules</a>
-  <a href="/kalshi" style="padding:6px 14px;border-radius:8px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:#00b894">Prediction</a>
-</nav>"""
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>BTC Up or Down · Prediction</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#111827;color:#f3f4f6;font-family:'Inter',-apple-system,sans-serif;min-height:100vh}}
-.page{{display:flex;gap:0;min-height:100vh}}
-.main{{flex:1;padding:24px 20px;max-width:780px}}
-.sidebar{{width:280px;background:#1f2937;border-left:1px solid #374151;padding:20px 16px;flex-shrink:0}}
-.coin-header{{display:flex;align-items:center;gap:12px;margin-bottom:4px}}
-.btc-icon{{width:40px;height:40px;background:#f7931a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#fff;flex-shrink:0}}
-.coin-title{{font-size:20px;font-weight:700}}
-.coin-sub{{font-size:12px;color:#9ca3af;margin-top:2px}}
-.target-label{{font-size:12px;color:#9ca3af;margin:20px 0 4px;text-transform:uppercase;letter-spacing:.5px}}
-.target-price{{font-size:36px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-1px}}
-.price-chg{{font-size:13px;margin-top:4px}}
-.up{{color:#10b981}}.dn{{color:#ef4444}}
-canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d1117;margin:16px 0}}
-.tf-tabs{{display:flex;gap:8px;margin:20px 0 24px}}
-.tf-tab{{padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #374151;color:#9ca3af;background:transparent;transition:.15s}}
-.tf-tab.active{{background:#374151;color:#fff;border-color:#374151}}
-.bias-box{{background:#1f2937;border:1px solid #374151;border-radius:10px;padding:14px 16px;margin-top:16px}}
-.bias-title{{font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}}
-.bias-chips{{display:flex;gap:8px;flex-wrap:wrap}}
-.chip{{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}}
-.chip-bull{{background:#064e3b;color:#10b981;border:1px solid #10b981}}
-.chip-bear{{background:#7f1d1d;color:#ef4444;border:1px solid #ef4444}}
-.chip-neu{{background:#1c1917;color:#f59e0b;border:1px solid #f59e0b}}
-.basis-note{{font-size:11px;color:#6b7280;margin-top:10px}}
-.refresh-note{{font-size:11px;color:#4b5563;margin-top:20px}}
-/* current-window box */
-.cw-box{{border-radius:12px;padding:16px 18px;margin-top:16px;border:2px solid #374151;background:#1f2937;transition:border-color .3s}}
-.cw-box.is-up{{border-color:#10b981;background:#062019}}
-.cw-box.is-dn{{border-color:#ef4444;background:#1f0a0a}}
-.cw-box.is-wait{{border-color:#374151;background:#1f2937}}
-.cw-header{{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}}
-.cw-pred-row{{display:flex;align-items:center;gap:14px;margin-bottom:12px}}
-.cw-pred-badge{{font-size:26px;font-weight:900;line-height:1}}
-.cw-pred-badge.up{{color:#10b981}}.cw-pred-badge.dn{{color:#ef4444}}.cw-pred-badge.wait{{color:#6b7280}}
-.cw-pred-detail{{font-size:12px;color:#9ca3af;line-height:1.6}}
-.cw-timer-row{{display:flex;align-items:center;gap:12px}}
-.cw-timer{{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;font-family:monospace;min-width:70px}}
-.cw-timer.urgent{{color:#ef4444}}
-.cw-bar-wrap{{flex:1;height:6px;background:#374151;border-radius:3px;overflow:hidden}}
+body{{background:#0b0f19;color:#e2e8f0;font-family:-apple-system,'Inter',sans-serif;min-height:100vh}}
+nav{{display:flex;gap:6px;padding:12px 20px;background:#0f1623;border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap}}
+nav a{{padding:5px 12px;border-radius:6px;color:#64748b;text-decoration:none;font-size:12px;font-weight:500}}
+nav a.active{{background:#1e293b;color:#e2e8f0}}
+.page{{display:flex;min-height:calc(100vh - 45px)}}
+.main{{flex:1;padding:20px 24px;min-width:0}}
+.sidebar{{width:300px;background:#0f1623;border-left:1px solid rgba(255,255,255,.06);padding:16px;flex-shrink:0;overflow-y:auto}}
+/* header */
+.mkt-header{{display:flex;align-items:center;gap:12px;margin-bottom:16px}}
+.btc-icon{{width:36px;height:36px;background:#f7931a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#fff;flex-shrink:0}}
+.mkt-title{{font-size:17px;font-weight:700;color:#f1f5f9}}
+.mkt-sub{{font-size:12px;color:#64748b;margin-top:2px}}
+/* price row */
+.price-row{{display:flex;align-items:flex-end;gap:24px;margin-bottom:8px}}
+.live-price{{font-size:32px;font-weight:800;color:#f1f5f9;font-variant-numeric:tabular-nums;letter-spacing:-1px;line-height:1}}
+.pred-badge-large{{display:flex;align-items:center;gap:8px;padding:6px 18px;border-radius:8px;font-size:18px;font-weight:800}}
+.pred-badge-large.up{{background:rgba(34,197,94,.15);color:#22c55e;border:1.5px solid rgba(34,197,94,.3)}}
+.pred-badge-large.dn{{background:rgba(239,68,68,.15);color:#ef4444;border:1.5px solid rgba(239,68,68,.3)}}
+.pred-badge-large.wait{{background:rgba(100,116,139,.1);color:#64748b;border:1.5px solid rgba(100,116,139,.2)}}
+.price-meta{{font-size:12px;color:#64748b;margin-bottom:14px;display:flex;gap:16px;align-items:center}}
+.price-meta .chg{{font-size:12px}}
+.up{{color:#22c55e}}.dn{{color:#ef4444}}
+/* chart */
+canvas#chart{{display:block;width:100%;height:300px;border-radius:0;background:transparent;cursor:crosshair}}
+.chart-wrap{{background:#0d1420;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
+/* tabs */
+.tf-tabs{{display:flex;gap:6px;margin:14px 0}}
+.tf-tab{{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,.08);color:#64748b;background:transparent;transition:.15s}}
+.tf-tab.active{{background:#1e293b;color:#e2e8f0;border-color:rgba(255,255,255,.12)}}
+/* current window */
+.cw-card{{border-radius:10px;padding:14px 16px;border:1px solid rgba(255,255,255,.06);background:#131c2e;margin:14px 0}}
+.cw-card.is-up{{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.05)}}
+.cw-card.is-dn{{border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.05)}}
+.cw-card.is-wait{{border-color:rgba(255,255,255,.06)}}
+.cw-top{{display:flex;align-items:center;gap:12px;margin-bottom:10px}}
+.cw-pred-badge{{font-size:22px;font-weight:900;line-height:1;min-width:70px}}
+.cw-pred-badge.up{{color:#22c55e}}.cw-pred-badge.dn{{color:#ef4444}}.cw-pred-badge.wait{{color:#64748b}}
+.cw-info{{flex:1;font-size:12px;color:#94a3b8;line-height:1.8}}
+.cw-info strong{{color:#e2e8f0}}
+.cw-status{{font-size:13px;font-weight:700}}
+/* timer */
+.cw-timer-row{{display:flex;align-items:center;gap:10px;margin-top:8px}}
+.cw-timer{{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:#94a3b8;min-width:38px}}
+.cw-timer.urgent{{color:#f59e0b}}
+.cw-bar-wrap{{flex:1;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}}
 .cw-bar-fill{{height:100%;border-radius:3px;transition:width .9s linear}}
-.cw-bar-fill.up{{background:#10b981}}.cw-bar-fill.dn{{background:#ef4444}}.cw-bar-fill.wait{{background:#6b7280}}
-.ph-box{{background:#1f2937;border:1px solid #374151;border-radius:12px;padding:18px 16px;margin-top:20px}}
-.ph-title{{font-size:13px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;display:flex;align-items:center;gap:8px}}
-.ph-stats{{display:flex;gap:16px;margin:12px 0;flex-wrap:wrap}}
+.cw-bar-fill.up{{background:#22c55e}}.cw-bar-fill.dn{{background:#ef4444}}.cw-bar-fill.wait{{background:#475569}}
+/* history */
+.ph-box{{background:#0f1623;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:16px;margin-top:16px}}
+.ph-title{{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}}
+.ph-stats{{display:flex;gap:20px;margin:10px 0 14px;flex-wrap:wrap}}
 .ph-stat{{text-align:center}}
-.ph-stat-val{{font-size:22px;font-weight:800}}
-.ph-stat-lbl{{font-size:11px;color:#6b7280;margin-top:2px}}
-.ph-table{{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}}
-.ph-table th{{color:#6b7280;font-weight:600;padding:4px 6px;border-bottom:1px solid #374151;text-align:left}}
-.ph-table td{{padding:6px 6px;border-bottom:1px solid #1f2937;vertical-align:middle}}
+.ph-stat-val{{font-size:20px;font-weight:800}}
+.ph-stat-lbl{{font-size:10px;color:#475569;margin-top:2px;text-transform:uppercase;letter-spacing:.4px}}
+.ph-table{{width:100%;border-collapse:collapse;font-size:12px}}
+.ph-table th{{color:#475569;font-weight:600;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,.05);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}}
+.ph-table td{{padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}}
 .ph-table tr:last-child td{{border-bottom:none}}
-.ph-win{{color:#10b981;font-weight:700}}.ph-loss{{color:#ef4444;font-weight:700}}
-.ph-up{{color:#10b981}}.ph-dn{{color:#ef4444}}.ph-pend{{color:#f59e0b}}
-.sb-title{{font-size:13px;font-weight:700;color:#9ca3af;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px}}
-.sb-wr-box{{text-align:center;padding:14px 0 16px;border-bottom:1px solid #374151;margin-bottom:14px}}
-.sb-wr-val{{font-size:42px;font-weight:900;color:#60a5fa;font-variant-numeric:tabular-nums;line-height:1}}
-.sb-wr-lbl{{font-size:11px;color:#6b7280;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
-.sb-wr-detail{{font-size:12px;color:#9ca3af;margin-top:8px;line-height:1.6}}
-.sb-pred-row{{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1f2937}}
+.ph-win{{color:#22c55e;font-weight:700}}.ph-loss{{color:#ef4444;font-weight:700}}
+.ph-up{{color:#22c55e}}.ph-dn{{color:#ef4444}}.ph-pend{{color:#f59e0b}}
+/* sidebar */
+.sb-title{{font-size:11px;font-weight:700;color:#64748b;margin-bottom:12px;text-transform:uppercase;letter-spacing:.6px}}
+.sb-wr-box{{text-align:center;padding:12px 0 14px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:12px}}
+.sb-wr-val{{font-size:40px;font-weight:900;font-variant-numeric:tabular-nums;line-height:1}}
+.sb-wr-lbl{{font-size:10px;color:#475569;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
+.sb-wr-detail{{font-size:11px;color:#64748b;margin-top:6px}}
+.sb-pred-row{{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}}
 .sb-pred-row:last-child{{border-bottom:none}}
-.sb-pred-dir{{font-size:15px;font-weight:900;width:52px;flex-shrink:0}}
-.sb-pred-dir.up{{color:#10b981}}.sb-pred-dir.dn{{color:#ef4444}}
+.sb-pred-dir{{font-size:14px;font-weight:900;width:54px;flex-shrink:0}}
+.sb-pred-dir.up{{color:#22c55e}}.sb-pred-dir.dn{{color:#ef4444}}
 .sb-pred-meta{{flex:1;min-width:0}}
-.sb-pred-time{{font-size:11px;color:#6b7280;white-space:nowrap}}
-.sb-pred-bias{{font-size:11px;color:#9ca3af;margin-top:1px}}
+.sb-pred-time{{font-size:11px;color:#475569}}
+.sb-pred-bias{{font-size:11px;color:#64748b;margin-top:1px}}
 .sb-pred-result{{font-size:13px;font-weight:700;flex-shrink:0}}
-.sb-pred-result.win{{color:#10b981}}.sb-pred-result.loss{{color:#ef4444}}.sb-pred-result.pend{{color:#f59e0b}}
-.spinner{{display:inline-block;width:12px;height:12px;border:2px solid #374151;border-top-color:#10b981;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}}
+.sb-pred-result.win{{color:#22c55e}}.sb-pred-result.loss{{color:#ef4444}}.sb-pred-result.pend{{color:#f59e0b}}
+/* bias chips */
+.chip{{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}}
+.chip-bull{{background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.25)}}
+.chip-bear{{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25)}}
+.chip-neu{{background:rgba(245,158,11,.1);color:#f59e0b;border:1px solid rgba(245,158,11,.2)}}
+.spinner{{display:inline-block;width:12px;height:12px;border:2px solid #1e293b;border-top-color:#22c55e;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}}
 @keyframes spin{{to{{transform:rotate(360deg)}}}}
-@media(max-width:700px){{.sidebar{{display:none}}.main{{max-width:100%}}}}
+@media(max-width:700px){{.sidebar{{display:none}}}}
 </style></head>
 <body>
-<div style="padding:12px 16px 0">
-{_NAV}
-</div>
+<nav>
+  <a href="/">Dashboard</a>
+  <a href="/history">History</a>
+  <a href="/board">Board</a>
+  <a href="/edge">Edge</a>
+  <a href="/ai-rules">AI Rules</a>
+  <a href="/kalshi" class="active">Prediction</a>
+</nav>
 <div class="page">
 <div class="main">
-  <div class="coin-header">
+  <!-- Header -->
+  <div class="mkt-header">
     <div class="btc-icon">₿</div>
-    <div><div class="coin-title">Bitcoin Up or Down</div><div class="coin-sub" id="tf-label">15 นาที · อัพเดทอัตโนมัติ</div></div>
+    <div>
+      <div class="mkt-title">Bitcoin Up or Down · 15 min</div>
+      <div class="mkt-sub" id="tf-label">อัพเดทอัตโนมัติ · CF Benchmarks</div>
+    </div>
   </div>
-  <!-- Current Window Prediction — main card -->
-  <div class="cw-box is-wait" id="cw-box" style="margin-top:16px">
-    <div class="cw-header">⏱ ช่วง 15 นาทีนี้</div>
-    <div class="cw-pred-row">
-      <div class="cw-pred-badge wait" id="cw-badge">—</div>
-      <div style="flex:1">
-        <div style="font-size:12px;color:#9ca3af;margin-bottom:6px" id="cw-detail">กำลังดึงข้อมูล...</div>
-        <div style="font-size:12px;color:#6b7280">
-          ราคาตอนที่ทาย: <strong id="target-val" style="color:#f59e0b">—</strong>
-        </div>
-        <div style="font-size:13px;margin-top:4px">
-          ราคาตอนนี้: <strong id="target-price" style="color:#fff;font-variant-numeric:tabular-nums"><span class="spinner"></span></strong>
-          <span id="live-vs-target" style="margin-left:8px;font-size:12px"></span>
-        </div>
+
+  <!-- Price + prediction row -->
+  <div class="price-row">
+    <div>
+      <div class="live-price" id="target-price">—</div>
+      <div class="price-meta">
+        <span id="price-chg" class="chg"></span>
+        <span>ราคาตอนที่ทาย: <strong id="target-val" style="color:#f59e0b">—</strong></span>
+        <span id="live-vs-target" style="font-weight:700"></span>
       </div>
     </div>
-    <div class="cw-timer-row" style="margin-top:10px">
+    <div class="pred-badge-large wait" id="cw-badge-large">—</div>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tf-tabs">
+    <div class="tf-tab active" onclick="setTF('15m')">15m</div>
+    <div class="tf-tab" onclick="setTF('1h')">1h</div>
+    <div class="tf-tab" onclick="setTF('1d')">1d</div>
+  </div>
+
+  <!-- Current window card -->
+  <div class="cw-card is-wait" id="cw-box">
+    <div class="cw-top">
+      <div class="cw-pred-badge wait" id="cw-badge">—</div>
+      <div class="cw-info" id="cw-detail">กำลังดึงข้อมูล...</div>
+      <div class="cw-status" id="cw-status"></div>
+    </div>
+    <div class="cw-timer-row">
       <div class="cw-timer" id="cw-timer">—:——</div>
       <div class="cw-bar-wrap"><div class="cw-bar-fill wait" id="cw-bar"></div></div>
-      <div style="font-size:11px;color:#6b7280;white-space:nowrap">เหลือเวลา</div>
+      <div style="font-size:11px;color:#475569;white-space:nowrap">เหลือเวลา</div>
     </div>
   </div>
-  <div style="font-size:11px;color:#4b5563;margin:6px 0 0 2px" id="price-chg">&nbsp;</div>
-  <canvas id="chart" height="120" style="margin-top:12px"></canvas>
-  <div class="tf-tabs">
-    <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
-    <div class="tf-tab" onclick="setTF('1h')">1 ชั่วโมง</div>
-    <div class="tf-tab" onclick="setTF('1d')">1 วัน</div>
-  </div>
 
-  <div class="bias-box">
-    <div class="bias-title">⚡ Elliott Wave Bias (ระบบเรา)</div>
-    <div class="bias-chips" id="bias-chips"><span class="spinner"></span></div>
-    <div class="basis-note" id="basis-note"></div>
+  <!-- EW bias -->
+  <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.5px">Elliott Wave</span>
+    <div id="bias-chips" style="display:flex;gap:6px;flex-wrap:wrap"><span class="spinner"></span></div>
   </div>
-  <div class="refresh-note" id="refresh-note">อัพเดทล่าสุด: —</div>
+  <div style="font-size:11px;color:#334155;margin-top:8px" id="refresh-note"></div>
 
+  <!-- History -->
   <div class="ph-box">
-    <div class="ph-title">
-      🎯 Paper Trading · ผลการทาย Kalshi 15m
-    </div>
-    <div class="ph-stats" id="ph-stats">
-      <div class="ph-stat"><div class="ph-stat-val" style="color:#f3f4f6" id="ph-total">—</div><div class="ph-stat-lbl">ทั้งหมด</div></div>
-      <div class="ph-stat"><div class="ph-stat-val ph-win" id="ph-wins">—</div><div class="ph-stat-lbl">ถูก</div></div>
-      <div class="ph-stat"><div class="ph-stat-val ph-loss" id="ph-losses">—</div><div class="ph-stat-lbl">ผิด</div></div>
+    <div class="ph-title">Paper Trading History</div>
+    <div class="ph-stats">
+      <div class="ph-stat"><div class="ph-stat-val" style="color:#e2e8f0" id="ph-total">—</div><div class="ph-stat-lbl">Total</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-win" id="ph-wins">—</div><div class="ph-stat-lbl">Win</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-loss" id="ph-losses">—</div><div class="ph-stat-lbl">Loss</div></div>
       <div class="ph-stat"><div class="ph-stat-val" style="color:#60a5fa" id="ph-wr">—</div><div class="ph-stat-lbl">Win Rate</div></div>
-      <div class="ph-stat"><div class="ph-stat-val ph-pend" id="ph-pend">—</div><div class="ph-stat-lbl">รอผล</div></div>
+      <div class="ph-stat"><div class="ph-stat-val ph-pend" id="ph-pend">—</div><div class="ph-stat-lbl">Pending</div></div>
     </div>
-
-    <!-- Prediction history chart -->
-    <canvas id="pred-chart" height="80" style="width:100%;border-radius:8px;margin:12px 0 4px;display:block"></canvas>
-    <div style="font-size:10px;color:#4b5563;display:flex;gap:12px;margin-bottom:12px">
-      <span><span style="color:#10b981">■</span> ถูก (WIN)</span>
-      <span><span style="color:#ef4444">■</span> ผิด (LOSS)</span>
-      <span><span style="color:#f59e0b">■</span> รอผล</span>
-      <span style="margin-left:auto;color:#6b7280" id="pred-chart-note"></span>
-    </div>
-
-    <div style="overflow-x:auto">
+    <canvas id="pred-chart" height="60" style="width:100%;border-radius:6px;margin:8px 0;display:block"></canvas>
+    <div style="overflow-x:auto;margin-top:4px">
       <table class="ph-table">
         <thead><tr>
-          <th>เวลา</th><th>ทาย</th><th>15m Bias</th><th>4H EW</th>
-          <th>Target $</th><th>จบที่ $</th><th>ผล</th>
+          <th>Time (PT)</th><th>Pred</th><th>EW 15m</th><th>Target</th><th>Close</th><th>Result</th>
         </tr></thead>
-        <tbody id="ph-rows"><tr><td colspan="7" style="color:#6b7280;text-align:center;padding:20px">กำลังโหลด...</td></tr></tbody>
+        <tbody id="ph-rows"><tr><td colspan="6" style="color:#475569;text-align:center;padding:20px">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
   </div>
 </div>
+
+<!-- Sidebar -->
 <div class="sidebar">
-  <div class="sb-title">📋 รายงานการทาย</div>
-  <div class="sb-wr-box" id="sb-wr-box">
+  <div class="sb-title">รายงานการทาย</div>
+  <div class="sb-wr-box">
     <div class="sb-wr-val" id="sb-wr-val">—</div>
     <div class="sb-wr-lbl">Win Rate</div>
     <div class="sb-wr-detail" id="sb-wr-detail"></div>
@@ -518,18 +533,12 @@ function setTF(tf) {{
 }}
 
 function renderVerdict() {{
-  const p = biasToProb(currentTF);
-  document.getElementById('up-pct').textContent = p.up + '%';
-  document.getElementById('dn-pct').textContent = p.dn + '%';
-  const src = p.source || "Elliott Wave";
-  let note = `แหล่งข้อมูล: ${{src}}`;
-  if (p.expires) {{
-    const diff = new Date(p.expires) - Date.now();
-    const m = Math.floor(diff/60000), s = Math.floor((diff%60000)/1000);
-    note += ` · หมดอายุใน ${{m}}m ${{s}}s`;
+  // Update EW bias chips only (verdict cards removed)
+  const el = document.getElementById('basis-note');
+  if (el) {{
+    const src = (kalshi15mOdds && kalshi15mOdds.source) || 'Elliott Wave';
+    el.textContent = src;
   }}
-  if (p.lastPrice > 0) note += ` · last ${{Math.round(p.lastPrice*100)}}¢`;
-  document.getElementById('basis-note').textContent = note;
 }}
 
 let kalshi15mOdds = null; // {{up, dn, source, target, expires}}
@@ -681,7 +690,7 @@ function drawChart() {{
   const canvas = document.getElementById('chart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth, H = 180;
+  const W = canvas.offsetWidth, H = 300;
   canvas.width = W; canvas.height = H;
   ctx.clearRect(0, 0, W, H);
   if (_currentInterval === '15m') drawTickChart(ctx, W, H);
@@ -691,127 +700,119 @@ function drawChart() {{
 function drawTickChart(ctx, W, H) {{
   const now = Date.now();
   const slotStart = _wsSlotStart || _utcSlotStart(now);
-  const slotEnd = slotStart + 15 * 60 * 1000;
+  const slotEnd   = slotStart + 15 * 60 * 1000;
+  const padL = 8, padR = 64, padTop = 14, padBot = 24;
+  const chartW = W - padL - padR, chartH = H - padTop - padBot;
 
   if (!_ticks.length) {{
-    ctx.fillStyle = '#374151'; ctx.font = '13px Inter,sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('กำลังโหลดราคา...', W / 2, H / 2);
+    ctx.fillStyle = '#334155'; ctx.font = '13px system-ui,sans-serif';
+    ctx.textAlign = 'center'; ctx.fillText('กำลังโหลด...', W/2, H/2);
     return;
   }}
 
   const prices = _ticks.map(t => t.p);
-  const last = prices[prices.length - 1];
+  const last   = prices[prices.length - 1];
   const target = _cwPred ? _cwPred.target_price : null;
 
+  // Scale
   const allVals = target ? [...prices, target] : prices;
   let mn = Math.min(...allVals), mx = Math.max(...allVals);
-  const rng0 = mx - mn || 100;
-  mn -= rng0 * 0.15; mx += rng0 * 0.15;
+  const r0 = mx - mn || 100; mn -= r0 * 0.12; mx += r0 * 0.12;
   const rng = mx - mn;
-
-  const padX = 8, padTop = 26, padBot = 18;
-  const chartH = H - padTop - padBot;
   const toY = v => padTop + (1 - (v - mn) / rng) * chartH;
-  const toX = t => padX + Math.min(Math.max((t - slotStart) / (slotEnd - slotStart), 0), 1) * (W - padX * 2);
+  const toX = t => padL + Math.min(Math.max((t - slotStart) / (slotEnd - slotStart), 0), 1) * chartW;
+  const nowX = toX(now);
 
-  // Background vertical grid (every 5 min)
-  ctx.strokeStyle = '#1a2232'; ctx.lineWidth = 1;
+  // Horizontal grid + Y-axis labels (right side)
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#475569'; ctx.font = '10px system-ui,sans-serif'; ctx.textAlign = 'left';
+  for (let i = 0; i <= 4; i++) {{
+    const v = mn + rng * i / 4;
+    const y = toY(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + chartW, y); ctx.stroke();
+    ctx.fillText('$' + Math.round(v).toLocaleString('en-US'), padL + chartW + 4, y + 4);
+  }}
+
+  // Vertical grid (every 5 min)
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   for (let m = 0; m <= 15; m += 5) {{
     const x = toX(slotStart + m * 60000);
     ctx.beginPath(); ctx.moveTo(x, padTop); ctx.lineTo(x, padTop + chartH); ctx.stroke();
   }}
-  // Horizontal grid
-  ctx.strokeStyle = '#1a2232';
-  for (let i = 1; i < 4; i++) {{
-    const y = padTop + chartH * i / 4;
-    ctx.beginPath(); ctx.moveTo(padX, y); ctx.lineTo(W - padX, y); ctx.stroke();
+
+  // Future area (grey overlay from nowX → right)
+  if (nowX < padL + chartW) {{
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(nowX, padTop, padL + chartW - nowX, chartH);
   }}
 
   // Target dashed line
   if (target) {{
     const ty = toY(target);
-    ctx.setLineDash([6, 4]); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(padX, ty); ctx.lineTo(W - padX, ty); ctx.stroke();
+    ctx.setLineDash([6, 5]); ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(padL, ty); ctx.lineTo(padL + chartW, ty); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#f59e0b'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText('Target $' + Math.round(target).toLocaleString('en-US'), padX + 4, ty - 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('Target', padL + 4, ty - 4);
   }}
 
-  // Win/lose color
-  const winning = target
-    ? ((_cwPred.prediction==='UP' && last>target) || (_cwPred.prediction==='DOWN' && last<target))
-    : last >= prices[0];
-  const lineColor = winning ? '#10b981' : '#ef4444';
-
-  // Downsample to max 400 pts for smooth rendering
-  const maxPts = 400;
+  // Downsample
   let pts = _ticks;
-  if (pts.length > maxPts) {{
-    const step = pts.length / maxPts;
-    pts = Array.from({{length: maxPts}}, (_, i) => pts[Math.floor(i * step)]);
+  if (pts.length > 500) {{
+    const step = pts.length / 500;
+    pts = Array.from({{length: 500}}, (_, i) => pts[Math.floor(i * step)]);
     pts.push(_ticks[_ticks.length - 1]);
   }}
   const xs = pts.map(t => toX(t.t));
   const ys = pts.map(t => toY(t.p));
 
-  // Smooth line via quadratic bezier through midpoints
-  function _smoothPath(ctx) {{
+  function _smoothPath() {{
     ctx.moveTo(xs[0], ys[0]);
     for (let i = 1; i < xs.length - 1; i++) {{
-      const mx = (xs[i] + xs[i+1]) / 2;
-      const my = (ys[i] + ys[i+1]) / 2;
-      ctx.quadraticCurveTo(xs[i], ys[i], mx, my);
+      ctx.quadraticCurveTo(xs[i], ys[i], (xs[i]+xs[i+1])/2, (ys[i]+ys[i+1])/2);
     }}
     ctx.lineTo(xs[xs.length-1], ys[ys.length-1]);
   }}
 
   const lx = xs[xs.length - 1];
+  const ly = toY(last);
 
-  // Gradient fill under line
+  // Gradient fill (orange like Kalshi)
   const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
-  grad.addColorStop(0, winning ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.beginPath();
-  _smoothPath(ctx);
-  ctx.lineTo(lx, padTop + chartH); ctx.lineTo(padX, padTop + chartH); ctx.closePath();
+  grad.addColorStop(0, 'rgba(249,115,22,0.25)');
+  grad.addColorStop(1, 'rgba(249,115,22,0)');
+  ctx.beginPath(); _smoothPath();
+  ctx.lineTo(lx, padTop + chartH); ctx.lineTo(padL, padTop + chartH); ctx.closePath();
   ctx.fillStyle = grad; ctx.fill();
 
-  // Price line
-  ctx.beginPath();
-  _smoothPath(ctx);
-  ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  // Price line (orange)
+  ctx.beginPath(); _smoothPath();
+  ctx.strokeStyle = '#f97316'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
-  // Glow dot + live dot
-  const ly = toY(last);
-  ctx.beginPath(); ctx.arc(lx, ly, 9, 0, Math.PI * 2);
-  ctx.fillStyle = winning ? 'rgba(16,185,129,0.28)' : 'rgba(239,68,68,0.28)'; ctx.fill();
-  ctx.beginPath(); ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = lineColor; ctx.fill();
+  // Live dot glow
+  ctx.beginPath(); ctx.arc(lx, ly, 10, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(249,115,22,0.2)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI*2);
+  ctx.fillStyle = '#f97316'; ctx.fill();
 
   // X-axis time labels
-  ctx.fillStyle = '#6b7280'; ctx.font = '9px Inter,sans-serif';
+  ctx.fillStyle = '#475569'; ctx.font = '10px system-ui,sans-serif';
   for (let m = 0; m <= 15; m += 5) {{
     const x = toX(slotStart + m * 60000);
     const label = new Date(slotStart + m * 60000).toLocaleTimeString('en-US',
-      {{timeZone: _TZ, hour: '2-digit', minute: '2-digit', hour12: false}});
+      {{timeZone: _TZ, hour: '2-digit', minute: '2-digit', hour12: true}});
     ctx.textAlign = m === 0 ? 'left' : m === 15 ? 'right' : 'center';
-    ctx.fillText(label, x, H - 4);
+    ctx.fillText(label, x, H - 6);
   }}
 
-  // P&L label top-right
-  if (target) {{
-    const diff = last - target;
-    const pct = ((diff / target) * 100).toFixed(3);
-    const label = (diff >= 0 ? '+' : '') + pct + '%  ' + (winning ? '✓ ชนะ' : '✗ แพ้');
-    ctx.fillStyle = lineColor; ctx.font = 'bold 11px Inter,sans-serif';
-    ctx.textAlign = 'right'; ctx.fillText(label, W - padX, padTop - 8); ctx.textAlign = 'left';
-  }}
-
-  // Live price label near dot
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
-  ctx.fillText('$' + last.toLocaleString('en-US', {{minimumFractionDigits:2, maximumFractionDigits:2}}),
-    W - padX, Math.max(ly - 7, padTop + 12));
+  // Live price tooltip near dot
+  const priceLabel = '$' + last.toLocaleString('en-US', {{minimumFractionDigits:2, maximumFractionDigits:2}});
+  const lblY = Math.max(Math.min(ly - 8, padTop + chartH - 4), padTop + 12);
+  ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  const tw = ctx.measureText(priceLabel).width;
+  ctx.fillRect(lx - tw - 6, lblY - 12, tw + 8, 16);
+  ctx.fillStyle = '#f97316'; ctx.fillText(priceLabel, lx - 2, lblY);
   ctx.textAlign = 'left';
 }}
 
@@ -1003,37 +1004,46 @@ function updateCountdown() {{
 }}
 
 function updateCwBox() {{
-  const box = document.getElementById('cw-box');
-  const badge = document.getElementById('cw-badge');
+  const box    = document.getElementById('cw-box');
+  const badge  = document.getElementById('cw-badge');
+  const badgeL = document.getElementById('cw-badge-large');
   const detail = document.getElementById('cw-detail');
-  const bar = document.getElementById('cw-bar');
+  const status = document.getElementById('cw-status');
+  const bar    = document.getElementById('cw-bar');
 
   if (!_cwPred) {{
-    box.className = 'cw-box is-wait';
-    badge.className = 'cw-pred-badge wait';
-    badge.textContent = '—';
-    detail.textContent = 'ยังไม่มีการทาย — รอช่วงถัดไป';
+    box.className = 'cw-card is-wait';
+    badge.className = 'cw-pred-badge wait'; badge.textContent = '—';
+    badgeL.className = 'pred-badge-large wait'; badgeL.textContent = '—';
+    detail.textContent = 'รอ prediction รอบถัดไป...';
+    if (status) {{ status.textContent = ''; status.style.color = ''; }}
     bar.className = 'cw-bar-fill wait';
     return;
   }}
 
   const isUp = _cwPred.prediction === 'UP';
-  box.className = 'cw-box ' + (isUp ? 'is-up' : 'is-dn');
+  box.className = 'cw-card ' + (isUp ? 'is-up' : 'is-dn');
   badge.className = 'cw-pred-badge ' + (isUp ? 'up' : 'dn');
   badge.textContent = isUp ? '↑ UP' : '↓ DOWN';
+  badgeL.className = 'pred-badge-large ' + (isUp ? 'up' : 'dn');
+  badgeL.innerHTML = (isUp ? '↑' : '↓') + ' ' + _cwPred.prediction;
   bar.className = 'cw-bar-fill ' + (isUp ? 'up' : 'dn');
 
   const b15 = _cwPred.ew_bias_15m || '—';
-  const b4h = (_cwPred.ew_bias_4h||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,10);
-  const tgtNum = _cwPred.target_price;
-  const tgt = tgtNum
-    ? '$'+Number(tgtNum).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}})
-    : '—';
-  detail.innerHTML = `15m EW: <strong>${{b15}}</strong> &nbsp;·&nbsp; 4H EW: <strong>${{b4h||'—'}}</strong>`;
+  const b4h = (_cwPred.ew_bias_4h||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,8);
+  detail.innerHTML = `EW 15m: <strong>${{b15}}</strong> · 4H: <strong>${{b4h||'—'}}</strong>`;
 
-  // Update target price hint below live price
+  const tgtNum = _cwPred.target_price;
   const tv = document.getElementById('target-val');
-  if (tv) tv.textContent = tgt;
+  if (tv) tv.textContent = tgtNum
+    ? '$'+Number(tgtNum).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}}) : '—';
+
+  // Live win/loss via _livePrice
+  if (status && _livePrice && tgtNum) {{
+    const winning = isUp ? _livePrice > tgtNum : _livePrice < tgtNum;
+    status.textContent = winning ? '✓ ชนะ' : '✗ แพ้';
+    status.style.color = winning ? '#22c55e' : '#ef4444';
+  }}
 }}
 
 // ── Prediction history + current window data ──
@@ -1064,33 +1074,33 @@ async function fetchPredictions() {{
     // Render history table
     if (!preds.length) {{
       document.getElementById('ph-rows').innerHTML =
-        '<tr><td colspan="7" style="color:#6b7280;text-align:center;padding:20px">ยังไม่มีการทาย</td></tr>';
+        '<tr><td colspan="6" style="color:#6b7280;text-align:center;padding:20px">ยังไม่มีการทาย</td></tr>';
       return;
     }}
     document.getElementById('ph-rows').innerHTML = preds.slice(0,20).map(p => {{
-      const predCls = p.prediction === 'UP' ? 'ph-up' : 'ph-dn';
+      const predCls  = p.prediction === 'UP' ? 'ph-up' : 'ph-dn';
       const predArrow = p.prediction === 'UP' ? '↑ UP' : '↓ DOWN';
-      const biasCls = p.ew_bias_15m === 'BULLISH' ? 'ph-up' : p.ew_bias_15m === 'BEARISH' ? 'ph-dn' : 'ph-pend';
+      const biasCls  = p.ew_bias_15m === 'BULLISH' ? 'ph-up' : p.ew_bias_15m === 'BEARISH' ? 'ph-dn' : 'ph-pend';
       const tgt = p.target_price ? '$'+Number(p.target_price).toLocaleString('en-US',{{minimumFractionDigits:0}}) : '—';
       const end = p.end_price  ? '$'+Number(p.end_price).toLocaleString('en-US',{{minimumFractionDigits:0}}) : '—';
       let result, resCls;
-      if (p.win === 1)      {{ result = '✓ ถูก'; resCls = 'ph-win'; }}
+      if (p.win === 1)      {{ result = '✓ WIN'; resCls = 'ph-win'; }}
       else if (p.win === 0) {{ result = '✗ ผิด'; resCls = 'ph-loss'; }}
       else                  {{ result = '⋯ รอ';  resCls = 'ph-pend'; }}
       const timeStr = toLA(p.created_at);
       const bias4h = (_cwPred => (_cwPred||'').replace('BULLISH_IMPULSE','BULL').replace('BEARISH_IMPULSE','BEAR').substring(0,8))(p.ew_bias_4h);
       return `<tr>
-        <td style="color:#9ca3af;white-space:nowrap">${{timeStr}}</td>
+        <td style="color:#64748b;white-space:nowrap;font-size:11px">${{timeStr}}</td>
         <td class="${{predCls}}" style="font-weight:700">${{predArrow}}</td>
-        <td class="${{biasCls}}">${{p.ew_bias_15m||'—'}}</td>
-        <td style="color:#9ca3af;font-size:11px">${{bias4h||'—'}}</td>
-        <td>${{tgt}}</td><td>${{end}}</td>
+        <td class="${{biasCls}}" style="font-size:11px">${{p.ew_bias_15m||'—'}}</td>
+        <td style="color:#94a3b8;font-variant-numeric:tabular-nums">${{tgt}}</td>
+        <td style="color:#64748b;font-variant-numeric:tabular-nums">${{end}}</td>
         <td class="${{resCls}}" style="font-weight:700">${{result}}</td>
       </tr>`;
     }}).join('');
   }} catch(e) {{
     document.getElementById('ph-rows').innerHTML =
-      '<tr><td colspan="7" style="color:#6b7280;text-align:center">โหลดไม่ได้</td></tr>';
+      '<tr><td colspan="6" style="color:#6b7280;text-align:center">โหลดไม่ได้</td></tr>';
   }}
 }}
 
@@ -2849,7 +2859,7 @@ function renderSettlement() {{
   const totalFee   = _settlementData.reduce((s,r)=>s+r.fee,0);
   const totalNet   = _settlementData.reduce((s,r)=>s+r.net_pnl,0);
   tfoot.innerHTML = `<tr>
-    <td colspan="7" style="text-align:left">Total</td>
+    <td colspan="6" style="text-align:left">Total</td>
     <td>${{fmtPnl(totalGross)}}</td>
     <td style="color:var(--danger)">-${{fmt(totalFee)}}</td>
     <td style="font-weight:700">${{fmtPnl(totalNet)}}</td>
