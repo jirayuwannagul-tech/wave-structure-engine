@@ -473,6 +473,7 @@ canvas#chart{{display:block;width:100%;height:300px;border-radius:0;background:t
       <div class="ph-stat"><div class="ph-stat-val ph-loss" id="ph-losses">—</div><div class="ph-stat-lbl">Loss</div></div>
       <div class="ph-stat"><div class="ph-stat-val" style="color:#60a5fa" id="ph-wr">—</div><div class="ph-stat-lbl">Win Rate</div></div>
       <div class="ph-stat"><div class="ph-stat-val ph-pend" id="ph-pend">—</div><div class="ph-stat-lbl">Pending</div></div>
+      <div id="ph-date-lbl" style="font-size:11px;color:#64748b;align-self:flex-end;padding-bottom:2px"></div>
     </div>
     <canvas id="pred-chart" height="60" style="width:100%;border-radius:6px;margin:8px 0;display:block"></canvas>
     <div style="overflow-x:auto;margin-top:4px">
@@ -1053,13 +1054,19 @@ async function fetchPredictions() {{
     const d = await r.json();
     if (!d.ok) return;
 
-    // Update stats
+    // Update stats (today LA time)
     const s = d.stats || {{}};
     document.getElementById('ph-total').textContent = s.total ?? '—';
     document.getElementById('ph-wins').textContent = s.wins ?? '—';
     document.getElementById('ph-losses').textContent = s.losses ?? '—';
     document.getElementById('ph-pend').textContent = s.pending ?? '—';
     document.getElementById('ph-wr').textContent = s.win_rate != null ? (s.win_rate*100).toFixed(1)+'%' : '—';
+    if (s.date_la) {{
+      const [y,m,dd] = s.date_la.split('-');
+      const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m-1];
+      const el = document.getElementById('ph-date-lbl');
+      if (el) el.textContent = `Today · ${{mon}} ${{+dd}}`;
+    }}
 
     // Pick current prediction (most recent pending within current 15-min window)
     const preds = d.predictions || [];

@@ -373,9 +373,20 @@ def resolve_predictions(db_path: Path | None = None) -> int:
 
 
 def get_predictions(db_path: Path | None = None, limit: int = 50) -> dict:
-    """Return prediction history + win/loss stats."""
+    """Return prediction history + win/loss stats (today in LA timezone)."""
+    import zoneinfo as _zi
     db = db_path or _DB_PATH
     _ensure_table(db)
+
+    # Today's date in LA time → UTC window for SQL
+    _la = _zi.ZoneInfo("America/Los_Angeles")
+    _now_la = datetime.now(_la)
+    _today_la = _now_la.date()
+    # midnight LA → UTC
+    _day_start_utc = datetime(_today_la.year, _today_la.month, _today_la.day,
+                              tzinfo=_la).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    _day_end_la = datetime(_today_la.year, _today_la.month, _today_la.day, 23, 59, 59,
+                           tzinfo=_la).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     conn = sqlite3.connect(str(db))
     rows = conn.execute("""
@@ -385,13 +396,15 @@ def get_predictions(db_path: Path | None = None, limit: int = 50) -> dict:
         ORDER BY id DESC LIMIT ?
     """, (limit,)).fetchall()
 
+    # Stats: only today (LA time)
     sr = conn.execute("""
         SELECT COUNT(*),
                SUM(CASE WHEN win=1 THEN 1 ELSE 0 END),
                SUM(CASE WHEN win=0 THEN 1 ELSE 0 END),
                SUM(CASE WHEN win IS NULL THEN 1 ELSE 0 END)
         FROM kalshi_predictions
-    """).fetchone()
+        WHERE created_at >= ? AND created_at <= ?
+    """, (_day_start_utc, _day_end_la)).fetchone()
     conn.close()
 
     predictions = [
@@ -424,6 +437,7 @@ def get_predictions(db_path: Path | None = None, limit: int = 50) -> dict:
             "losses": losses,
             "pending": pending,
             "win_rate": round(wins / settled, 3) if settled > 0 else None,
+            "date_la": _today_la.isoformat(),
         },
     }
 
