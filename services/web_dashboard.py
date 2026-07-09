@@ -403,30 +403,34 @@ canvas{{display:block;width:100%;height:180px;border-radius:8px;background:#0d11
     <div class="btc-icon">₿</div>
     <div><div class="coin-title">Bitcoin Up or Down</div><div class="coin-sub" id="tf-label">15 นาที · อัพเดทอัตโนมัติ</div></div>
   </div>
-  <div class="target-label">ราคา BTC ตอนนี้</div>
-  <div class="target-price" id="target-price"><span class="spinner"></span></div>
-  <div class="price-chg" id="price-chg">&nbsp;</div>
-  <div style="display:flex;gap:20px;margin:4px 0 0;font-size:12px;color:#9ca3af">
-    <span>เส้นประ = <strong id="target-val" style="color:#f59e0b">—</strong> (ราคาที่ใช้ตัดสิน UP/DOWN)</span>
-  </div>
-  <canvas id="chart" height="120"></canvas>
-  <div class="tf-tabs">
-    <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
-    <div class="tf-tab" onclick="setTF('1h')">1 ชั่วโมง</div>
-    <div class="tf-tab" onclick="setTF('1d')">1 วัน</div>
-  </div>
-  <!-- Current Window Prediction -->
-  <div class="cw-box is-wait" id="cw-box">
-    <div class="cw-header">⏱ ช่วง 15 นาทีนี้ · ระบบเลือก</div>
+  <!-- Current Window Prediction — main card -->
+  <div class="cw-box is-wait" id="cw-box" style="margin-top:16px">
+    <div class="cw-header">⏱ ช่วง 15 นาทีนี้</div>
     <div class="cw-pred-row">
       <div class="cw-pred-badge wait" id="cw-badge">—</div>
-      <div class="cw-pred-detail" id="cw-detail">กำลังดึงข้อมูล...</div>
+      <div style="flex:1">
+        <div style="font-size:12px;color:#9ca3af;margin-bottom:6px" id="cw-detail">กำลังดึงข้อมูล...</div>
+        <div style="font-size:12px;color:#6b7280">
+          ราคาตอนที่ทาย: <strong id="target-val" style="color:#f59e0b">—</strong>
+        </div>
+        <div style="font-size:13px;margin-top:4px">
+          ราคาตอนนี้: <strong id="target-price" style="color:#fff;font-variant-numeric:tabular-nums"><span class="spinner"></span></strong>
+          <span id="live-vs-target" style="margin-left:8px;font-size:12px"></span>
+        </div>
+      </div>
     </div>
-    <div class="cw-timer-row">
+    <div class="cw-timer-row" style="margin-top:10px">
       <div class="cw-timer" id="cw-timer">—:——</div>
       <div class="cw-bar-wrap"><div class="cw-bar-fill wait" id="cw-bar"></div></div>
       <div style="font-size:11px;color:#6b7280;white-space:nowrap">เหลือเวลา</div>
     </div>
+  </div>
+  <div style="font-size:11px;color:#4b5563;margin:6px 0 0 2px" id="price-chg">&nbsp;</div>
+  <canvas id="chart" height="120" style="margin-top:12px"></canvas>
+  <div class="tf-tabs">
+    <div class="tf-tab active" onclick="setTF('15m')">15 นาที</div>
+    <div class="tf-tab" onclick="setTF('1h')">1 ชั่วโมง</div>
+    <div class="tf-tab" onclick="setTF('1d')">1 วัน</div>
   </div>
 
   <div class="bias-box">
@@ -597,8 +601,19 @@ function _utcSlotStart(ms) {{
 }}
 
 function _updatePriceDisplay(price) {{
-  document.getElementById('target-price').textContent =
-    '$' + price.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+  const el = document.getElementById('target-price');
+  if (el) el.textContent = '$' + price.toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}});
+  // Show live win/loss status vs target
+  const lv = document.getElementById('live-vs-target');
+  if (lv && _cwPred && _cwPred.target_price) {{
+    const t = _cwPred.target_price;
+    const isUp = _cwPred.prediction === 'UP';
+    const winning = isUp ? price > t : price < t;
+    lv.textContent = winning ? '✓ กำลังชนะ' : '✗ กำลังแพ้';
+    lv.style.color = winning ? '#10b981' : '#ef4444';
+  }} else if (lv) {{
+    lv.textContent = '';
+  }}
 }}
 
 async function _pollPrice() {{
