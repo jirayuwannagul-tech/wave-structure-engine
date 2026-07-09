@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -25,10 +26,12 @@ _SYSTEM_PROMPT = """You are a trading system analyst specializing in Elliott Wav
 You track one specific cryptocurrency symbol over time and build up institutional knowledge about it.
 
 Your job:
-1. Analyze ALL trades for this symbol — patterns, sides (LONG/SHORT), timeframes, setups
-2. Identify what logic is working vs not working for THIS coin specifically
-3. Compare with your previous memory (if any) — what has changed?
-4. Give 2-3 specific, actionable recommendations to improve this coin's trading logic
+1. Analyze current wave state (per timeframe) — does the pattern/position/bias make structural sense for this coin?
+2. Analyze ALL trades for this symbol — patterns, sides (LONG/SHORT), timeframes, setups
+3. Check alignment: were trades aligned with the wave bias? Were entries in the right wave leg?
+4. Identify what logic is working vs not working for THIS coin specifically
+5. Compare with your previous memory (if any) — what has changed in both wave state and trade results?
+6. Give 2-3 specific, actionable recommendations to improve this coin's trading logic
 
 Rules:
 - n < 10 trades: label findings as "early indication, not confirmed"
@@ -36,8 +39,18 @@ Rules:
 - n >= 30: state findings as reliable conclusions
 - Focus on THIS symbol only — ignore what works for other coins
 - Be direct and specific: "LONG setups on 4H have 30% WR — consider disabling LONG on this coin"
-- End with overall verdict: "promising" / "marginal" / "not working yet"
+- For wave state: flag if current leg/bias conflicts with recent trade directions
+
+MANDATORY: You MUST end your response with a JSON block in EXACTLY this format (no exceptions):
+```json
+{"verdict":"promising","disable_long":false,"disable_short":false,"min_rr_tp3":1.5,"preferred_timeframe":"4H","reasoning":"one sentence why"}
+```
+verdict must be one of: "promising" / "marginal" / "not working yet"
+Only include fields you want to change from defaults. verdict is ALWAYS required.
+DO NOT omit the JSON block. It must appear at the very end of your response.
 """
+
+_JSON_REMINDER = '\n\nREMINDER: End your response with the JSON block:\n```json\n{"verdict":"...","reasoning":"..."}\n```'
 
 
 def _call_gemini(api_key: str, prompt: str) -> str:
@@ -59,6 +72,83 @@ def _call_gemini(api_key: str, prompt: str) -> str:
         return f"[Gemini error {e.code}: {e.read().decode(errors='replace')}]"
     except Exception as e:
         return f"[Gemini call failed: {e}]"
+
+
+def _parse_suggestions(analysis: str) -> dict:
+    """Extract structured JSON suggestion block from AI analysis text, with text fallback."""
+    import re
+
+    # Primary: ```json ... ``` block
+    match = re.search(r"```json\s*(\{.*?\})\s*```", analysis, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except Exception:
+            pass
+
+    # Fallback: inline JSON object anywhere in text
+    match = re.search(r'\{[^{}]*"verdict"[^{}]*\}', analysis, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            pass
+
+    # Last resort: parse text-based verdict
+    text_lower = analysis.lower()
+    verdict = None
+    if "not working yet" in text_lower:
+        verdict = "not working yet"
+    elif "marginal" in text_lower:
+        verdict = "marginal"
+    elif "promising" in text_lower:
+        verdict = "promising"
+    if verdict:
+        return {"verdict": verdict, "reasoning": "parsed from text (no JSON block found)"}
+
+    return {}
+
+
+def _load_wave_states(symbol: str, db_path: Path) -> dict[str, dict]:
+    """Load latest wave analysis state per timeframe for a symbol."""
+    try:
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute("""
+            SELECT timeframe, pattern_type, bias, current_price, payload_json, created_at
+            FROM analysis_snapshots
+            WHERE symbol = ? AND id IN (
+                SELECT MAX(id) FROM analysis_snapshots WHERE symbol = ? GROUP BY timeframe
+            )
+            ORDER BY timeframe
+        """, (symbol, symbol)).fetchall()
+        conn.close()
+    except Exception:
+        return {}
+
+    states = {}
+    for r in rows:
+        tf = r[0]
+        state: dict = {
+            "pattern_type": r[1],
+            "bias": r[2],
+            "current_price": r[3],
+            "updated_at": (r[5] or "")[:16],
+        }
+        try:
+            payload = json.loads(r[4] or "{}")
+            pos = payload.get("position") or {}
+            state["wave_position"] = pos.get("position")  # e.g. IN_WAVE_4, IN_WAVE_B
+            state["structure"] = pos.get("structure")
+            scenario = payload.get("scenario") or {}
+            summary = scenario.get("analysis_summary") or {}
+            state["current_leg"] = summary.get("current_leg")
+            state["side"] = scenario.get("side")
+            rr = summary.get("rr_levels") or {}
+            state["rr_tp3"] = rr.get("rr_tp3")
+        except Exception:
+            pass
+        states[tf] = state
+    return states
 
 
 def _load_trades(symbol: str, db_path: Path) -> list[dict]:
@@ -173,32 +263,76 @@ def analyze_symbol(
             existing = {}
 
     trades = _load_trades(symbol, db)
-    if not trades:
-        return None
+    wave_states = _load_wave_states(symbol, db)
 
     prev_n = existing.get("ai_memory", {}).get("n_trades_at_analysis", 0)
-    if not force and len(trades) <= prev_n:
-        return existing  # no new data
+    prev_wave = existing.get("wave_states", {})
 
-    stats = _compute_stats(trades)
+    # Re-run if: new trades, new wave state, or forced
+    wave_changed = wave_states != prev_wave
+    if not trades and not wave_states:
+        return None
+    if not force and not trades and not wave_changed:
+        return existing
+    if not force and trades and len(trades) <= prev_n and not wave_changed:
+        return existing
+
+    stats = _compute_stats(trades) if trades else {}
     prev_insights = existing.get("ai_memory", {}).get("cumulative_insights", "")
     prev_recs = existing.get("ai_memory", {}).get("recommendations", [])
 
     parts = [_SYSTEM_PROMPT, f"\n\nSymbol: **{symbol}**\n"]
+
+    if wave_states:
+        parts.append("\n## Current Wave State (per timeframe)\n")
+        for tf, ws in sorted(wave_states.items()):
+            leg = ws.get("current_leg") or ws.get("wave_position") or "?"
+            bias = ws.get("bias") or "unknown"
+            pattern = ws.get("pattern_type") or "unknown"
+            side = ws.get("side") or "-"
+            rr3 = ws.get("rr_tp3")
+            rr_str = f" | RR_TP3={rr3:.2f}" if rr3 else ""
+            parts.append(f"- {tf}: {pattern} | leg={leg} | bias={bias} | side={side}{rr_str}\n")
+        parts.append("\n")
+
     if prev_insights:
         parts.append(
             f"\n--- PREVIOUS MEMORY (from {existing.get('ai_memory',{}).get('last_analyzed','?')[:10]}, "
             f"{prev_n} trades) ---\n{prev_insights}\n"
             f"Previous recommendations: {json.dumps(prev_recs, ensure_ascii=False)}\n---\n\n"
         )
-        parts.append(f"NEW DATA: {len(trades) - prev_n} new trade(s) added. Total now {len(trades)}.\n\n")
+        if trades:
+            parts.append(f"NEW DATA: {len(trades) - prev_n} new trade(s) added. Total now {len(trades)}.\n\n")
+        if wave_changed:
+            parts.append("NOTE: Wave state has changed since last analysis.\n\n")
     else:
-        parts.append(f"\nFirst analysis. Total trades: {len(trades)}\n\n")
+        n_trades = len(trades) if trades else 0
+        parts.append(f"\nFirst analysis. Total trades: {n_trades}\n\n")
 
-    parts.append(f"Statistics:\n{json.dumps(stats, indent=2, ensure_ascii=False)}\n\n")
-    parts.append(f"All trades:\n{json.dumps(trades, indent=2, ensure_ascii=False)}\n")
+    if stats:
+        parts.append(f"Statistics:\n{json.dumps(stats, indent=2, ensure_ascii=False)}\n\n")
+    if trades:
+        parts.append(f"All trades:\n{json.dumps(trades, indent=2, ensure_ascii=False)}\n")
+    parts.append(_JSON_REMINDER)
 
     analysis = _call_gemini(key, "".join(parts))
+
+    # Don't overwrite good memory with an API error
+    if analysis.startswith("[Gemini error") or analysis.startswith("[Gemini call failed"):
+        # Still update wave_states in existing memory (even if AI failed)
+        if existing:
+            existing["wave_states"] = wave_states
+            existing["last_updated"] = datetime.now(UTC).isoformat()
+            mem_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False))
+            return existing
+        return None
+
+    suggestions = _parse_suggestions(analysis)
+    suggestion_history = existing.get("suggestion_history", [])
+    if suggestions:
+        suggestions["suggested_at"] = datetime.now(UTC).isoformat()[:10]
+        suggestions["n_trades"] = len(trades)
+        suggestion_history.append(suggestions)
 
     change_log = existing.get("ai_memory", {}).get("change_log", [])
     change_log.append({
@@ -214,6 +348,8 @@ def analyze_symbol(
         "total_trades": len(trades),
         "stats": stats,
         "trades": trades,
+        "wave_states": wave_states,
+        "suggestion_history": suggestion_history[-20:],
         "ai_memory": {
             "last_analyzed": datetime.now(UTC).isoformat(),
             "n_trades_at_analysis": len(trades),
@@ -230,25 +366,43 @@ def analyze_all_symbols(
     db_path: Path | None = None,
     api_key: str | None = None,
     memory_dir: Path | None = None,
+    force: bool = False,
 ) -> dict[str, dict]:
-    """Analyze all symbols that have new trades. Returns {symbol: memory}."""
+    """Analyze all monitored symbols (wave state + trades). Returns {symbol: memory}."""
     db = db_path or _DB_PATH
+
+    # Collect symbols: those with trades + those with wave state in analysis_snapshots
+    symbols: set[str] = set()
     try:
         conn = sqlite3.connect(str(db))
-        rows = conn.execute("""
+        for row in conn.execute("""
             SELECT DISTINCT symbol FROM signals
             WHERE status IN ('TP3_HIT','STOPPED') AND entry_triggered_at IS NOT NULL
-        """).fetchall()
+        """).fetchall():
+            symbols.add(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT symbol FROM analysis_snapshots"
+        ).fetchall():
+            symbols.add(row[0])
         conn.close()
-        symbols = [r[0] for r in rows]
     except Exception:
         return {}
 
+    # Also include env-configured symbols
+    env_syms = os.getenv("MONITOR_SYMBOLS", "")
+    for s in env_syms.split(","):
+        s = s.strip()
+        if s:
+            symbols.add(s)
+
     results = {}
-    for sym in symbols:
-        mem = analyze_symbol(sym, db_path=db, api_key=api_key, memory_dir=memory_dir)
+    for i, sym in enumerate(sorted(symbols)):
+        mem = analyze_symbol(sym, db_path=db, api_key=api_key, memory_dir=memory_dir, force=force)
         if mem:
             results[sym] = mem
+        # Rate-limit: free tier allows ~20 req/min; sleep 5s between calls
+        if i < len(symbols) - 1:
+            time.sleep(5)
     return results
 
 
