@@ -176,13 +176,12 @@ def _load_trades(symbol: str, db_path: Path) -> list[dict]:
                    entry_price, entry_triggered_price, stop_loss,
                    rr_tp1, rr_tp2, rr_tp3,
                    tp1_hit_at, tp2_hit_at, tp3_hit_at,
-                   closed_at, analysis_summary_json
+                   entry_triggered_at, closed_at, analysis_summary_json
             FROM signals
             WHERE symbol = ? AND status IN ('TP3_HIT','STOPPED')
               AND entry_triggered_at IS NOT NULL
             ORDER BY closed_at ASC
         """, (symbol,)).fetchall()
-        conn.close()
     except Exception:
         return []
 
@@ -200,12 +199,51 @@ def _load_trades(symbol: str, db_path: Path) -> list[dict]:
             result = "SL_HIT"
 
         pattern, leg = None, None
+        tf_bias_1d, tf_bias_4h = None, None
+        wave_pos_1d, wave_pos_4h = None, None
         try:
             s = json.loads(r["analysis_summary_json"] or "{}")
             pattern = s.get("pattern_type") or s.get("pattern")
             leg = s.get("current_leg")
         except Exception:
             pass
+
+        # Enrich with wave state at entry time from analysis_snapshots
+        entry_at = r["entry_triggered_at"] or r["closed_at"] or ""
+        if entry_at and not leg:
+            try:
+                for tf, bias_field, pos_field in [
+                    ("1D", "tf_bias_1d", "wave_pos_1d"),
+                    ("4H", "tf_bias_4h", "wave_pos_4h"),
+                ]:
+                    snap = conn.execute("""
+                        SELECT payload_json FROM analysis_snapshots
+                        WHERE symbol = ? AND timeframe = ?
+                          AND created_at <= ?
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (symbol, tf, entry_at)).fetchone()
+                    if snap:
+                        p = json.loads(snap[0] or "{}")
+                        pos = p.get("position") or {}
+                        scen = p.get("scenario") or {}
+                        summ = scen.get("analysis_summary") or {}
+                        if tf == "1D":
+                            tf_bias_1d = pos.get("bias")
+                            wave_pos_1d = summ.get("current_leg") or pos.get("position")
+                            if not pattern:
+                                pattern = p.get("pattern_type")
+                            if not leg:
+                                leg = summ.get("current_leg")
+                        else:
+                            tf_bias_4h = pos.get("bias")
+                            wave_pos_4h = summ.get("current_leg") or pos.get("position")
+            except Exception:
+                pass
+
+        tf_aligned = (
+            tf_bias_1d == tf_bias_4h
+            if tf_bias_1d and tf_bias_4h else None
+        )
 
         trades.append({
             "id": r["id"],
@@ -216,8 +254,18 @@ def _load_trades(symbol: str, db_path: Path) -> list[dict]:
             "sl_pct": round(abs(entry - sl) / entry * 100, 2) if entry and sl else None,
             "pattern": pattern,
             "leg": leg,
+            "wave_pos_1d": wave_pos_1d,
+            "wave_pos_4h": wave_pos_4h,
+            "tf_bias_1d": tf_bias_1d,
+            "tf_bias_4h": tf_bias_4h,
+            "tf_aligned": tf_aligned,
             "closed_at": (r["closed_at"] or "")[:10],
         })
+
+    try:
+        conn.close()
+    except Exception:
+        pass
     return trades
 
 
@@ -251,6 +299,17 @@ def _compute_stats(trades: list[dict]) -> dict:
         "by_timeframe": bucket(trades, "timeframe"),
         "by_pattern": bucket(trades, "pattern"),
         "by_leg": bucket(trades, "leg"),
+        "by_wave_pos_1d": bucket(trades, "wave_pos_1d"),
+        "by_wave_pos_4h": bucket(trades, "wave_pos_4h"),
+        "by_tf_aligned": bucket(trades, "tf_aligned"),
+        "tf_aligned_wr": round(
+            sum(1 for t in trades if t.get("tf_aligned") is True and t["result"] != "SL_HIT") /
+            max(1, sum(1 for t in trades if t.get("tf_aligned") is True)), 2
+        ) if any(t.get("tf_aligned") is not None for t in trades) else None,
+        "tf_conflict_wr": round(
+            sum(1 for t in trades if t.get("tf_aligned") is False and t["result"] != "SL_HIT") /
+            max(1, sum(1 for t in trades if t.get("tf_aligned") is False)), 2
+        ) if any(t.get("tf_aligned") is not None for t in trades) else None,
     }
 
 
