@@ -153,14 +153,23 @@ def _load_wave_states(symbol: str, db_path: Path) -> dict[str, dict]:
         try:
             payload = json.loads(r[4] or "{}")
             pos = payload.get("position") or {}
-            state["wave_position"] = pos.get("position")  # e.g. IN_WAVE_4, IN_WAVE_B
+            scen = payload.get("scenario") or {}
+            summary = scen.get("analysis_summary") or {}
+
+            state["wave_position"] = pos.get("position")
             state["structure"] = pos.get("structure")
-            scenario = payload.get("scenario") or {}
-            summary = scenario.get("analysis_summary") or {}
             state["current_leg"] = summary.get("current_leg")
-            state["side"] = scenario.get("side")
+            state["side"] = scen.get("side")
             rr = summary.get("rr_levels") or {}
             state["rr_tp3"] = rr.get("rr_tp3")
+
+            # bias column is often NULL — fall back to payload_json sources
+            if not state["bias"]:
+                state["bias"] = (
+                    pos.get("bias")
+                    or scen.get("bias")
+                    or (summary.get("scenario") or {}).get("bias")
+                )
         except Exception:
             pass
         states[tf] = state
