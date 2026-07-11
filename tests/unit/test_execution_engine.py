@@ -30,8 +30,10 @@ def test_execution_engine_preview_signal():
     assert preview["intent"]["source_signal_id"] == 7
     assert preview["entry_order"]["side"] == "BUY"
     assert preview["protection"]["tp1"] == 72394.09
+    # tp1/tp3 split changed from 0.40/0.30 to 0.50/0.20 (execution/models.py
+    # ExecutionConfig defaults); tp2 unchanged at 0.30.
     assert preview["exit_plan"] == [
-        {"label": "TP1", "target_price": 72394.09, "size_pct": 0.4, "quantity": 0.002509},
+        {"label": "TP1", "target_price": 72394.09, "size_pct": 0.5, "quantity": 0.003136},
         {"label": "TP2", "target_price": 72827.6825, "size_pct": 0.3, "quantity": 0.001882},
-        {"label": "TP3", "target_price": 73379.2376, "size_pct": 0.3, "quantity": 0.001882},
+        {"label": "TP3", "target_price": 73379.2376, "size_pct": 0.2, "quantity": 0.001255},
     ]

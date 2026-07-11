@@ -7,10 +7,11 @@ def _sw(i, p, t):
 
 
 def test_detect_bullish_wxy():
+    # wx=20, xy=15 -> ratio=0.75, within the tightened 0.618-1.0 band.
     swings = [
         SwingPoint(index=1, price=100.0, type="L", timestamp="2026-01-01"),
         SwingPoint(index=2, price=120.0, type="H", timestamp="2026-01-02"),
-        SwingPoint(index=3, price=108.0, type="L", timestamp="2026-01-03"),
+        SwingPoint(index=3, price=105.0, type="L", timestamp="2026-01-03"),
     ]
 
     pattern = detect_wxy(swings)
@@ -21,10 +22,11 @@ def test_detect_bullish_wxy():
 
 
 def test_detect_bearish_wxy():
+    # wx=20, xy=15 -> ratio=0.75, within the tightened 0.618-1.0 band.
     swings = [
         SwingPoint(index=1, price=120.0, type="H", timestamp="2026-01-01"),
         SwingPoint(index=2, price=100.0, type="L", timestamp="2026-01-02"),
-        SwingPoint(index=3, price=112.0, type="H", timestamp="2026-01-03"),
+        SwingPoint(index=3, price=115.0, type="H", timestamp="2026-01-03"),
     ]
 
     pattern = detect_wxy(swings)

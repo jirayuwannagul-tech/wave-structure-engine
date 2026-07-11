@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_DOWN
 from typing import Any
 
 from execution.binance_futures_client import BinanceFuturesClient
@@ -91,14 +92,26 @@ def get_symbol_filters(client: BinanceFuturesClient, symbol: str) -> SymbolFilte
     return SymbolFilters(symbol=symbol_u, price_tick=0.0, qty_step=0.0, min_qty=None, min_notional=None)
 
 
+def _floor_to_step(value: float, step: float) -> float:
+    """Floor `value` to the nearest multiple of `step` using exact decimal math.
+
+    Plain float division (e.g. 2.3 / 0.1 == 22.999999999999996) truncates to the
+    wrong integer step for pairs that aren't exactly representable in binary
+    float, silently shifting the result down a full step. Decimal avoids this.
+    """
+    d_value = Decimal(str(value))
+    d_step = Decimal(str(step))
+    steps = (d_value / d_step).to_integral_value(rounding=ROUND_DOWN)
+    return float(steps * d_step)
+
+
 def round_price(client: BinanceFuturesClient, symbol: str, price: float) -> float:
     """Round price down to nearest valid tick size."""
     filters = get_symbol_filters(client, symbol)
     tick = float(filters.price_tick or 0.0)
     if tick <= 0:
         return float(price)
-    steps = int(float(price) / tick)
-    return round(steps * tick, 8)
+    return _floor_to_step(float(price), tick)
 
 
 def round_quantity(client: BinanceFuturesClient, symbol: str, quantity: float) -> float:
@@ -107,8 +120,7 @@ def round_quantity(client: BinanceFuturesClient, symbol: str, quantity: float) -
     step = float(filters.qty_step or 0.0)
     if step <= 0:
         return float(quantity)
-    steps = int(float(quantity) / step)
-    return round(steps * step, 8)
+    return _floor_to_step(float(quantity), step)
 
 
 def round_quantity_clamped(

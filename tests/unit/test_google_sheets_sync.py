@@ -92,13 +92,15 @@ def test_compute_signal_tracking_marks_targets_and_stop_loss():
         )
     )
 
+    # realized_rr is weighted by ExecutionConfig tp1/tp2/tp3_size_pct, which
+    # changed from 0.40/0.30/0.30 to 0.50/0.30/0.20.
     assert tracking == {
         "result": "TP1_THEN_SL",
         "tp1_mark": "✓",
         "tp2_mark": "",
         "tp3_mark": "",
         "sl_mark": "✗",
-        "realized_rr": "-0.5232",
+        "realized_rr": "-0.4035",
         "win_rate_pct": "33.33",
     }
 
@@ -113,7 +115,7 @@ def test_compute_signal_tracking_uses_managed_stop_loss_without_rewriting_plan()
     )
 
     assert tracking["result"] == "TP1_THEN_SL"
-    assert tracking["realized_rr"] == "0.078"
+    assert tracking["realized_rr"] == "0.0975"
     assert tracking["win_rate_pct"] == "33.33"
 
 
@@ -143,7 +145,7 @@ def test_build_signal_sheet_row_formats_trade_journal_columns():
         "",
         "",
         "TP1_ACTIVE",
-        "0.078",
+        "0.0975",
         "33.33",
     ]
 
@@ -172,7 +174,7 @@ def test_google_sheets_logger_upserts_existing_signal_row():
     assert worksheet.rows[1][_column("tp1_mark")] == "✓"
     assert worksheet.rows[1][_column("sl_mark")] == "✗"
     assert worksheet.rows[1][_column("result")] == "TP1_THEN_SL"
-    assert worksheet.rows[1][_column("realized_rr")] == "-0.5232"
+    assert worksheet.rows[1][_column("realized_rr")] == "-0.4035"
     assert worksheet.rows[1][_column("win_rate_pct")] == "33.33"
 
 

@@ -217,9 +217,12 @@ def _load_trades(symbol: str, db_path: Path) -> list[dict]:
         except Exception:
             pass
 
-        # Enrich with wave state at entry time from analysis_snapshots
+        # Enrich with wave state at entry time from analysis_snapshots.
+        # This must run whenever entry_at is available, not just when `leg`
+        # is missing — tf_bias_1d/4h enrichment is independent of whether
+        # `leg` was already found in analysis_summary_json.
         entry_at = r["entry_triggered_at"] or r["closed_at"] or ""
-        if entry_at and not leg:
+        if entry_at:
             try:
                 for tf, bias_field, pos_field in [
                     ("1D", "tf_bias_1d", "wave_pos_1d"),
@@ -236,15 +239,21 @@ def _load_trades(symbol: str, db_path: Path) -> list[dict]:
                         pos = p.get("position") or {}
                         scen = p.get("scenario") or {}
                         summ = scen.get("analysis_summary") or {}
+                        # bias column is often NULL — fall back to payload_json sources
+                        bias_val = (
+                            pos.get("bias")
+                            or scen.get("bias")
+                            or (summ.get("scenario") or {}).get("bias")
+                        )
                         if tf == "1D":
-                            tf_bias_1d = pos.get("bias")
+                            tf_bias_1d = bias_val
                             wave_pos_1d = summ.get("current_leg") or pos.get("position")
                             if not pattern:
                                 pattern = p.get("pattern_type")
                             if not leg:
                                 leg = summ.get("current_leg")
                         else:
-                            tf_bias_4h = pos.get("bias")
+                            tf_bias_4h = bias_val
                             wave_pos_4h = summ.get("current_leg") or pos.get("position")
             except Exception:
                 pass

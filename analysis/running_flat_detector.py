@@ -17,6 +17,12 @@ class RunningFlatPattern:
     bc_length: float
     b_vs_a_ratio: float
     c_vs_a_ratio: float
+    # Shadow-mode field (not yet used by rule_validator/wave_confidence):
+    # c_vs_a_ratio is currently aliased to b_vs_a_ratio (bc/ab). This field
+    # independently measures C's position relative to A, scaled by the AB
+    # leg (same formula flat_detector.py already uses), for side-by-side
+    # comparison before any threshold/behavior change.
+    c_vs_a_ratio_actual: float = 0.0
 
 
 def _safe_ratio(a: float, b: float) -> float:
@@ -44,6 +50,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
             # Running Flat: C < B (bc/ab < 1.0), C fails to reach A origin (c.price > a.price)
             b_vs_a_ratio = _safe_ratio(bc, ab)
             c_vs_a_ratio = b_vs_a_ratio
+            c_vs_a_ratio_actual = _safe_ratio(c.price - a.price, ab)
 
             if c.price > a.price and 0.0 < c_vs_a_ratio < 1.0:
                 return RunningFlatPattern(
@@ -56,6 +63,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
                     bc_length=bc,
                     b_vs_a_ratio=b_vs_a_ratio,
                     c_vs_a_ratio=c_vs_a_ratio,
+                    c_vs_a_ratio_actual=c_vs_a_ratio_actual,
                 )
 
         # bearish running flat: H-L-H
@@ -70,6 +78,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
             # Running Flat bearish: C < B (bc/ab < 1.0), C fails to reach A origin
             b_vs_a_ratio = _safe_ratio(bc, ab)
             c_vs_a_ratio = b_vs_a_ratio
+            c_vs_a_ratio_actual = _safe_ratio(a.price - c.price, ab)
 
             if c.price < a.price and 0.0 < c_vs_a_ratio < 1.0:
                 return RunningFlatPattern(
@@ -82,6 +91,7 @@ def detect_running_flat(swings: List[SwingPoint]) -> Optional[RunningFlatPattern
                     bc_length=bc,
                     b_vs_a_ratio=b_vs_a_ratio,
                     c_vs_a_ratio=c_vs_a_ratio,
+                    c_vs_a_ratio_actual=c_vs_a_ratio_actual,
                 )
 
     return None

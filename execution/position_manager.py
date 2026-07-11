@@ -1410,54 +1410,11 @@ class PositionManager:
                         self.store.update_position_order_row_status(int(r["id"]), "CANCELED")
                     except Exception:
                         pass
+            # ensure_protection() already (re)places the full TP1-3 ladder from the
+            # DB-stored levels via _ensure_take_profits_for_row — a second manual
+            # placement here used a different client_order_id and produced duplicate
+            # live TP orders at each level.
             self.ensure_protection(symbol)
-            # Replace TP orders (if stored on the position row)
-            row_now = self.store.get_open_leg_position(symbol, side)
-            if row_now is not None:
-                tp_levels = [
-                    ("TP1", row_now["tp1_price"], float(self.config.tp1_size_pct)),
-                    ("TP2", row_now["tp2_price"], float(self.config.tp2_size_pct)),
-                    ("TP3", row_now["tp3_price"], float(self.config.tp3_size_pct)),
-                ]
-                valid = [(lab, px, w) for lab, px, w in tp_levels if px is not None and w > 0]
-                wsum = sum(w for _, _, w in valid)
-                placed = 0.0
-                total_qty = round_quantity(self.client, symbol, float(row_now["quantity"] or 0))
-                for j, (label, tp_px_raw, w) in enumerate(valid):
-                    if j == len(valid) - 1:
-                        tp_qty = round_quantity(self.client, symbol, total_qty - placed)
-                    else:
-                        tp_qty = round_quantity(self.client, symbol, total_qty * (w / wsum) if wsum > 0 else 0)
-                    placed = round_quantity(self.client, symbol, placed + tp_qty)
-                    if tp_qty <= 0:
-                        continue
-                    tp_px = round_price(self.client, symbol, float(tp_px_raw))
-                    cid = _pid_cid(pos_id, label)
-                    try:
-                        tp_resp = self.client.place_take_profit_market_reduce_only(
-                            symbol=symbol,
-                            side=side,
-                            stop_price=tp_px,
-                            quantity=tp_qty,
-                            client_order_id=cid,
-                            position_side=pst,
-                        )
-                        oid_tp = _order_id(tp_resp)
-                        row_tp = self.store.record_order(
-                            pos_id,
-                            order_kind=label,
-                            order_id=oid_tp,
-                            client_order_id=cid,
-                            side="SELL" if side == "LONG" else "BUY",
-                            order_type="TAKE_PROFIT_MARKET",
-                            quantity=tp_qty,
-                            stop_price=tp_px,
-                            status="NEW",
-                        )
-                        if oid_tp:
-                            self.store.update_order_exchange_id(row_tp, oid_tp)
-                    except Exception as exc:
-                        self.store.append_event(pos_id, f"{label}_REPLACE_FAILED", {"error": str(exc)})
             self.store.append_event(pos_id, "SCALE_IN_PROTECTION_REPLACED", {})
             record_execution_health(
                 "execution:last_open_ok",
@@ -1678,6 +1635,7 @@ class PositionManager:
             pass
 
         if self.config.hedge_position_mode:
+            close_errors: list[str] = []
             for row in self.client.get_position_risk() or []:
                 if str(row.get("symbol") or "").upper() != symbol_u:
                     continue
@@ -1701,8 +1659,14 @@ class PositionManager:
                         client_order_id=None,
                         position_side=leg_ps,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    close_errors.append(str(exc))
+            if close_errors:
+                # A real exchange leg failed to close — do NOT mark the DB rows
+                # closed, or we'd leave a naked, unprotected position that the
+                # system believes no longer exists (protective orders were
+                # already canceled above).
+                return {"ok": False, "error": "; ".join(close_errors)}
         else:
             pos = self.client.get_position(symbol_u)
             amt = 0.0

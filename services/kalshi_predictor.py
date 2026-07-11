@@ -250,6 +250,10 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
         exp = _parse_event_expiry(ev)
         if exp is None:
             exp = _parse_ticker_expiry(ticker)
+        if exp is None:
+            # Neither the event payload nor the ticker suffix parsed — fall back
+            # to the synthetic 15m slot expiry so the row is still resolvable.
+            _, exp = _slot_ticker(now)
         target = _get_market_target(ticker, title)
         print(f"[kalshi] Kalshi event found: {ticker} | target=${target} | exp={exp}")
     else:
@@ -300,7 +304,7 @@ def make_prediction(db_path: Path | None = None) -> dict | None:
 
     prediction = "UP" if bias_15m == "BULLISH" else "DOWN"
     now_str = now.isoformat()
-    exp_str_save = exp.isoformat() if exp else exp_str
+    exp_str_save = exp.isoformat()
 
     conn = sqlite3.connect(str(db))
     conn.execute("""

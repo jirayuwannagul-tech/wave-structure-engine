@@ -43,8 +43,11 @@ def test_generate_scenarios_for_bullish_abc():
     assert scenarios[0].confirmation == 74050.0
     assert scenarios[0].stop_loss == 65618.49
     assert scenarios[0].condition == "price breaks above 74050.0"
-    assert len(scenarios[0].targets) == 1
-    assert scenarios[0].targets == [76271.5]
+    # _sanitize_scenarios._fill_missing_targets always pads to exactly 3 TP
+    # levels using risk-based extensions when the aligned target list is
+    # shorter (deliberate "always 3 TP levels" guarantee, not a regression).
+    assert len(scenarios[0].targets) == 3
+    assert scenarios[0].targets == [76271.5, 90913.02, 99344.53]
 
 
 def test_generate_scenarios_for_bearish_corrective_uses_confirmation_break():
@@ -387,7 +390,10 @@ def test_prioritize_scenarios_does_not_pair_prune_1d_history(monkeypatch):
     class Edge:
         sample_count = 80
         win_rate = 0.42
-        avg_r = -0.08
+        # Must stay strictly better than the 1D prune threshold
+        # (n>=10, avg_r<=-0.08, win_rate<=0.44 — scenario_engine.py:305);
+        # -0.08 exactly sits ON the threshold and IS pruned by design.
+        avg_r = -0.07
         positive = False
         negative = False
         severe_negative = False

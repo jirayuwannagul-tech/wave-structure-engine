@@ -72,6 +72,15 @@ def analyze(edge_store: dict, insights_path: Path | None = None) -> dict | None:
 
     text = _call_gemini(api_key, prompt)
 
+    # Don't overwrite good insights with a transient API failure.
+    if text.startswith("[Gemini API error") or text.startswith("[Gemini call failed"):
+        if out.exists():
+            try:
+                return json.loads(out.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+        return None
+
     insights = {
         "last_analyzed": datetime.now(UTC).isoformat(),
         "analyzed_through_signal_id": edge_store.get("last_processed_id"),

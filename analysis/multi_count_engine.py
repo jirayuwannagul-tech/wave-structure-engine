@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pandas as pd
 
 from analysis.diagonal_detector import detect_ending_diagonal
@@ -62,6 +66,57 @@ from analysis.wxy_detector import detect_wxy
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+_C_RATIO_SHADOW_LOG = Path(__file__).parent.parent / "storage" / "c_ratio_shadow_log.jsonl"
+
+
+def _log_c_ratio_shadow(
+    pattern_type: str,
+    pattern,
+    legacy_attr: str,
+    actual_attr: str,
+    confidence: float,
+    rule_valid: bool,
+) -> None:
+    """Append legacy-vs-actual C-ratio comparison for later calibration.
+
+    Purely observational: never raises, never affects wave-count output.
+    Reads fields via getattr so it silently no-ops for test doubles / older
+    pattern objects that don't carry the shadow field yet.
+    See item #8 of the bug-fix review — c_extension_ratio/c_vs_a_ratio in
+    expanded/running flat are currently aliased to the B ratio; this logs
+    both values side by side until enough live data exists to decide
+    whether to switch thresholds in wave_confidence.py.
+    """
+    try:
+        legacy_ratio = getattr(pattern, legacy_attr, None)
+        actual_ratio = getattr(pattern, actual_attr, None)
+        a = getattr(pattern, "a", None)
+        b = getattr(pattern, "b", None)
+        c = getattr(pattern, "c", None)
+        if legacy_ratio is None or actual_ratio is None or a is None or b is None or c is None:
+            return
+        entry = {
+            "ts": datetime.now(UTC).isoformat(),
+            "pattern_type": pattern_type,
+            "direction": getattr(pattern, "direction", None),
+            "a_price": a.price,
+            "a_time": a.timestamp,
+            "b_price": b.price,
+            "b_time": b.timestamp,
+            "c_price": c.price,
+            "c_time": c.timestamp,
+            "legacy_ratio": round(legacy_ratio, 4),
+            "actual_ratio": round(actual_ratio, 4),
+            "confidence": round(confidence, 4),
+            "rule_valid": rule_valid,
+        }
+        _C_RATIO_SHADOW_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _C_RATIO_SHADOW_LOG.open("a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
 
 
 def _prepare_indicator_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -315,6 +370,14 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 expanded_flat.direction, indicator_df, pivots
             )
             confidence += indicator_adjustment
+            _log_c_ratio_shadow(
+                "EXPANDED_FLAT",
+                expanded_flat,
+                "c_extension_ratio",
+                "c_extension_ratio_actual",
+                confidence,
+                rule_result.is_valid,
+            )
             _append_count(
                 counts,
                 "EXPANDED_FLAT",
@@ -338,6 +401,14 @@ def generate_wave_counts(pivots, df: pd.DataFrame | None = None):
                 running_flat.direction, indicator_df, pivots
             )
             confidence += indicator_adjustment
+            _log_c_ratio_shadow(
+                "RUNNING_FLAT",
+                running_flat,
+                "c_vs_a_ratio",
+                "c_vs_a_ratio_actual",
+                confidence,
+                rule_result.is_valid,
+            )
             _append_count(
                 counts,
                 "RUNNING_FLAT",

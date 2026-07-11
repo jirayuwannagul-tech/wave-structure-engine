@@ -42,7 +42,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
 
             ratio = _safe_ratio(xy, wx)
 
-            if y.price > w.price and 0.50 <= ratio <= 1.10:
+            if y.price > w.price and 0.618 <= ratio <= 1.0:
                 return WXYPattern(
                     pattern_type="WXY",
                     direction="bullish",
@@ -65,7 +65,7 @@ def detect_wxy(swings: List[SwingPoint]) -> Optional[WXYPattern]:
 
             ratio = _safe_ratio(xy, wx)
 
-            if y.price < w.price and 0.50 <= ratio <= 1.10:
+            if y.price < w.price and 0.618 <= ratio <= 1.0:
                 return WXYPattern(
                     pattern_type="WXY",
                     direction="bearish",

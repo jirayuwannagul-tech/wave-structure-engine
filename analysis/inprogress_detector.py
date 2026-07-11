@@ -839,7 +839,11 @@ def _nc_bullish_cw3(
                             ),
                             time_projection=time_proj,
                         )
-                    break  # forward order: first valid = oldest = max span for this combo
+                    # NOTE: intentionally no early break — must scan every w0
+                    # candidate to actually find the max-span one (the "forward
+                    # order = oldest = max span" assumption only holds for
+                    # monotonic price runs; a double-bottom shape needs the
+                    # full scan to find the true largest-span W0).
     return best
 
 
@@ -910,7 +914,7 @@ def _nc_bullish_cw4(
                                 ),
                                 time_projection=time_proj,
                             )
-                        break  # first valid in forward order = oldest = max span
+                        # no early break — see _nc_bullish_cw3 for why
     return best
 
 
@@ -975,7 +979,7 @@ def _nc_bullish_cw5(
                                     is_valid=True,
                                     confidence=0.72,
                                 )
-                            break  # first valid in forward order = oldest = max span
+                            # no early break — see _nc_bullish_cw3 for why
     return best
 
 
@@ -1102,6 +1106,321 @@ def _find_nonconsecutive_bullish(
     return max(candidates, key=lambda iw: (_span(iw), iw.completed_waves))
 
 
+def _nc_bearish_cw3(
+    pivots: list[Pivot],
+    last_idx: int,
+    h_idx: list[int],
+    l_idx: list[int],
+) -> Optional[InProgressWave]:
+    """4-pivot [H,L,H,L] non-consecutive, ending at last_idx (L). cw=3.
+
+    Mirror of ``_nc_bullish_cw3`` for bearish impulses.
+    """
+    w3 = pivots[last_idx]
+    best_span = -1.0
+    best: Optional[InProgressWave] = None
+    last_bar = pivots[last_idx].index
+
+    for i2 in reversed([i for i in h_idx if i < last_idx]):
+        w2 = pivots[i2]
+        if w2.price <= w3.price:
+            continue
+        for i1 in reversed([i for i in l_idx if i < i2]):
+            w1 = pivots[i1]
+            if w1.price <= w3.price:
+                continue
+            if w2.price <= w1.price:
+                continue
+            for i0 in [i for i in h_idx if i < i1]:  # forward = oldest first
+                w0 = pivots[i0]
+                if last_bar - w0.index > _NC_MAX_SPAN_BARS:
+                    continue
+                if w0.price <= w2.price:
+                    continue
+                sub = [w0, w1, w2, w3]
+                ok, checks = _validate_bearish_partial(sub)
+                if ok:
+                    span = w0.price - w3.price
+                    if span > best_span:
+                        best_span = span
+                        durations = measure_impulse_wave_durations(sub)
+                        time_proj = project_wave_time(
+                            completed_durations=durations,
+                            building_wave="4",
+                            current_bar_index=w3.index,
+                            wave_start_index=w3.index,
+                        )
+                        time_adj = score_time_confidence(time_proj)
+                        best = InProgressWave(
+                            structure="IMPULSE",
+                            direction="bearish",
+                            wave_number="4",
+                            completed_waves=3,
+                            pivots=sub,
+                            last_pivot=w3,
+                            current_wave_start=w3.price,
+                            invalidation=_bearish_invalidation(sub),
+                            fib_targets=_bearish_fib_targets(sub),
+                            rule_checks=checks,
+                            is_valid=True,
+                            confidence=round(
+                                min(0.95, _confidence(checks, 4) + time_adj), 3
+                            ),
+                            time_projection=time_proj,
+                        )
+    return best
+
+
+def _nc_bearish_cw4(
+    pivots: list[Pivot],
+    last_idx: int,
+    h_idx: list[int],
+    l_idx: list[int],
+) -> Optional[InProgressWave]:
+    """5-pivot [H,L,H,L,H] non-consecutive, ending at last_idx (H). cw=4.
+
+    Mirror of ``_nc_bullish_cw4`` for bearish impulses.
+    """
+    w4 = pivots[last_idx]
+    best_span = -1.0
+    best: Optional[InProgressWave] = None
+    last_bar = pivots[last_idx].index
+
+    for i3 in reversed([i for i in l_idx if i < last_idx]):
+        w3 = pivots[i3]
+        if w4.price <= w3.price:
+            continue
+        for i2 in reversed([i for i in h_idx if i < i3]):
+            w2 = pivots[i2]
+            if w2.price <= w3.price:
+                continue
+            if w4.price >= w2.price:
+                continue
+            for i1 in reversed([i for i in l_idx if i < i2]):
+                w1 = pivots[i1]
+                if w1.price <= w3.price:
+                    continue
+                if w2.price <= w1.price:
+                    continue
+                for i0 in [i for i in h_idx if i < i1]:
+                    w0 = pivots[i0]
+                    if last_bar - w0.index > _NC_MAX_SPAN_BARS:
+                        continue
+                    if w0.price <= w2.price:
+                        continue
+                    sub = [w0, w1, w2, w3, w4]
+                    ok, checks = _validate_bearish_partial(sub)
+                    if ok:
+                        span = w0.price - w3.price
+                        if span > best_span:
+                            best_span = span
+                            durations = measure_impulse_wave_durations(sub)
+                            time_proj = project_wave_time(
+                                completed_durations=durations,
+                                building_wave="5",
+                                current_bar_index=w4.index,
+                                wave_start_index=w4.index,
+                            )
+                            time_adj = score_time_confidence(time_proj)
+                            best = InProgressWave(
+                                structure="IMPULSE",
+                                direction="bearish",
+                                wave_number="5",
+                                completed_waves=4,
+                                pivots=sub,
+                                last_pivot=w4,
+                                current_wave_start=w4.price,
+                                invalidation=_bearish_invalidation(sub),
+                                fib_targets=_bearish_fib_targets(sub),
+                                rule_checks=checks,
+                                is_valid=True,
+                                confidence=round(
+                                    min(0.95, _confidence(checks, 5) + time_adj), 3
+                                ),
+                                time_projection=time_proj,
+                            )
+    return best
+
+
+def _nc_bearish_cw5(
+    pivots: list[Pivot],
+    last_idx: int,
+    h_idx: list[int],
+    l_idx: list[int],
+) -> Optional[InProgressWave]:
+    """6-pivot [H,L,H,L,H,L] non-consecutive, ending at last_idx (L). cw=5.
+
+    Mirror of ``_nc_bullish_cw5`` for bearish impulses. A completed 5-wave
+    bearish impulse means the current corrective wave (Wave A) moves up, so
+    the resulting ``direction`` is "bullish" (matching the convention used by
+    ``_try_complete_bearish_impulse_correction``).
+    """
+    w5 = pivots[last_idx]
+    best_span = -1.0
+    best: Optional[InProgressWave] = None
+    last_bar = pivots[last_idx].index
+
+    for i4 in reversed([i for i in h_idx if i < last_idx]):
+        w4 = pivots[i4]
+        if w4.price <= w5.price:
+            continue
+        for i3 in reversed([i for i in l_idx if i < i4]):
+            w3 = pivots[i3]
+            if w3.price <= w5.price:
+                continue
+            if w4.price <= w3.price:
+                continue
+            for i2 in reversed([i for i in h_idx if i < i3]):
+                w2 = pivots[i2]
+                if w2.price <= w3.price:
+                    continue
+                if w4.price >= w2.price:
+                    continue
+                for i1 in reversed([i for i in l_idx if i < i2]):
+                    w1 = pivots[i1]
+                    if w1.price <= w3.price:
+                        continue
+                    if w2.price <= w1.price:
+                        continue
+                    for i0 in [i for i in h_idx if i < i1]:
+                        w0 = pivots[i0]
+                        if last_bar - w0.index > _NC_MAX_SPAN_BARS:
+                            continue
+                        if w0.price <= w2.price:
+                            continue
+                        sub = [w0, w1, w2, w3, w4, w5]
+                        ok, checks = _validate_full_bearish_impulse(sub)
+                        if ok:
+                            span = w0.price - w5.price
+                            if span > best_span:
+                                best_span = span
+                                best = InProgressWave(
+                                    structure="CORRECTION",
+                                    direction="bullish",
+                                    wave_number="A",
+                                    completed_waves=5,
+                                    pivots=sub,
+                                    last_pivot=w5,
+                                    current_wave_start=w5.price,
+                                    invalidation=w5.price,
+                                    fib_targets={},
+                                    rule_checks=checks,
+                                    is_valid=True,
+                                    confidence=0.72,
+                                )
+    return best
+
+
+def _nc_bearish_cw6(
+    pivots: list[Pivot],
+    last_idx: int,
+    h_idx: list[int],
+    l_idx: list[int],
+) -> Optional[InProgressWave]:
+    """7-pivot [H,L,H,L,H,L,H] non-consecutive, ending at last_idx (H). cw=6.
+
+    Mirror of ``_nc_bullish_cw6`` for bearish impulses.
+    """
+    wa = pivots[last_idx]
+    l_before_wa = [i for i in l_idx if i < last_idx]
+    if not l_before_wa:
+        return None
+
+    best_span = -1.0
+    best: Optional[InProgressWave] = None
+
+    for i5 in reversed(l_before_wa):
+        w5_candidate = pivots[i5]
+
+        # W5 must be below WA (Wave A went up from W5)
+        if w5_candidate.price >= wa.price:
+            continue
+
+        # Skip same-bar L+H artifacts
+        if w5_candidate.index == wa.index:
+            continue
+
+        result6 = _nc_bearish_cw5(pivots, i5, h_idx, l_idx)
+        if result6 is None:
+            continue
+
+        sub7_prices = [p.price for p in result6.pivots] + [wa.price]
+        span = max(sub7_prices) - min(sub7_prices)
+        if span <= best_span:
+            continue
+
+        best_span = span
+        w5_pivot = result6.pivots[5]
+        wave_a_size = wa.price - w5_pivot.price
+        b_target_0382 = round(wa.price - wave_a_size * 0.382, 6)
+        b_target_0618 = round(wa.price - wave_a_size * 0.618, 6)
+        best = InProgressWave(
+            structure="CORRECTION",
+            direction="bullish",
+            wave_number="B",
+            completed_waves=6,
+            pivots=result6.pivots + [wa],
+            last_pivot=wa,
+            current_wave_start=wa.price,
+            invalidation=w5_pivot.price,
+            fib_targets={"0.382": b_target_0382, "0.618": b_target_0618},
+            rule_checks=result6.rule_checks,
+            is_valid=True,
+            confidence=0.78,
+        )
+
+    return best
+
+
+def _find_nonconsecutive_bearish(
+    pivots: list[Pivot],
+) -> Optional[InProgressWave]:
+    """Find best Primary-degree bearish impulse using non-consecutive pivots.
+
+    Mirror of ``_find_nonconsecutive_bullish`` for bearish impulses.
+    """
+    n = len(pivots)
+    if n < 4:
+        return None
+
+    last = pivots[-1]
+    last_idx = n - 1
+    h_idx = [i for i, p in enumerate(pivots) if p.type == "H"]
+    l_idx = [i for i, p in enumerate(pivots) if p.type == "L"]
+
+    candidates: list[InProgressWave] = []
+
+    if last.type == "L":
+        r = _nc_bearish_cw5(pivots, last_idx, h_idx, l_idx)
+        if r:
+            candidates.append(r)
+        r = _nc_bearish_cw3(pivots, last_idx, h_idx, l_idx)
+        if r:
+            candidates.append(r)
+    elif last.type == "H":
+        r = _nc_bearish_cw6(pivots, last_idx, h_idx, l_idx)
+        if r:
+            candidates.append(r)
+        r = _nc_bearish_cw4(pivots, last_idx, h_idx, l_idx)
+        if r:
+            candidates.append(r)
+        # Edge case: same-bar L+H (mirror of the bullish ATH-candle case).
+        l_before = [i for i in l_idx if i < last_idx]
+        if l_before and pivots[l_before[-1]].index == last.index:
+            r = _nc_bearish_cw5(pivots, l_before[-1], h_idx, l_idx)
+            if r:
+                candidates.append(r)
+
+    if not candidates:
+        return None
+
+    def _span(iw: InProgressWave) -> float:
+        return max(p.price for p in iw.pivots) - min(p.price for p in iw.pivots)
+
+    # Prefer largest span (= Primary degree); tiebreak by highest cw
+    return max(candidates, key=lambda iw: (_span(iw), iw.completed_waves))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1169,6 +1488,12 @@ def detect_inprogress_wave(
         best = nc_bull
         best_cw = nc_bull.completed_waves
         best_anchor = n - len(nc_bull.pivots)
+
+    nc_bear = _find_nonconsecutive_bearish(search)
+    if nc_bear is not None and nc_bear.completed_waves > best_cw:
+        best = nc_bear
+        best_cw = nc_bear.completed_waves
+        best_anchor = n - len(nc_bear.pivots)
 
     if best_cw >= 6:
         return best   # cw=6 Wave B building — nothing better possible

@@ -17,6 +17,11 @@ class ExpandedFlatPattern:
     bc_length: float
     b_extension_ratio: float
     c_extension_ratio: float
+    # Shadow-mode field (not yet used by rule_validator/wave_confidence):
+    # c_extension_ratio is currently aliased to b_extension_ratio (bc/ab).
+    # This field independently measures how far C overshot A, scaled by the
+    # AB leg, for side-by-side comparison before any threshold/behavior change.
+    c_extension_ratio_actual: float = 0.0
 
 
 def _safe_ratio(a: float, b: float) -> float:
@@ -46,6 +51,7 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
             # Expanded Flat: B must retrace ≥ 100% of A (bc/ab ≥ 1.00), C extends beyond A
             b_extension_ratio = _safe_ratio(bc, ab)
             c_extension_ratio = b_extension_ratio
+            c_extension_ratio_actual = _safe_ratio(a.price - c.price, ab)
 
             if b_extension_ratio >= 1.00 and c.price < a.price and c_extension_ratio > 1.0:
                 return ExpandedFlatPattern(
@@ -58,6 +64,7 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
                     bc_length=bc,
                     b_extension_ratio=b_extension_ratio,
                     c_extension_ratio=c_extension_ratio,
+                    c_extension_ratio_actual=c_extension_ratio_actual,
                 )
 
         # bearish expanded flat: H-L-H
@@ -74,6 +81,7 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
             # Expanded Flat bearish: B must retrace ≥ 100% of A, C extends beyond A
             b_extension_ratio = _safe_ratio(bc, ab)
             c_extension_ratio = b_extension_ratio
+            c_extension_ratio_actual = _safe_ratio(c.price - a.price, ab)
 
             if b_extension_ratio >= 1.00 and c.price > a.price and c_extension_ratio > 1.0:
                 return ExpandedFlatPattern(
@@ -86,6 +94,7 @@ def detect_expanded_flat(swings: List[SwingPoint]) -> Optional[ExpandedFlatPatte
                     bc_length=bc,
                     b_extension_ratio=b_extension_ratio,
                     c_extension_ratio=c_extension_ratio,
+                    c_extension_ratio_actual=c_extension_ratio_actual,
                 )
 
     return None

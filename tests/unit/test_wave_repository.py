@@ -11,6 +11,7 @@ class PositionStub:
     structure = "ABC_CORRECTION"
     position = "WAVE_C_END"
     bias = "BULLISH"
+    wave_number = ""
 
 
 def _analysis(
