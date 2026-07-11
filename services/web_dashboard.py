@@ -329,7 +329,9 @@ def _build_wave_audit_html(db_path: str) -> str:
             live_position = None
             live_error = None
             try:
-                analysis = build_timeframe_analysis(symbol, tf.upper())
+                # Binance's kline API requires a lowercase interval string
+                # ("1w"/"1d"/"4h") — passing tf.upper() causes a 400 Bad Request.
+                analysis = build_timeframe_analysis(symbol, tf)
                 live_pattern = analysis.get("primary_pattern_type")
                 position = analysis.get("position")
                 live_position = getattr(position, "position", None) if position is not None else None
