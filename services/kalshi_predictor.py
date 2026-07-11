@@ -63,8 +63,30 @@ def run_ew_15m_analysis() -> tuple[str, dict]:
     # Check in-progress wave direction for extra signal
     inprogress = detect_inprogress_wave(pivots)
     wave_dir = None
+    wave_position = None
+    next_wave = None
     if inprogress:
         wave_dir = getattr(inprogress, "direction", None)
+        structure = getattr(inprogress, "structure", None)
+        wave_number = getattr(inprogress, "wave_number", None)
+        completed_waves = getattr(inprogress, "completed_waves", None)
+        # "Confirmed" position: the structure/wave count the engine has
+        # validated so far from the last N pivots.
+        wave_position = (
+            f"{structure} confirmed through wave {completed_waves}, "
+            f"forming wave {wave_number} ({wave_dir})"
+            if structure and wave_number
+            else None
+        )
+        # "Next wave" prediction: the wave currently forming IS the next
+        # wave being called, with its projected target/invalidation levels.
+        next_wave = {
+            "wave_number": wave_number,
+            "direction": wave_dir,
+            "fib_targets": getattr(inprogress, "fib_targets", {}) or {},
+            "invalidation": getattr(inprogress, "invalidation", None),
+            "confidence": getattr(inprogress, "confidence", None),
+        }
 
     state = trend.state  # UPTREND | DOWNTREND | SIDEWAY | BROKEN_UP | BROKEN_DOWN
 
@@ -88,6 +110,8 @@ def run_ew_15m_analysis() -> tuple[str, dict]:
         "wave_dir": wave_dir,
         "last_high": trend.last_high,
         "last_low": trend.last_low,
+        "wave_position": wave_position,
+        "next_wave": next_wave,
         "source": "EW-15m-code",
     }
     return bias, signals
