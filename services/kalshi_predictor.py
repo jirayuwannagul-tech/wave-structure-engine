@@ -40,12 +40,15 @@ def run_ew_15m_analysis() -> tuple[str, dict]:
 
     bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
     """
-    from analysis.indicator_engine import calculate_atr
-    from analysis.pivot_detector import detect_pivots
-    from analysis.trend_classifier import classify_market_trend
-    from analysis.inprogress_detector import detect_inprogress_wave
-    from data.candle_utils import drop_unclosed_candle
-    from data.market_data_fetcher import MarketDataFetcher
+    # Isolated copy under kalshi_engine/ — intentionally does NOT share code
+    # with analysis/ or data/ so changes to the main trading engine can
+    # never silently alter Kalshi's 15m predictions, and vice versa.
+    from kalshi_engine.indicator_engine import calculate_atr
+    from kalshi_engine.pivot_detector import detect_pivots
+    from kalshi_engine.trend_classifier import classify_market_trend
+    from kalshi_engine.inprogress_detector import detect_inprogress_wave
+    from kalshi_engine.candle_utils import drop_unclosed_candle
+    from kalshi_engine.market_data_fetcher import MarketDataFetcher
 
     fetcher = MarketDataFetcher(symbol="BTCUSDT", interval="15m", limit=200)
     df = drop_unclosed_candle(fetcher.fetch_ohlcv())
