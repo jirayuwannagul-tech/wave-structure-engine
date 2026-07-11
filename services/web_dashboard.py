@@ -308,6 +308,108 @@ tr:hover td {{ background: #141414; }}
 </body></html>"""
 
 
+def _build_wave_audit_html(db_path: str) -> str:
+    """Compare a fresh live wave count against the latest DB-recorded snapshot,
+    per symbol/timeframe, so a human can see at a glance whether the engine's
+    current read of the market matches what the system has stored/acted on.
+    """
+    from config.markets import get_default_monitor_symbols
+    from core.engine import build_timeframe_analysis
+
+    symbols = get_default_monitor_symbols()
+    timeframes = ["1w", "1d", "4h"]
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    rows = ""
+    for symbol in symbols:
+        for tf in timeframes:
+            live_pattern = None
+            live_position = None
+            live_error = None
+            try:
+                analysis = build_timeframe_analysis(symbol, tf.upper())
+                live_pattern = analysis.get("primary_pattern_type")
+                position = analysis.get("position")
+                live_position = getattr(position, "position", None) if position is not None else None
+            except Exception as exc:
+                live_error = str(exc)[:80]
+
+            db_pattern = None
+            db_position = None
+            db_created_at = None
+            try:
+                r = conn.execute(
+                    """SELECT pattern_type, payload_json, created_at
+                       FROM analysis_snapshots
+                       WHERE symbol=? AND timeframe=?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (symbol, tf.upper()),
+                ).fetchone()
+                if r:
+                    db_pattern = r["pattern_type"]
+                    db_created_at = r["created_at"]
+                    payload = json.loads(r["payload_json"] or "{}")
+                    pos = payload.get("position") or {}
+                    db_position = pos.get("position")
+            except Exception:
+                pass
+
+            row_bg = ""
+            if live_error:
+                status = f'<span style="color:#666">fetch failed: {live_error}</span>'
+            elif db_pattern is None:
+                status = '<span style="color:#666">no DB record yet</span>'
+            elif live_pattern == db_pattern and live_position == db_position:
+                status = '<span style="color:#00e676;font-weight:700">&check; MATCH</span>'
+            else:
+                status = '<span style="color:#ff5252;font-weight:700">&cross; MISMATCH</span>'
+                row_bg = 'style="background:#2a1414"'
+
+            rows += f"""
+            <tr {row_bg}>
+              <td style="font-weight:700">{symbol}</td>
+              <td>{tf.upper()}</td>
+              <td>{live_pattern or '—'} / {live_position or '—'}</td>
+              <td>{db_pattern or '—'} / {db_position or '—'}</td>
+              <td style="color:#666;font-size:11px">{db_created_at or '—'}</td>
+              <td>{status}</td>
+            </tr>"""
+
+    conn.close()
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Wave Count Audit</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #0d0d0d; color: #e0e0e0; font-family: 'Inter', sans-serif; padding: 24px; }}
+h1 {{ color: #fff; font-size: 22px; margin-bottom: 6px; }}
+p.sub {{ color: #666; font-size: 13px; margin-bottom: 24px; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+th {{ text-align: left; color: #555; font-weight: 600; padding: 8px 12px; border-bottom: 1px solid #1e1e1e; }}
+td {{ padding: 10px 12px; border-bottom: 1px solid #1a1a1a; vertical-align: top; }}
+tr:hover td {{ background: #141414; }}
+</style></head><body>
+<nav style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="/" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Dashboard</a>
+  <a href="/history" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">History</a>
+  <a href="/edge" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">Edge</a>
+  <a href="/ai-rules" style="padding:6px 14px;border-radius:8px;color:#aaa;text-decoration:none;font-size:13px;font-weight:500;background:#1a1a1a">AI Rules</a>
+  <a href="/wave-audit" style="padding:6px 14px;border-radius:8px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:#6c63ff">Wave Audit</a>
+</nav>
+<h1>Wave Count Audit</h1>
+<p class="sub">เทียบ "นับคลื่นสด (คำนวณใหม่ตอนนี้)" กับ "ค่าล่าสุดที่ระบบบันทึกไว้ใน DB" ทีละ symbol/timeframe — MISMATCH แปลว่าค่าที่บันทึกไว้ไม่ตรงกับสิ่งที่ engine คำนวณได้ตอนนี้ (อาจจะแค่ยังไม่ถึงรอบ refresh หรือมีปัญหาจริง ต้องดูเป็นเคสไป)</p>
+<table>
+<thead><tr>
+  <th>Symbol</th><th>TF</th><th>Live count (pattern / position)</th><th>DB record (pattern / position)</th><th>DB last updated</th><th>Status</th>
+</tr></thead>
+<tbody>{rows}</tbody>
+</table>
+<p style="color:#555;font-size:12px;margin-top:24px">คำนวณสดทุกครั้งที่โหลดหน้านี้ (ดึงราคาจาก Binance ทีละ symbol/timeframe) — อาจใช้เวลาสักครู่</p>
+</body></html>"""
+
+
 def _build_kalshi_html() -> str:
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>BTC Up or Down · Prediction</title>
@@ -3026,6 +3128,9 @@ def run_web_dashboard(
                 return
             if path == "/kalshi":
                 self._send_html(_build_kalshi_html())
+                return
+            if path == "/wave-audit":
+                self._send_html(_build_wave_audit_html(db_path))
                 return
             if path == "/fund":
                 self._send_html(fund_html)
