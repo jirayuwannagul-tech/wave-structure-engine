@@ -339,18 +339,21 @@ function Ticker(){
 
 /* ── TOPBAR ── */
 function Topbar({page,nav}){
+  const extPage = window.location.pathname;
   return(
     <div className="topbar">
-      <div className="t-logo" onClick={()=>nav("dashboard")}><div className="t-icon">⚡</div><span className="t-name">AlphaFutures</span></div>
+      <div className="t-logo" onClick={()=>{window.location.href='/';}}><div className="t-icon">⚡</div><span className="t-name">AlphaFutures</span></div>
       <div className="t-sep hide-sm"/>
       {[["dashboard","Dashboard"],["history","History"],["board","Board"]].map(([id,l])=>(
         <button key={id} className={`nb${page===id?" on":""}`} onClick={()=>nav(id)}>{l}</button>
       ))}
+      <a className={`nb${extPage==="/edge"?" on":""}`} href="/edge" style={{textDecoration:"none"}}>Edge</a>
+      <a className={`nb${extPage==="/ai-rules"?" on":""}`} href="/ai-rules" style={{textDecoration:"none"}}>AI Rules</a>
+      <a className={`nb${extPage==="/kalshi"?" on":""}`} href="/kalshi" style={{textDecoration:"none"}}>Kalshi</a>
+      <a className={`nb${extPage==="/wave-audit"?" on":""}`} href="/wave-audit" style={{textDecoration:"none"}}>Wave Audit</a>
       <div className="t-right">
-        <button className="pill p-go hide-sm" onClick={()=>nav("about")}>⚡ How it works</button>
         <button className="pill p-gr hide-sm" onClick={()=>nav("register")}>✏ Register</button>
         <button className="pill p-vi" onClick={()=>nav("login")}>🔑 Login</button>
-        <button className="pill p-cy hide-sm" onClick={()=>nav("guide")}>📘 How to get API Key</button>
       </div>
     </div>
   );
