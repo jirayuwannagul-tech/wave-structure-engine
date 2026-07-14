@@ -123,10 +123,29 @@ def _get_4h_bias(db_path: Path) -> str:
     try:
         conn = sqlite3.connect(str(db_path))
         row = conn.execute(
-            "SELECT bias FROM analysis_snapshots WHERE symbol='BTCUSDT' AND timeframe='4H' ORDER BY id DESC LIMIT 1"
+            "SELECT bias, payload_json FROM analysis_snapshots "
+            "WHERE symbol='BTCUSDT' AND timeframe='4H' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         conn.close()
-        return row[0] if row else "NEUTRAL"
+        if not row:
+            return "NEUTRAL"
+        bias = row[0]
+        if bias:
+            return bias
+        # bias column is often NULL — fall back to payload_json sources
+        # (same pattern as services/symbol_analyst.py's _load_wave_states)
+        try:
+            payload = json.loads(row[1] or "{}")
+            pos = payload.get("position") or {}
+            scen = payload.get("scenario") or {}
+            fallback = (
+                pos.get("bias")
+                or scen.get("bias")
+                or (scen.get("analysis_summary") or {}).get("scenario", {}).get("bias")
+            )
+            return fallback or "NEUTRAL"
+        except (json.JSONDecodeError, AttributeError):
+            return "NEUTRAL"
     except Exception:
         return "NEUTRAL"
 
