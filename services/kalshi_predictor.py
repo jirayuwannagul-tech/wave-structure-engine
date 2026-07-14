@@ -473,6 +473,50 @@ def get_predictions(db_path: Path | None = None, limit: int = 50) -> dict:
     }
 
 
+def get_daily_history(db_path: Path | None = None, days: int = 30) -> list[dict]:
+    """Win/loss per calendar day (LA timezone), oldest first.
+
+    Grouped straight from kalshi_predictions.created_at — every prediction
+    already carries its own timestamp, so this is always accurate for
+    whatever history exists; no separate daily record needs to be kept.
+    """
+    import zoneinfo as _zi
+
+    db = db_path or _DB_PATH
+    _ensure_table(db)
+    _la = _zi.ZoneInfo("America/Los_Angeles")
+
+    conn = sqlite3.connect(str(db))
+    rows = conn.execute(
+        "SELECT created_at, win FROM kalshi_predictions WHERE win IS NOT NULL"
+    ).fetchall()
+    conn.close()
+
+    by_day: dict[str, list[int]] = {}
+    for created_at, win in rows:
+        try:
+            dt = datetime.fromisoformat(created_at)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            day_key = dt.astimezone(_la).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+        bucket = by_day.setdefault(day_key, [0, 0])
+        bucket[0 if win else 1] += 1
+
+    history = [
+        {
+            "date": day,
+            "wins": w,
+            "losses": l,
+            "total": w + l,
+            "win_rate": round(w / (w + l), 3) if (w + l) else None,
+        }
+        for day, (w, l) in sorted(by_day.items())
+    ]
+    return history[-days:]
+
+
 # ── Loop ────────────────────────────────────────────────────────────────────
 
 _PRED_MINUTES = (1, 16, 31, 46)  # UTC minutes to predict each hour

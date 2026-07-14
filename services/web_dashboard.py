@@ -589,6 +589,19 @@ canvas#chart{{display:block;width:100%;height:300px;border-radius:0;background:t
       </table>
     </div>
   </div>
+
+  <!-- Daily History -->
+  <div class="ph-box">
+    <div class="ph-title">ประวัติรายวัน (ทุกวันที่มีข้อมูล)</div>
+    <div style="overflow-x:auto;margin-top:4px">
+      <table class="ph-table">
+        <thead><tr>
+          <th>วันที่</th><th>ชนะ</th><th>แพ้</th><th>รวม</th><th>Win Rate</th>
+        </tr></thead>
+        <tbody id="daily-rows"><tr><td colspan="5" style="color:#475569;text-align:center;padding:20px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- Sidebar -->
@@ -1215,6 +1228,32 @@ async function fetchPredictions() {{
   }}
 }}
 
+async function fetchDailyHistory() {{
+  try {{
+    const r = await fetch('/api/kalshi-daily-history');
+    const d = await r.json();
+    if (!d.ok || !d.history.length) {{
+      document.getElementById('daily-rows').innerHTML =
+        '<tr><td colspan="5" style="color:#475569;text-align:center;padding:20px">ยังไม่มีข้อมูล</td></tr>';
+      return;
+    }}
+    document.getElementById('daily-rows').innerHTML = d.history.slice().reverse().map(day => {{
+      const wr = day.win_rate != null ? (day.win_rate*100).toFixed(1)+'%' : '—';
+      const wrColor = day.win_rate == null ? '#94a3b8' : (day.win_rate >= 0.5 ? '#4ade80' : '#f87171');
+      return `<tr>
+        <td style="font-variant-numeric:tabular-nums">${{day.date}}</td>
+        <td class="ph-win" style="font-variant-numeric:tabular-nums">${{day.wins}}</td>
+        <td class="ph-loss" style="font-variant-numeric:tabular-nums">${{day.losses}}</td>
+        <td style="color:#94a3b8;font-variant-numeric:tabular-nums">${{day.total}}</td>
+        <td style="color:${{wrColor}};font-weight:700;font-variant-numeric:tabular-nums">${{wr}}</td>
+      </tr>`;
+    }}).join('');
+  }} catch(e) {{
+    document.getElementById('daily-rows').innerHTML =
+      '<tr><td colspan="5" style="color:#6b7280;text-align:center">โหลดไม่ได้</td></tr>';
+  }}
+}}
+
 async function refresh() {{
   await fetchPrices();
   await Promise.all([fetchWave(), fetchKalshi15m()]);
@@ -1226,6 +1265,7 @@ async function refresh() {{
 seedTicksFromKlines().then(() => {{ _pollPrice(); }});
 refresh();
 fetchPredictions();
+fetchDailyHistory();
 updateCountdown();
 setInterval(updateCountdown, 1000);
 setInterval(_pollPrice, 250);          // price update 4x/sec (via VPS proxy)
@@ -3265,6 +3305,15 @@ def run_web_dashboard(
                     from pathlib import Path as _KP
                     data = _kp_get(_KP("storage/wave_engine.db"), limit=50)
                     self._send_json(200, {"ok": True, **data})
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
+            if path == "/api/kalshi-daily-history":
+                try:
+                    from services.kalshi_predictor import get_daily_history as _kp_daily
+                    from pathlib import Path as _KP
+                    history = _kp_daily(_KP("storage/wave_engine.db"), days=30)
+                    self._send_json(200, {"ok": True, "history": history})
                 except Exception as e:
                     self._send_json(500, {"ok": False, "error": str(e)})
                 return
