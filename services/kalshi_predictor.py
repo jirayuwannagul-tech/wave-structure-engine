@@ -33,88 +33,74 @@ def _btc_price() -> float:
         return float(json.loads(r.read())["price"])
 
 
-# ── 15m Elliott Wave analysis (pure code, no AI) ───────────────────────────
+# ── 15m Elliott Wave analysis: full pattern suite (pure code, no AI) ───────
 
-def run_ew_15m_analysis() -> tuple[str, dict]:
-    """Detect EW structure on 15m BTC data using pivot + Dow Theory. No AI.
+def run_ew_15m_analysis() -> dict:
+    """Run the full Elliott Wave pipeline on 15m BTC data.
 
-    bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+    Same pipeline the main 1W/1D/4H system uses — all 9 pattern types
+    (Flat, Expanded Flat, Running Flat, WXY, Impulse, ABC, 3 Triangle types,
+    2 Diagonal types), rule validation, and scenario generation — applied
+    to the 15m timeframe instead of the lightweight trend/inprogress-only
+    detection used previously.
+
+    Isolated copy under kalshi_engine/ — intentionally does NOT share code
+    with analysis/, core/, or scenarios/ so changes to the main trading
+    engine can never silently alter Kalshi's 15m predictions, and vice versa.
+
+    Returns the full analysis dict from build_dataframe_analysis (has_pattern,
+    primary_pattern_type, position, scenarios, trend, wave_summary,
+    confidence, probability, ...).
     """
-    # Isolated copy under kalshi_engine/ — intentionally does NOT share code
-    # with analysis/ or data/ so changes to the main trading engine can
-    # never silently alter Kalshi's 15m predictions, and vice versa.
-    from kalshi_engine.indicator_engine import calculate_atr
-    from kalshi_engine.pivot_detector import detect_pivots
-    from kalshi_engine.trend_classifier import classify_market_trend
-    from kalshi_engine.inprogress_detector import detect_inprogress_wave
+    from kalshi_engine.engine import build_dataframe_analysis
     from kalshi_engine.candle_utils import drop_unclosed_candle
     from kalshi_engine.market_data_fetcher import MarketDataFetcher
 
     fetcher = MarketDataFetcher(symbol="BTCUSDT", interval="15m", limit=200)
     df = drop_unclosed_candle(fetcher.fetch_ohlcv())
+    try:
+        current_price = fetcher.fetch_latest_price()
+    except Exception:
+        current_price = float(df.iloc[-1]["close"])
 
-    # ATR for pivot sensitivity
-    df = df.copy()
-    df["atr"] = calculate_atr(df, period=14)
+    return build_dataframe_analysis("BTCUSDT", "15m", df, current_price=current_price)
 
-    pivots = detect_pivots(df, right=1, min_swing_atr_mult=0.1)
-    trend = classify_market_trend(pivots, df=df)
 
-    # Check in-progress wave direction for extra signal
-    inprogress = detect_inprogress_wave(pivots)
-    wave_dir = None
-    wave_position = None
-    next_wave = None
-    if inprogress:
-        wave_dir = getattr(inprogress, "direction", None)
-        structure = getattr(inprogress, "structure", None)
-        wave_number = getattr(inprogress, "wave_number", None)
-        completed_waves = getattr(inprogress, "completed_waves", None)
-        # "Confirmed" position: the structure/wave count the engine has
-        # validated so far from the last N pivots.
-        wave_position = (
-            f"{structure} confirmed through wave {completed_waves}, "
-            f"forming wave {wave_number} ({wave_dir})"
-            if structure and wave_number
-            else None
-        )
-        # "Next wave" prediction: the wave currently forming IS the next
-        # wave being called, with its projected target/invalidation levels.
-        next_wave = {
-            "wave_number": wave_number,
-            "direction": wave_dir,
-            "fib_targets": getattr(inprogress, "fib_targets", {}) or {},
-            "invalidation": getattr(inprogress, "invalidation", None),
-            "confidence": getattr(inprogress, "confidence", None),
-        }
+def _select_actionable_scenario(analysis: dict):
+    """Return the top-priority scenario with a directional bias + a
+    confirmation price level, or None if nothing actionable is available yet.
 
-    state = trend.state  # UPTREND | DOWNTREND | SIDEWAY | BROKEN_UP | BROKEN_DOWN
+    ``scenarios`` is already prioritized by kalshi_engine.scenario_engine
+    (same ranking the main system uses), so the first BULLISH/BEARISH entry
+    with a confirmation level is the one worth waiting on.
+    """
+    if not analysis.get("has_pattern"):
+        return None
+    for sc in (analysis.get("scenarios") or []):
+        bias = (getattr(sc, "bias", None) or "").upper()
+        if bias in ("BULLISH", "BEARISH") and getattr(sc, "confirmation", None) is not None:
+            return sc
+    return None
 
-    if state in ("UPTREND", "BROKEN_UP"):
-        bias = "BULLISH"
-    elif state in ("DOWNTREND", "BROKEN_DOWN"):
-        bias = "BEARISH"
-    else:
-        # Sideway — use in-progress wave direction as tiebreaker
-        if wave_dir == "bullish":
-            bias = "BULLISH"
-        elif wave_dir == "bearish":
-            bias = "BEARISH"
-        else:
-            bias = "NEUTRAL"
 
-    signals = {
-        "trend_state": state,
-        "swing_structure": trend.swing_structure,
-        "confidence": trend.confidence,
-        "wave_dir": wave_dir,
-        "last_high": trend.last_high,
-        "last_low": trend.last_low,
-        "wave_position": wave_position,
-        "next_wave": next_wave,
-        "source": "EW-15m-code",
-    }
-    return bias, signals
+def _describe_wave_position(analysis: dict) -> str | None:
+    position = analysis.get("position")
+    if position is None:
+        return None
+    structure = getattr(position, "structure", None)
+    wave_number = getattr(position, "wave_number", None)
+    if not structure or not wave_number:
+        return None
+    return f"{structure} — building wave {wave_number}"
+
+
+def _price_confirms(bias: str, price: float, confirmation: float) -> bool:
+    """True once live price has broken through the scenario's entry level."""
+    if bias == "BULLISH":
+        return price >= confirmation
+    if bias == "BEARISH":
+        return price <= confirmation
+    return False
 
 
 # ── 4H EW bias from DB ──────────────────────────────────────────────────────
@@ -281,91 +267,132 @@ def _slot_ticker(now: datetime) -> tuple[str, datetime]:
     return ticker, exp
 
 
-def make_prediction(db_path: Path | None = None) -> dict | None:
-    """Analyse 15m EW bias and record a prediction. Works without Kalshi."""
-    db = db_path or _DB_PATH
-    _ensure_table(db)
+# Scenario locked in for the currently open slot, awaiting price confirmation.
+# {"ticker", "exp", "target", "bias", "confirmation", "signals"} or None.
+_pending_slot: dict | None = None
 
-    now = datetime.now(UTC)
 
-    # Try to get a live Kalshi event for the official CF Benchmarks target price
+def _resolve_current_slot(now: datetime) -> tuple[str, datetime, float | None]:
+    """Return (ticker, expiry, target_price) for the currently open 15m slot."""
     ev = _fetch_active_event()
     if ev:
         ticker = ev["event_ticker"]
         title = ev.get("title", "")
-        exp = _parse_event_expiry(ev)
+        exp = _parse_event_expiry(ev) or _parse_ticker_expiry(ticker)
         if exp is None:
-            exp = _parse_ticker_expiry(ticker)
-        if exp is None:
-            # Neither the event payload nor the ticker suffix parsed — fall back
-            # to the synthetic 15m slot expiry so the row is still resolvable.
             _, exp = _slot_ticker(now)
         target = _get_market_target(ticker, title)
-        print(f"[kalshi] Kalshi event found: {ticker} | target=${target} | exp={exp}")
-    else:
-        # No Kalshi event — use synthetic slot ticker
-        ticker, exp = _slot_ticker(now)
-        target = None
-        print(f"[kalshi] No Kalshi event — using synthetic {ticker}")
+        return ticker, exp, target
+    ticker, exp = _slot_ticker(now)
+    return ticker, exp, None
 
-    # Already recorded this slot?
+
+def make_prediction(db_path: Path | None = None) -> dict | None:
+    """Check the current 15m slot for a confirmed full-pattern-suite EW entry.
+
+    Full-pattern-count is prioritized over win rate: this runs the same
+    9-pattern-type detection + rule validation + scenario generation as the
+    main 1W/1D/4H system (see run_ew_15m_analysis), locks in the top-ranked
+    scenario for the slot, then waits for live price to actually reach that
+    scenario's confirmation level before recording anything. If price never
+    confirms before the market's 15-minute window closes, the slot is
+    skipped entirely — no forced guess.
+
+    Call this repeatedly (run_loop polls every _POLL_INTERVAL_SECONDS); each
+    call does at most one full analysis (only when a slot has no scenario
+    locked in yet) or one cheap price check (while waiting on confirmation).
+    """
+    global _pending_slot
+    db = db_path or _DB_PATH
+    _ensure_table(db)
+
+    now = datetime.now(UTC)
+    ticker, exp, target = _resolve_current_slot(now)
+
+    # Already recorded for this ticker (won, lost, or pending resolution)?
     conn = sqlite3.connect(str(db))
     exists = conn.execute("SELECT id FROM kalshi_predictions WHERE event_ticker=?", (ticker,)).fetchone()
     conn.close()
     if exists:
+        if _pending_slot and _pending_slot["ticker"] == ticker:
+            _pending_slot = None
         return None
 
-    btc = _btc_price()
-    if target is None:
-        target = round(btc, 2)
+    # A previous slot's scenario never confirmed before its window rolled over.
+    if _pending_slot and _pending_slot["ticker"] != ticker:
+        print(f"[kalshi] SKIPPED {_pending_slot['ticker']} — no confirmation before window closed")
+        _pending_slot = None
 
-    # 15m Elliott Wave analysis
+    if _pending_slot and _pending_slot["ticker"] == ticker:
+        if now >= _pending_slot["exp"]:
+            side = ">=" if _pending_slot["bias"] == "BULLISH" else "<="
+            print(f"[kalshi] SKIPPED {ticker} — price never {side} "
+                  f"${_pending_slot['confirmation']:,.0f} before window closed")
+            _pending_slot = None
+            return None
+
+        btc = _btc_price()
+        if not _price_confirms(_pending_slot["bias"], btc, _pending_slot["confirmation"]):
+            return None  # still waiting for confirmation
+
+        bias_15m = _pending_slot["bias"]
+        signals = _pending_slot["signals"]
+        signals["confirmed_at_price"] = btc
+        bias_4h = _get_4h_bias(db)
+        prediction = "UP" if bias_15m == "BULLISH" else "DOWN"
+        t = _pending_slot["target"] if _pending_slot["target"] is not None else round(btc, 2)
+
+        conn = sqlite3.connect(str(db))
+        conn.execute("""
+            INSERT INTO kalshi_predictions
+                (event_ticker, target_price, ew_bias_15m, ew_bias_4h, signals_json,
+                 prediction, start_price, created_at, expires_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (ticker, t, bias_15m, bias_4h, json.dumps(signals),
+              prediction, btc, now.isoformat(), _pending_slot["exp"].isoformat()))
+        conn.commit()
+        conn.close()
+
+        print(f"[kalshi] CONFIRMED + recorded {prediction} | {ticker} | "
+              f"15m={bias_15m} 4H={bias_4h} | entry=${btc:,.0f} target=${t:,.0f}")
+        result = {"ticker": ticker, "prediction": prediction, "bias_15m": bias_15m,
+                  "bias_4h": bias_4h, "target": t}
+        _pending_slot = None
+        return result
+
+    # No scenario locked in for this slot yet — run the full pattern-suite analysis.
     try:
-        bias_15m, signals = run_ew_15m_analysis()
+        analysis = run_ew_15m_analysis()
     except Exception as e:
-        print(f"[kalshi] 15m EW analysis failed: {e}")
+        print(f"[kalshi] full EW analysis failed: {e}")
         return None
 
-    bias_4h = _get_4h_bias(db)
+    scenario = _select_actionable_scenario(analysis)
+    if scenario is None:
+        return None  # no actionable pattern/scenario yet — keep polling this slot
 
-    # Always predict — resolve NEUTRAL via EW cascade
-    if bias_15m == "NEUTRAL":
-        if bias_4h in ("BULLISH", "BEARISH"):
-            # Use higher-timeframe EW structure
-            bias_15m = bias_4h
-            signals["neutral_resolved_by"] = "4H_ew_bias"
-        else:
-            # Use price vs EW pivot range midpoint
-            last_h = signals.get("last_high")
-            last_l = signals.get("last_low")
-            if last_h and last_l:
-                mid = (last_h + last_l) / 2
-                bias_15m = "BULLISH" if btc > mid else "BEARISH"
-                signals["neutral_resolved_by"] = f"price_vs_pivot_mid({mid:,.0f})"
-            else:
-                # Fallback: use last swing state direction
-                swing = signals.get("swing_structure", "")
-                bias_15m = "BULLISH" if "HH" in str(swing) or "HL" in str(swing) else "BEARISH"
-                signals["neutral_resolved_by"] = f"swing_structure({swing})"
-
-    prediction = "UP" if bias_15m == "BULLISH" else "DOWN"
-    now_str = now.isoformat()
-    exp_str_save = exp.isoformat()
-
-    conn = sqlite3.connect(str(db))
-    conn.execute("""
-        INSERT INTO kalshi_predictions
-            (event_ticker, target_price, ew_bias_15m, ew_bias_4h, signals_json,
-             prediction, start_price, created_at, expires_at)
-        VALUES (?,?,?,?,?,?,?,?,?)
-    """, (ticker, target, bias_15m, bias_4h, json.dumps(signals),
-          prediction, btc, now_str, exp_str_save))
-    conn.commit()
-    conn.close()
-
-    src = "Kalshi" if ev else "synthetic"
-    print(f"[kalshi] Predicted {prediction} | {ticker} [{src}] | 15m={bias_15m} 4H={bias_4h} | target=${target:,.0f}")
-    return {"ticker": ticker, "prediction": prediction, "bias_15m": bias_15m, "bias_4h": bias_4h, "target": target}
+    bias = scenario.bias.upper()
+    confirmation = float(scenario.confirmation)
+    signals = {
+        "pattern_type": analysis.get("primary_pattern_type"),
+        "wave_position": _describe_wave_position(analysis),
+        "scenario_name": getattr(scenario, "name", None),
+        "scenario_condition": getattr(scenario, "condition", None),
+        "confirmation_level": confirmation,
+        "invalidation": getattr(scenario, "invalidation", None),
+        "targets": list(getattr(scenario, "targets", []) or []),
+        "confidence": analysis.get("confidence"),
+        "probability": analysis.get("probability"),
+        "trend_state": getattr(analysis.get("trend"), "state", None),
+        "source": "EW-15m-full-pattern-suite",
+    }
+    _pending_slot = {
+        "ticker": ticker, "exp": exp, "target": target,
+        "bias": bias, "confirmation": confirmation, "signals": signals,
+    }
+    print(f"[kalshi] {ticker}: {analysis.get('primary_pattern_type')} scenario locked "
+          f"({bias}) — waiting for price to confirm at ${confirmation:,.0f}")
+    return None
 
 
 def resolve_predictions(db_path: Path | None = None) -> int:
@@ -538,39 +565,27 @@ def get_daily_history(db_path: Path | None = None, days: int = 30) -> list[dict]
 
 # ── Loop ────────────────────────────────────────────────────────────────────
 
-_PRED_MINUTES = (1, 16, 31, 46)  # UTC minutes to predict each hour
-
-
-def _secs_to_next_slot() -> int:
-    """Seconds until the next :01/:16/:31/:46 UTC mark."""
-    now = datetime.now(UTC)
-    m, s = now.minute, now.second
-    for target in _PRED_MINUTES:
-        if m < target or (m == target and s < 10):
-            return max((target - m) * 60 - s, 1)
-    # wrap to next hour
-    return max((60 - m + _PRED_MINUTES[0]) * 60 - s, 1)
+_POLL_INTERVAL_SECONDS = 20  # frequent enough to catch confirmation soon after it happens
 
 
 def run_loop(db_path: Path | None = None) -> None:
-    """Blocking prediction loop aligned to :01/:16/:31/:46 UTC."""
-    db = db_path or _DB_PATH
-    slots = "/".join(f":{m:02d}" for m in _PRED_MINUTES)
-    print(f"[kalshi] Predictor started — slots at {slots} UTC")
+    """Blocking loop, polling every _POLL_INTERVAL_SECONDS.
 
-    # Kick off immediately on startup (resolve any stale + predict if possible)
-    try:
-        resolve_predictions(db)
-        make_prediction(db)
-    except Exception as e:
-        print(f"[kalshi] startup error: {e}")
+    Full-pattern-suite analysis only re-runs once per slot (when no scenario
+    is locked in yet); every other tick is just a cheap price check against
+    the locked-in confirmation level, so short polling stays lightweight.
+    """
+    db = db_path or _DB_PATH
+    print(f"[kalshi] Predictor started — full pattern-suite + confirmation gating, "
+          f"polling every {_POLL_INTERVAL_SECONDS}s")
 
     while True:
-        wait = _secs_to_next_slot()
-        print(f"[kalshi] next slot in {wait}s ({wait//60}m{wait%60:02d}s)")
-        time.sleep(wait)
         try:
             resolve_predictions(db)
+        except Exception as e:
+            print(f"[kalshi] resolve error: {e}")
+        try:
             make_prediction(db)
         except Exception as e:
-            print(f"[kalshi] loop error: {e}")
+            print(f"[kalshi] predict error: {e}")
+        time.sleep(_POLL_INTERVAL_SECONDS)
