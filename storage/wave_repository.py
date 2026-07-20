@@ -937,7 +937,14 @@ class WaveRepository:
                             existing["id"],
                         ),
                     )
-                    self._last_affected_signal_ids = [int(existing["id"])]
+                    newly_populated = any(
+                        existing[field] is None and snapshot.get(field) is not None
+                        for field in ("tp1", "tp2", "tp3", "rr_tp1", "rr_tp2", "rr_tp3")
+                    ) or (
+                        existing["analysis_summary_json"] is None
+                        and snapshot.get("analysis_summary") is not None
+                    )
+                    self._last_affected_signal_ids = [int(existing["id"])] if newly_populated else []
                     return int(existing["id"])
 
                 # Entry-only mode: do not persist non-actionable plans.
@@ -1045,7 +1052,7 @@ class WaveRepository:
         for analysis in runtime.analyses:
             signal_id = self.sync_analysis(analysis, current_price=current_price)
             if signal_id is not None:
-                signal_ids.extend(self._last_affected_signal_ids or [signal_id])
+                signal_ids.extend(self._last_affected_signal_ids)
         return signal_ids
 
     def track_price_update(
